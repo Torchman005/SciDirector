@@ -1,4 +1,4 @@
-# SciDirector · 科学视频导演
+# SciDirector
 
 > **不生成像素，而是生成「可验证的渲染计划」。**
 >
