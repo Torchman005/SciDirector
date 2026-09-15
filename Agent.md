@@ -90,20 +90,24 @@ SciDirector/
 │       └── pb                   # protoc 生成代码（勿手改）
 ├── ai/                          # Python package: scidirector_ai
 │   ├── scidirector_ai/
-│   │   ├── main.py              # FastAPI 入口（/healthz, /v1/plan）
+│   │   ├── main.py              # FastAPI 入口（/healthz, /v1/pipeline）
 │   │   ├── grpc_server.py       # gRPC servicer 与契约适配
 │   │   ├── service.py           # 业务门面（HTTP 与 gRPC 共用）
 │   │   ├── schemas.py           # 领域模型与业务校验
+│   │   ├── pbconv.py            # 领域模型 ↔ proto 双向转换（含枚举映射）
 │   │   ├── llm.py               # LLM/VLM 客户端（重试/结构化输出/成本/mock）
-│   │   ├── graph/               # LangGraph 状态定义（阶段二补 nodes/builder）
-│   │   ├── agents/              # base / director（阶段二补 coder、critic）
+│   │   ├── media.py             # ffmpeg 封装、抽帧、lavfi 环境镜头、字体探测
+│   │   ├── renderer.py          # 渲染器统一抽象（Manim/Html/Ambient 路由与就绪探测）
+│   │   ├── graph/               # state / nodes / builder / checkpoint
+│   │   ├── agents/              # base / director / coder / critic
 │   │   │   └── prompts/         # 提示词独立成 .md，与代码分离
-│   │   ├── sandbox/             # 静态安全策略（阶段二补 runner 进程隔离）
+│   │   ├── rag/                 # Few-shot 检索（JSON 语料 + 可解释打分）
+│   │   ├── sandbox/             # policy.py 静态策略 + runner.py 进程隔离 + manim.py
 │   │   └── pb/                  # protoc 生成代码（勿手改）
 │   └── tests/
 ├── web/                         # React + Vite + TS 审核台
 ├── deploy/                      # redis.conf / postgres init / nginx
-└── scripts/                     # 开发脚本（含 gen-proto）
+└── scripts/                     # 开发脚本（含 gen-proto、smoke-grpc、smoke-ws）
 ```
 
 ---
@@ -117,14 +121,15 @@ SciDirector/
   - [x] proto 契约 + 跨语言代码生成脚本
   - [x] **提前注入**：Go 主链路 worker 处理器（gRPC 流式消费 + 事件落库）、
         ffmpeg 并发合成；Python 导演智能体完整实现、沙盒静态安全策略
-- [ ] **阶段二 · Python 多智能体核心**
+- [x] **阶段二 · Python 多智能体核心**
   - [x] Director Agent：脚本 → 结构化分镜表 + 场景标签（含时长预算修复）
   - [x] 沙盒静态安全策略（AST 白名单）
-  - [ ] Coder Agent：标签路由 → Manim / D3 / 代码动画源码
-  - [ ] Critic Agent（VLM）：抽帧审查 + 具体修改意见
-  - [ ] 沙盒运行器：子进程执行 Manim → MP4 片段 + 资源限制
-  - [ ] LangGraph 图拓扑 + 循环 + 重试上限 + checkpoint 持久化
-  - [ ] RAG：Few-shot 优秀案例检索
+  - [x] Coder Agent：标签路由 → Manim / D3 / 代码动画源码（生成前 RAG 召回 + 生成后策略校验）
+  - [x] Critic Agent（VLM）：抽帧审查 + 分维度打分 + 强约束 JSON + 具体修改意见
+  - [x] 沙盒运行器：子进程执行 Manim → MP4 片段 + 超时/内存限制（Windows Job Object / POSIX rlimit）
+  - [x] LangGraph 图拓扑 + 带反馈循环 + 重试上限 + 熔断转人工 + checkpoint 持久化
+  - [x] RAG：Few-shot 优秀案例检索（可解释打分，中文用 CJK 二元组匹配）
+  - [x] 5 个 RPC 全部实现并经 Go 侧 gRPC 端到端调通（`RunPipeline` 服务端流式）
 - [ ] **阶段三 · Go 编排与媒体处理**
   - [x] `/api/v1/generate` → Redis 队列
   - [x] Worker 消费 → gRPC 流式调用 → 状态推进
@@ -140,8 +145,10 @@ SciDirector/
   - [ ] 多租户与配额、成本核算（token/渲染时长）
 
 > 各阶段的**验收命令与预期输出**见 `docs/ROADMAP.md`。
-> 阶段一中 `RunPipeline` 等 RPC 返回 `UNIMPLEMENTED` 是**正确行为**，
-> 不是缺陷 —— Go 侧据此判定「不可重试」，避免把「还没实现」误当成基础设施故障反复重投。
+> 阶段二结束后 `RunPipeline` / `GenerateShot` / `CritiqueShot` / `ReviseShot` 均已实现；
+> Go 侧 `ai.ErrNotImplemented` 分支**保留不删** —— 它是灰度期与未来新增 RPC 的安全网：
+> 未实现的 RPC 必须被判定为「不可重试」，避免把「还没实现」误当成基础设施故障反复重投。
+> 阶段二验收结果（含 A2/A8 受本机工具链限制的部分验证）记录在 `docs/ROADMAP.md`。
 
 ---
 
@@ -242,9 +249,9 @@ make up / make down   # docker compose 全栈
 
 ---
 
-## 9. 跨语言实现约定（阶段一确立）
+## 9. 跨语言实现约定（阶段一 / 阶段二确立）
 
-这些约定是阶段一踩过的坑，后续修改**必须**遵守：
+这些约定是踩过的坑，后续修改**必须**遵守：
 
 | 约定 | 原因 |
 | --- | --- |
@@ -253,13 +260,21 @@ make up / make down   # docker compose 全栈
 | worker **不持有** WebSocket Hub | worker 与 api 可能在不同进程/容器，推到进程内 Hub 对前端毫无意义；统一走 Redis Pub/Sub |
 | proto 的 `RuntimeError` 类错误必须映射为 `UNIMPLEMENTED` 而非 `INTERNAL` | 前者不可重试，后者会触发 Asynq 重试同一个注定失败的调用 |
 | 大文件（MP4/PNG）只传路径 | 走共享卷或 MinIO；塞进 gRPC 消息会让内存放大数倍 |
+| `payload_json` 的键**必须**是 snake_case、枚举**必须**是数字 | 它最终由 Go 的 `encoding/json` 反序列化进 `pb.ShotSpec`；写成驼峰或枚举名字符串在 Python 侧看不出问题，到 Go 侧静默变成零值 |
 | `plan` 节点的分镜表通过 `payload_json` 传 JSON 而非 proto 字段 | 分镜表结构仍在快速迭代，用 JSON 可避免每次都重新生成两侧代码 |
 | Python 侧 `PolicyReport.ok` 只要求无 **error** 级违规 | warning（如 `while True`）由运行时超时兜底，静态阶段误杀合法写法的代价更高 |
+| 契约型违规（如 HTML 缺 `window.__seek`）必须自带 `advice` 文案 | 否则拼出的反馈是病句（「使用了被禁止的 缺少渲染契约…」），回灌给编码模型等于噪音 |
 | Go 侧状态机的 `Job.ProgressRatio()` 与字段 `Progress` 并存 | Go 不允许同名字段与方法；字段负责 JSON 序列化，方法负责计算 |
 | Windows 下**禁止**用 PowerShell 5.1 的 `Get-Content`/`Set-Content` 改 UTF-8 源码 | 它按系统 GBK 代码页读写，会静默破坏中文注释的多字节序列（本项目已踩过一次） |
 | 模型调用的意图必须**显式传参**（`llm.Task.*`），禁止从提示词文本嗅探关键词 | mock 客户端曾因导演提示词含「审查」二字而返回错误结构，被静默解析成「空分镜表」——这类「看起来成功」的失败形态比抛异常危险得多 |
 | 派生的模拟数据必须**结构上等价**于真实产出 | 否则 mock 模式会掩盖真实的解析/校验问题，联调通过但上线即挂 |
 | 仓库内自带的依赖目录（`.pylibs`）必须置于 `PYTHONPATH` **末尾** | 它可能包含被深度依赖的包（如 `typing_extensions`），置于前面会遮蔽版本更完整的同名包 |
+| 图节点只**声明**下一跳（`route_hint`），条件边只做读取与校验 | 把判断散在边函数里会让「带反馈的循环」难以推理；节点负责决策，边负责路由 |
+| 「引擎工具链缺失」必须映射为**不可重试**失败并熔断转人工 | 重试一个本机根本不存在的引擎只会烧满 attempt 计数。真实跑测已验证：缺 manim/d3 的两个镜头熔断为 `AWAITING_HUMAN`，其余镜头照常完成，任务终态 `PARTIAL` |
+| 跨平台机制差异（POSIX `RLIMIT_AS` vs Windows Job Object）必须**归一化**成同一个可观测结果 | 上层只认 `killed_reason == "memory"`，否则熔断逻辑要在两套平台上各写一遍 |
+| 传给子进程的路径必须 `.resolve()`；ffmpeg 的 `fontfile` 需要**两级转义**（`C\\:`），`%` **不要**转义 | 渲染器会切换 cwd，相对路径会失效；drawtext 的转义层级与常规 shell 不同，且 Windows 的 gyan 构建没有 fontconfig，需三级降级 |
+| 交叉编译不了的测试不要写进默认目标 | Windows 缺 race 运行时 DLL（`0xc0000139`），`Makefile` 的 `RACE ?= -race` 必须可覆盖 |
+| 长耗时单测与真实联调分离 | `pytest` 全量约 2 分钟（沙盒超时用例本身就要等待），不要塞进 pre-commit |
 
 ---
 
@@ -270,3 +285,4 @@ make up / make down   # docker compose 全栈
 | v0.1.0 | 阶段一 | 建立目录骨架、跨语言 proto 契约与生成流水线、docker-compose 全栈、Go 骨架（配置/日志/状态机/仓储/队列/gRPC 客户端/WS Hub/编排处理器/ffmpeg 封装）、Python 骨架（配置/日志/Schema/LLM 客户端/LangGraph 状态/导演智能体/沙盒策略/gRPC+FastAPI 双栈）、四份文档与构建脚本；Go 与 Python 测试全部通过 |
 | v0.1.1 | 阶段一（修订） | **回退阶段二的提前实现**，把仓库收敛到经过验证的阶段一状态：移除编码/审查智能体、沙盒运行器、渲染与媒体工具、RAG、图拓扑与 checkpointer；`RunPipeline` / `GenerateShot` / `CritiqueShot` / `ReviseShot` 恢复为返回 `UNIMPLEMENTED`。保留阶段一两处前置能力（导演智能体、沙盒静态安全策略）。修复 `scripts/dev-env.ps1` 的 `PYTHONPATH` 顺序缺陷（`.pylibs` 必须置于**末尾**，否则会遮蔽版本更完整的同名包，表现为 pydantic 导入时莫名的 `cannot import name`） |
 | v0.1.2 | 阶段一（修复） | 手工联调实测发现并修复两项语义缺陷：① `UNIMPLEMENTED` 不再被 Asynq 重试（新增哨兵 `ai.ErrNotImplemented`，worker 返回 `asynq.SkipRetry` 直接归档）；② `sandbox_ready` 改为「至少一个渲染引擎可用」并新增结构化 `engines` 字段，使实现与文档一致。新增 `scripts/smoke-grpc.py`、`scripts/smoke-ws.py` 两个可复用冒烟脚本与 `make smoke*` 目标；README 新增「手动测试」章节。Go 测试 +1 包，Python 测试 71 → 83 |
+| v0.2.0 | 阶段二 | **Python 多智能体核心落地，Go 侧全链路打通**。沙盒执行器（超时 30s 强杀 + 内存上限，Windows Job Object / POSIX rlimit 双实现，留痕 `killed_reason`）→ Manim 沙盒（四层防御）→ 媒体层（抽帧含首末帧、lavfi 环境镜头、drawtext 三级降级）→ 渲染器抽象（Manim/Html/Ambient 确定性路由 + 就绪探测 + HTML 契约校验）→ 编码智能体（按标签选提示词、RAG 召回、策略校验后重写）→ 审查智能体（分维度加权 + 硬性下限 + 程序侧复核 + VLM 不可用降级转人工，中文强约束 JSON 提示词）→ RAG（可解释打分，中文走 CJK 二元组）→ LangGraph 图（带反馈循环、`route_hint` 路由、重试上限熔断转 `AWAITING_HUMAN`、Postgres checkpointer 显式降级）→ `pbconv` 双向转换 → 5 个 RPC 全部实现。拆分顺序按依赖自底向上，每层落地即测。Python 测试 83 → 368；`go vet` / `gofmt` / `go test ./internal/...` 全绿；`scripts/smoke-grpc.py` 25/25 通过；真实端到端任务 `job-799a0041b7ad3434` 产出 2 个可播放 MP4、2 个镜头按预期熔断。验收明细见 `docs/ROADMAP.md` |

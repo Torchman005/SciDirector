@@ -50,7 +50,8 @@ docker compose up -d --build && docker compose ps
 
 - `RunPipeline` / `GenerateShot` / `CritiqueShot` / `ReviseShot` 返回 `UNIMPLEMENTED`，
   这是**正确行为**：Go 侧应当据此判定「不可重试」，而不是把它当成基础设施故障反复重投。
-- `Agent.md` 中「阶段二」的检查项保持未勾选状态。
+- `Agent.md` 中「阶段二」的检查项当时保持未勾选状态
+  （阶段二完成后已全部勾选，见迭代日志 v0.2.0）。
 
 ### 手动测试发现并已修复的问题
 
@@ -79,18 +80,18 @@ GET  /readyz -> {"sandbox_ready":true,
 
 ---
 
-## 阶段二 · Python 多智能体核心 ⏳ 待办
+## 阶段二 · Python 多智能体核心 ✅ 已完成
 
-> 已提前落地两块（见阶段一交付物）：**导演智能体**与**沙盒静态安全策略**。
-> 其余部分尚未实现，因此 `RunPipeline` / `GenerateShot` / `CritiqueShot` / `ReviseShot`
-> 仍返回 `UNIMPLEMENTED`。
+> 五个 RPC 全部实现，Go 侧经 gRPC 调通全链路（`deca482`）。
+> 验收结果见下方「阶段二验收结果」。
 
 ### 交付物
 
 1. **LangGraph 图**（`graph/builder.py` + `graph/nodes.py`）
-   - 节点：`plan` → `code` → `render` → `critique` →（不合格）`revise` → `code`；合格 → `advance` → 下一镜头；全部完成 → `compose`
+   - 节点：`plan` → `code` → `render` → `critique` →（不合格）`revise` → `code`；合格 → `advance` → 下一镜头
    - 条件边实现「带反馈的循环」与「每镜头独立的 attempt 计数器」
    - Postgres checkpointer：进程重启后可从断点续跑
+   - 成片合成不在 Python 图内 —— 那是 Go 侧的职责（它才持有 ffmpeg 与产物卷）
 2. **编码智能体**（`agents/coder.py`）
    - 按标签确定性路由到 Manim / D3 / ECharts / 代码动画
    - 生成前经 RAG 召回 2~3 条同标签优秀范例注入上下文
@@ -126,6 +127,66 @@ GET  /readyz -> {"sandbox_ready":true,
 - 平均尝试次数
 - 单镜头渲染耗时分布
 - token 成本 / 镜头
+
+> 指标采集依赖阶段五的 metrics 管道，当前仅在图终止节点的 `token_summary` 事件里
+> 输出 token 汇总，尚未做时间序列沉淀。
+
+### 阶段二验收结果
+
+验收环境：本机仅具备 `stock`（ffmpeg）引擎，`manim` / `d3` / `echarts` / `code_anim`
+的本地工具链缺失（`engine_availability()` 实测 `missing`），因此**依赖 LLM 生成代码的引擎
+无法在本机真实渲染**，相关验收项以「路由单测 + 熔断行为」替代验证。
+
+| 编号 | 结果 | 证据 |
+| --- | --- | --- |
+| A1 | ✅ | 端到端任务 `job-799a0041b7ad3434` 产出可播放 MP4（AMBIENCE 镜头经 ffmpeg lavfi 生成），`ffprobe` 可解析 |
+| A2 | ⚠️ 部分 | 路由正确性由 `tests/test_graph_routing.py` 覆盖（MATH→manim、DATA→d3、CODE→code_anim、AMBIENCE→stock），事件中 `artifact.engine` 与标签一致；但本机缺 manim/d3 工具链，真实渲染未跑通 |
+| A3 | ✅ | `tests/test_critic_agent.py` 构造「字号过小 / 信息密度过高」用例，判定不合格且给出可执行建议 |
+| A4 | ✅ | 真实运行中 MATH / DATA 镜头在第 3 次尝试后熔断，事件流出现 `AWAITING_HUMAN`，任务状态置 `PARTIAL` |
+| A5 | ✅ | `tests/test_sandbox_policy.py`（`import os` / `eval` / `__subclasses__` 等逃逸手法全部拦截） |
+| A6 | ✅ | `tests/test_sandbox_runner.py` 死循环用例超时后进程树被杀，无孤儿进程；Windows 走 Job Object，POSIX 走 `RLIMIT_AS`+`killpg` |
+| A7 | ✅ | 渲染失败的错误信息回灌给编码智能体，`revise` 节点重写后重试 |
+| A8 | ⚠️ 部分 | `build_checkpointer()` 在无 Postgres 时显式降级到 `MemorySaver` 并打印警告；断点续跑仅在 Postgres 可用时成立，本机未验证 |
+
+**这次端到端跑测暴露的真实行为**（4 个镜头）：
+
+| 镜头 | 标签 | 最终状态 | 说明 |
+| --- | --- | --- | --- |
+| #0 | AMBIENCE | `APPROVED` | 真实 MP4 产出 |
+| #1 | MATH | `AWAITING_HUMAN` | 本地无 manim，连续失败后熔断 |
+| #2 | DATA | `AWAITING_HUMAN` | 本地无 d3，第 3 次尝试后熔断 |
+| #3 | AMBIENCE | `APPROVED` | 真实 MP4 产出 |
+
+任务终态 `PARTIAL`，`progress=0.5`，
+`stat={"total":4,"approved":2,"failed":0,"awaiting_human":2,"in_progress":0}`；
+Go 事件存储累计 22 条事件。**「引擎缺失」被正确地当作失败而非崩溃**，熔断而非重试到死 ——
+这正是阶段二要证明的行为。
+
+### 阶段二开发中发现并已修复的问题
+
+均已在当次提交内修复并补回归测试，记录在此以免重复踩坑：
+
+| # | 问题 | 根因 | 修复 |
+| --- | --- | --- | --- |
+| 1 | ffmpeg `drawtext` 报 `No option name near '/Windows/Fonts/msyh.ttc:…'` | Windows 路径的 `:` 与滤镜分隔符冲突，且该构建**没有 fontconfig** 无法回退 | `fontfile` 两级转义（`C\\:`）；`%` **不**转义；三级降级 + 字体探测缓存 |
+| 2 | 渲染器切换 cwd 后相对路径失效 | 子进程/滤镜的 cwd 与主进程不同 | 传入子进程的路径一律 `.resolve()` |
+| 3 | mock LLM 对着导演提示词返回了审查 JSON，静默解析成"空分镜表" | 客户端按提示词关键词嗅探任务类型 | 意图**显式传参** `llm.Task`，禁止文本嗅探 |
+| 4 | 循环导入 `tools/__init__ → renderer → sandbox.manim → tools.media` | 媒体工具被放在 `tools/` 包，同时被上层与沙盒反向依赖 | `media.py` / `renderer.py` 提升到包根，`sandbox/__init__.py` 用 PEP 562 `__getattr__` 惰性转发 |
+| 5 | `title_from` 按分隔符列表顺序取标题，而非文本位置 | 用了 `for sep in seps` 而非比较索引 | 改为取**最靠前**的分隔符位置 |
+| 6 | 中文关键词召回恒为兜底分 | 空格分词对中文无效 | 改用 **CJK 字符二元组** 匹配 |
+| 7 | 子进程 stderr 是 GBK，回灌给模型的编译错误是乱码 | Windows 中文环境默认代码页 | 沙盒强制注入 `PYTHONIOENCODING=utf-8` / `PYTHONUTF8=1` |
+| 8 | 两个平台的内存限制产生不同的可观测结果 | POSIX 抛 `MemoryError`，Windows Job Object 由内核直接杀 | 统一归一化为 `killed_reason="memory"` |
+| 9 | 不可重试的渲染失败只发 `FAILED`，**绕过了 `revise` 出口** | 节点直接调用了终止路径 | 改为发 `AWAITING_HUMAN` —— 有出口，而不是死路 |
+| 10 | `MediaToolError` 逃逸出图，未被渲染层归一 | 异常类型未收敛 | 在渲染器边界统一转成 `RendererError` |
+| 11 | HTML 契约违规生成的反馈是病句（「使用了被禁止的 缺少渲染契约…」） | 违规项只有"禁止什么"没有"该怎么改" | `PolicyViolation.advice` 支持直出人类可读建议 |
+| 12 | `pbconv` 缺 `StatusFromPB` / `StatusToPB` | 枚举双向映射漏了一组 | 补齐并加对称测试 |
+| 13 | proto3 未设置的 message 字段是**空消息**而非 `None` | 用 `is None` 判断永远为假 | 改用 `HasField` |
+| 14 | 冒烟脚本按事件计数产物，导致 2 个镜头报出 4 个产物 | `render` 与 `critique` 事件共用同一个 artifact | 按 `video_path` 去重 |
+| 15 | 测试断言 `common.ShotStatus.Name()` 的字符串 | protoc 版本差异会改变命名 | 改为比较枚举**数值** |
+
+> 第 1、7、8 条是**真实 ffmpeg 与真实子进程才能暴露**的问题：
+> 单元测试里用 mock 永远走不到这些分支。第 3、9、13 条属于
+> **"看起来成功"的静默失败**，比抛异常危险得多 —— 这也是为什么每层落地都要立刻真跑一次。
 
 ---
 
@@ -192,7 +253,7 @@ GET  /readyz -> {"sandbox_ready":true,
 | 阶段 | 状态 | 完成度 |
 | --- | --- | --- |
 | 一 · 环境与骨架 | ✅ 已完成 | 验收命令全部通过 |
-| 二 · 多智能体核心 | ⏳ 待办 | 导演智能体与沙盒策略已可用；编码/审查/沙盒运行器/图拓扑/RAG 待补 |
+| 二 · 多智能体核心 | ✅ 已完成 | 368 个 Python 单测通过；5 个 RPC 全部实现并经 Go 侧 gRPC 打通（A1/A3~A7 通过，A2/A8 受本机工具链限制部分验证） |
 | 三 · 编排与媒体 | ⏳ 待办 | 主链路与合成骨架已注入（Go 侧） |
 | 四 · 反馈闭环与前端 | ⏳ 待办 | WebSocket 服务端与事件流已就绪（Go 侧） |
 | 五 · 生产加固 | ⏳ 待办 | — |

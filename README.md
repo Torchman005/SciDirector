@@ -197,7 +197,7 @@ make dev-ai                       # 或 python -m scidirector_ai.main
 | 就绪 | `curl.exe http://127.0.0.1:8000/readyz` | 沙盒可用时 200；不可用时 503 |
 | 配置 | `curl.exe http://127.0.0.1:8000/version` | 密钥字段已被掩码 |
 | **导演智能体** | `curl.exe -X POST http://127.0.0.1:8000/v1/plan -H "Content-Type: application/json" --data-binary "@.tmp/plan-request.json"` | 返回分镜表；**时长之和落在目标 ±10%** |
-| 阶段二边界 | `curl.exe -X POST http://127.0.0.1:8000/v1/pipeline -H "Content-Type: application/json" --data-binary "@.tmp/plan-request.json"` | **501**（阶段二实现） |
+| 阶段二流水线 | `curl.exe -X POST http://127.0.0.1:8000/v1/pipeline -H "Content-Type: application/json" --data-binary "@.tmp/plan-request.json"` | **200**，NDJSON 逐行流出 `plan`/`render`/`critique`/`done` 事件 |
 
 ### 2. gRPC 契约
 
@@ -205,8 +205,9 @@ make dev-ai                       # 或 python -m scidirector_ai.main
 python scripts/smoke-grpc.py                      # 默认 127.0.0.1:50051
 ```
 
-逐项校验 `Health` / `PlanScript`，并断言 `RunPipeline` 等四个 RPC 返回
-`UNIMPLEMENTED`（阶段一的**有意行为**，见 `docs/ROADMAP.md`）。
+逐项校验 `Health` / `PlanScript` / `RunPipeline` / `GenerateShot` / `CritiqueShot` / `ReviseShot`。
+脚本会**自动探测**大脑所处的阶段：RPC 返回 `UNIMPLEMENTED` 即判定为阶段一并跳过调用，
+全部实现则跑完整流水线断言，因此新旧两个版本都能复用同一份冒烟脚本。
 
 ### 3. Go 网关
 
@@ -246,16 +247,22 @@ curl.exe http://127.0.0.1:8080/api/v1/jobs/<job_id>
 curl.exe "http://127.0.0.1:8080/api/v1/jobs/<job_id>/events?after_id=0"
 ```
 
-阶段一观察到的现象（**这是预期结果，不是故障**）：
+阶段二观察到的现象：
 
 ```
+status:  PARTIAL   progress: 0.5
+stat:    {"total":4,"approved":2,"failed":0,"awaiting_human":2,"in_progress":0}
 events:  api      "任务已创建，等待导演智能体拆解脚本"
-events:  plan     "导演智能体正在拆解脚本…"          <- worker 已消费并调用 gRPC
-events:  pipeline "任务失败：... RunPipeline ... Unimplemented"
+events:  plan     "导演智能体正在拆解脚本…"
+events:  render   "AMBIENCE 镜头渲染完成"          <- 真实 MP4 落盘
+events:  critique "审查通过"
+events:  ...      MATH / DATA 镜头在第 3 次尝试后熔断 → AWAITING_HUMAN
 ```
 
-提交 → 入队 → worker 消费 → gRPC 调用 → 明确失败并落库，
-说明**整条编排链路是通的**，缺的只是阶段二的流水线实现。
+任务终态是 `PARTIAL` 而非 `SUCCESS`，这是**正确行为**：本机没有 manim / d3 工具链，
+依赖它们的镜头连续失败后熔断转人工，而可渲染的镜头照常完成。
+**「引擎不可用」被当作镜头级失败，而不是任务级崩溃** —— 这正是熔断设计的意图。
+完整验收明细见 [`docs/ROADMAP.md`](docs/ROADMAP.md)。
 
 ### 5. WebSocket 反馈闭环
 
@@ -307,17 +314,21 @@ SciDirector/
 │   │   ├── config.py            # pydantic-settings 配置
 │   │   ├── logging.py           # JSON 日志 + contextvar 链路绑定
 │   │   ├── schemas.py           # 领域模型与业务校验
+│   │   ├── pbconv.py            # 领域模型 ↔ proto 双向转换（含枚举映射）
 │   │   ├── llm.py               # LLM/VLM 客户端（重试/结构化输出/成本/mock）
-│   │   ├── graph/               # LangGraph 状态与图拓扑
+│   │   ├── media.py             # ffmpeg 封装、抽帧、环境镜头、字体探测
+│   │   ├── renderer.py          # 渲染器抽象与确定性路由 + 就绪探测
+│   │   ├── graph/               # LangGraph 状态、节点、图拓扑、checkpointer
 │   │   ├── agents/              # 导演 / 编码 / 审查（提示词独立成 .md）
-│   │   ├── sandbox/             # 安全执行生成的渲染代码
+│   │   ├── rag/                 # Few-shot 优秀案例检索
+│   │   ├── sandbox/             # 静态策略 + 进程隔离运行器 + Manim 沙盒
 │   │   ├── service.py           # 业务门面（HTTP 与 gRPC 共用）
 │   │   ├── grpc_server.py       # gRPC servicer + 契约适配
 │   │   └── main.py              # FastAPI + gRPC 双栈进程入口
 │   └── tests/
 ├── web/                         # React + Vite + TS 审核台
 ├── deploy/                      # redis.conf / postgres init / nginx
-└── scripts/                     # dev-env.ps1 / gen-proto.ps1
+└── scripts/                     # dev-env.ps1 / gen-proto.ps1 / smoke-*.py
 ```
 
 ---
@@ -404,19 +415,24 @@ cd ..\ai; python -m pytest -q
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
 | 一 | 环境与骨架（proto 契约、docker-compose、Go/Python 骨架、状态机） | ✅ 已完成 |
-| 二 | Python 多智能体核心（编码 / 审查、沙盒渲染器、图拓扑、RAG） | ⏳ 待办 |
-| 三 | Go 编排与媒体处理（Asynq、gRPC 流式、ffmpeg 并发合成） | ⏳ 待办 |
-| 四 | 反馈闭环与前端（WebSocket、React 审核台、打回重做） | ⏳ 待办 |
+| 二 | Python 多智能体核心（编码 / 审查、沙盒渲染器、图拓扑、RAG） | ✅ 已完成 |
+| 三 | Go 编排与媒体处理（TTS 配音、字幕轴、转场调色、MinIO 归档） | ⏳ 待办 |
+| 四 | 反馈闭环与前端（React 审核台、打回重做、断线重连） | ⏳ 待办 |
 | 五 | 生产加固（可观测性、成本核算、多租户） | ⏳ 待办 |
 
-> 阶段一已额外落地：**导演智能体**（脚本 → 结构化分镜表，含时长预算修复）
-> 与**沙盒静态安全策略**（AST 白名单）。两者都是阶段二的前置能力，
-> 让 `PlanScript` 这条链路可以端到端验证。
+> **阶段二已落地**：沙盒执行器（30s 超时强杀 + 内存上限）、Manim / HTML / 环境镜头
+> 三个渲染器与确定性路由、编码智能体（RAG 召回 + 策略校验）、审查智能体
+> （分维度打分 + VLM 不可用降级转人工）、LangGraph 带反馈循环与熔断转人工、
+> Few-shot 检索。5 个 gRPC RPC 全部实现，Go 侧已端到端调通。
 >
-> 阶段二的其余 RPC 目前返回 `UNIMPLEMENTED` —— 这是**有意为之**：
-> Go 侧据此判定「不可重试」，而不是把「还没实现」误当成基础设施故障反复重投。
+> 本机只有 `stock`（ffmpeg）引擎可用，缺 manim / d3 工具链，因此端到端跑测中
+> 依赖它们的镜头会熔断为 `AWAITING_HUMAN`、任务终态为 `PARTIAL` —— 这是**预期行为**。
+> **引擎缺失被当作镜头级失败而非任务级崩溃**，正是熔断设计要证明的事。
+>
+> 阶段一为让 `PlanScript` 可端到端验证而提前注入的**导演智能体**与
+> **沙盒静态安全策略**，已在阶段二中并入完整实现。
 
-阶段一的实际交付范围见 [`docs/ROADMAP.md`](docs/ROADMAP.md)。
+各阶段的交付范围与验收明细见 [`docs/ROADMAP.md`](docs/ROADMAP.md)。
 
 ---
 

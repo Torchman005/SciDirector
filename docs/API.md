@@ -268,13 +268,16 @@ ws://localhost:8080/ws/jobs/{jobID}
 | --- | --- | --- | --- |
 | `Health` | Unary | 能力与沙盒就绪探测 | ✅ 已实现 |
 | `PlanScript` | Unary | 只跑导演智能体：脚本 → 分镜表 | ✅ 已实现 |
-| `RunPipeline` | **Server streaming** | 跑完整条 LangGraph，逐条推送事件 | 阶段二 |
-| `GenerateShot` | Unary | 编码 + 渲染单个镜头 | 阶段二 |
-| `CritiqueShot` | Unary | VLM 审查单次产物 | 阶段二 |
-| `ReviseShot` | Unary | 人工意见回灌 + 单镜头重做 | 阶段二 |
+| `RunPipeline` | **Server streaming** | 跑完整条 LangGraph，逐条推送事件 | ✅ 已实现 |
+| `GenerateShot` | Unary | 编码 + 渲染单个镜头 | ✅ 已实现 |
+| `CritiqueShot` | Unary | VLM 审查单次产物 | ✅ 已实现 |
+| `ReviseShot` | Unary | 人工意见回灌 + 单镜头重做 | ✅ 已实现 |
 
 > **为什么 `RunPipeline` 用流式**：一次生成包含 N 个镜头 × M 次尝试 × 4 个节点。
 > 轮询既浪费又会延迟数秒；流式让每一步状态变化立刻抵达前端。
+
+> **灰度安全网**：`UNIMPLEMENTED` 分支在 Go 侧**长期保留**。以后新增 RPC 时，
+> 老版本大脑返回的 `UNIMPLEMENTED` 仍会被判定为不可重试，不会被 Asynq 反复重投。
 
 ### 4.2 各方法契约
 
@@ -304,31 +307,59 @@ ws://localhost:8080/ws/jobs/{jobID}
 | `job_id` | 任务标识，同时作为 LangGraph 的线程 ID |
 | `raw_script` / `style_guide_json` / `target_duration_sec` / `locale` | 生成参数 |
 | `max_attempts_per_shot` | 每镜头重试上限（熔断阈值） |
-| `resume` / `checkpoint_thread_id` | 断点续跑（阶段二） |
+| `resume` / `checkpoint_thread_id` | 断点续跑（需 Postgres checkpointer） |
 
 响应：`stream PipelineEvent`（见 `common.proto`）。
 
 **跨语言约定（重要）**：`plan` 节点的 `PipelineEvent.payload_json` 为
 
 ```json
-{ "outline": "…", "shots": [ { "shot_id": "…", "index": 0, "tag": "SCENE_TAG_MATH", … } ] }
+{ "outline": "…", "shots": [ { "shot_id": "…", "index": 0, "tag": "SCENE_TAG_MATH", "engine": "RENDER_ENGINE_MANIM", "duration_sec": 6.5, "attempt": 1, "status": "SHOT_STATUS_PENDING" } ] }
 ```
 
 Go 侧 `worker.syncShotsFromPayload` 解析它并**整体替换**任务的分镜表（保留已有渲染进度）。
 之所以用 JSON 而不是 proto 的 `repeated` 字段：分镜表仍在快速迭代期，
 用 JSON 可以让它的结构演进不必每次都重新生成两侧代码。
 
+> ⚠️ **键名必须是 snake_case，枚举必须是数字**。这段 JSON 最终由 Go 的
+> `encoding/json` 反序列化进 `pb.ShotSpec`；写成驼峰或枚举名字符串时，
+> Python 侧看不出任何问题，到 Go 侧会**静默变成零值**。
+> `backend/internal/worker/processor_test.go` 里有一份对称的契约测试守着这条约定。
+
+#### `CritiqueShot` 的强约束输出
+
+审查智能体被要求只输出 JSON（中文系统提示词见
+`ai/scidirector_ai/agents/prompts/critic.md`），核心字段：
+
+```json
+{ "passed": false,
+  "scores": { "logic": 0.7, "readability": 0.4, "pacing": 0.8, "aesthetics": 0.75 },
+  "suggestions": [ { "dimension": "readability", "severity": "high", "advice": "…" } ],
+  "summary": "…" }
+```
+
+`passed` 的最终取值 = **模型判定 AND 程序侧复核**：
+分维度加权得分低于 `SCID_CRITIC_SCORE_THRESHOLD`（默认 0.75），
+或 `logic` / `readability` 跌破硬性下限，都会被程序改判为不通过 ——
+**模型只能更严格，不能更宽松**。两者不一致时事件里会留下 `verdict_disagreement` 痕迹。
+
+VLM 不可用时**降级为转人工**（`degraded=true`），而不是伪造「通过」。
+
 #### 状态码映射
 
 | gRPC 状态 | 触发条件 | Go 侧行为 |
 | --- | --- | --- |
-| `UNIMPLEMENTED` | 功能尚未实现 | **不可重试**，直接失败并告警 |
+| `UNIMPLEMENTED` | 功能尚未实现（灰度/老版本大脑） | **不可重试**，直接失败并告警 |
 | `UNAVAILABLE` | 依赖不可用 | 交给 Asynq 重试（指数退避） |
 | `DEADLINE_EXCEEDED` | 调用超时 | 同上 |
+| `FAILED_PRECONDITION` | 渲染失败等业务拒绝 | 记录详情，按镜头级失败处理（不重投整个任务） |
 | `INTERNAL` | 业务/模型错误 | 记录详情，按任务策略处理 |
 
 > 这个区分很关键：把「还没实现」误报成 `INTERNAL`，会让 Asynq 重试同一个注定失败的调用，
 > 既浪费资源又污染告警。
+
+> 同理，**「引擎工具链缺失」属镜头级失败**，走熔断转 `AWAITING_HUMAN`，
+> 而不是让整个任务失败 —— 一个镜头渲染不出来，不该拖垮其余镜头。
 
 ---
 
@@ -342,7 +373,7 @@ Python 侧的 HTTP 是**运维与调试通道**，Go 层通过 gRPC 与它交互
 | `GET` | `/readyz` | 就绪：沙盒不可用时返回 503 |
 | `GET` | `/version` | 版本 + 配置摘要（密钥已掩码） |
 | `POST` | `/v1/plan` | 只跑导演智能体，便于用 curl 直接验证提示词与模型配置 |
-| `POST` | `/v1/pipeline` | 完整流水线，阶段二实现前返回 501 |
+| `POST` | `/v1/pipeline` | 完整流水线，NDJSON 逐行流出事件（调试用，便于用 curl 观察） |
 
 `POST /v1/plan` 请求体：
 
