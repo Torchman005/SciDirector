@@ -172,6 +172,14 @@ class PolicyViolation:
     lineno: int = 0
     snippet: str = ""
     severity: str = "error"
+    #: 直接回灌给模型的建议文本。
+    #:
+    #: 为空时由 :meth:`to_feedback` 按"使用了被禁止的 X"这一默认措辞生成 ——
+    #: 那适用于 AST 白名单类违规（禁止某个语法）。
+    #: 但渲染契约类违规（**缺少** window.__seek、**缺少** __ready）语义相反，
+    #: 套用默认措辞会生成"使用了被禁止的 缺少渲染契约…"这种病句，
+    #: 而它正是模型用来改错的唯一线索。这类违规应当在此给出完整建议。
+    advice: str = ""
 
     def __str__(self) -> str:
         location = f"第 {self.lineno} 行" if self.lineno else "未知位置"
@@ -180,6 +188,8 @@ class PolicyViolation:
 
     def to_feedback(self) -> str:
         """把违规转成可回灌给模型的自然语言指令。"""
+        if self.advice:
+            return self.advice
         location = f"第 {self.lineno} 行" if self.lineno else "代码中"
         return f"{location}使用了被禁止的 {self.reason}，请改用沙盒允许的写法。"
 

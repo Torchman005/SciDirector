@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from scidirector_ai.sandbox.policy import PolicyReport, check_source, is_safe
+from scidirector_ai.sandbox.policy import PolicyReport, PolicyViolation, check_source, is_safe
 
 
 class TestAllowedCode:
@@ -130,6 +130,33 @@ class TestErrorReporting:
         report = check_source("import os\nimport socket\n")
         summary = report.summary()
         assert "禁止" in summary
+
+    def test_default_advice_wording_for_ast_violations(self) -> None:
+        """AST 白名单类违规（**使用了**被禁止的东西）用默认措辞。
+
+        与渲染契约类违规（**缺少**某物）区分开：后者自带 advice，
+        因为套用"使用了被禁止的 X"会生成病句。
+        """
+        report = check_source("import os\n")
+        feedback = report.violations[0].to_feedback()
+        assert "使用了被禁止的" in feedback
+        assert "第 1 行" in feedback
+
+    def test_explicit_advice_overrides_default_wording(self) -> None:
+        """带 advice 的违规必须原样输出建议，而不是被套进默认句式。"""
+        violation = PolicyViolation(
+            reason="缺少渲染契约 window.__seek(t)",
+            severity="error",
+            advice="请定义 window.__seek = (t) => {...} 并设置 window.__ready = true。",
+        )
+        assert violation.to_feedback() == violation.advice
+        assert "使用了被禁止的" not in violation.to_feedback()
+
+    def test_violation_str_is_for_humans(self) -> None:
+        """``__str__`` 给人看（简短），``to_feedback`` 给模型看（可执行）。"""
+        violation = PolicyViolation(reason="导入被禁止的模块 `os`", lineno=3, snippet="import os")
+        assert "第 3 行" in str(violation)
+        assert "import os" in str(violation)
 
     def test_multiple_violations_collected(self) -> None:
         """一次性收集全部违规：回灌信息越完整，模型一次改对的概率越高。"""

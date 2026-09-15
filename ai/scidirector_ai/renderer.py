@@ -450,16 +450,31 @@ def check_html_contract(code: str) -> PolicyReport:
     """
     report = PolicyReport()
     if not code or not code.strip():
-        report.violations.append(PolicyViolation(reason="HTML 代码为空", severity="error"))
+        report.violations.append(
+            PolicyViolation(
+                reason="HTML 代码为空",
+                severity="error",
+                advice="请输出完整的 HTML 或 <script> 片段，并实现 window.__seek(t)。",
+            )
+        )
         return report
 
     for marker in _HTML_REQUIRED_MARKERS:
         if marker not in code:
             report.violations.append(
                 PolicyViolation(
-                    reason=f"缺少渲染契约 {marker}(t)（逐帧截图依赖它设置动画进度）",
+                    # reason 给人看（简短）；advice 回灌给模型（完整可执行）。
+                    # 两者必须分开：契约类违规是"缺少某物"，套用"使用了被禁止的 X"
+                    # 的默认措辞会生成病句，而那条文本正是模型改错的唯一线索。
+                    reason=f"缺少渲染契约 {marker}(t)",
                     severity="error",
                     snippet=marker,
+                    advice=(
+                        f"页面缺少渲染契约：必须在脚本里定义 `{marker} = (t) => {{...}}`，"
+                        "t 为 0 到 duration_sec 的秒数，用它把动画状态设置到第 t 秒。"
+                        "同时需要 `window.__ready = true` 表示页面已就绪。"
+                        "渲染器是逐帧截图，依赖这个函数推进动画。"
+                    ),
                 )
             )
 
@@ -468,18 +483,28 @@ def check_html_contract(code: str) -> PolicyReport:
         if marker in lowered:
             report.violations.append(
                 PolicyViolation(
-                    reason=f"引用了外部 CDN（{marker}）—— 执行环境没有网络，脚本会静默失败",
+                    reason=f"引用了外部 CDN（{marker}）",
                     severity="error",
                     snippet=marker,
+                    advice=(
+                        f"请移除对外部 CDN 的引用（{marker}）：执行环境**没有网络**，"
+                        "脚本会静默加载失败并产出空白画面。"
+                        "请改用纯 SVG / Canvas 手写绘制实现同样的图形。"
+                    ),
                 )
             )
 
     if "<canvas" in lowered and "getcontext" not in lowered:
         report.violations.append(
             PolicyViolation(
-                reason="声明了 canvas 但没有获取 2D 上下文，画面会保持空白",
+                reason="声明了 canvas 但没有获取 2D 上下文",
                 severity="warning",
                 snippet="canvas",
+                advice=(
+                    "声明了 <canvas> 却没有调用 getContext('2d')，画面会保持空白。"
+                    "请补上 `const ctx = canvas.getContext('2d')`，"
+                    "或在 window.__seek 中完成绘制。"
+                ),
             )
         )
     return report

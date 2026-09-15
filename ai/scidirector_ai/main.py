@@ -2,7 +2,7 @@
 
 为什么双栈同进程？
 * Go 层通过 gRPC 调用（强类型、支持流式）；
-* 运维、调试与未来可能的前端直连走 HTTP（curl 友好、可挂 OpenAPI 文档）；
+* 运维、调试与前端直连走 HTTP（curl 友好、可挂 OpenAPI 文档）；
 * 同进程意味着只有一份模型客户端与一份沙盒资源，避免内存翻倍与状态分裂。
 
 生命周期：
@@ -15,14 +15,15 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import signal
 import sys
 import time
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
+from typing import AsyncIterator, Iterator
 
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from . import __version__
@@ -30,8 +31,9 @@ from .config import Settings, get_settings
 from .grpc_server import build_server
 from .llm import LLMError, LLMParseError
 from .logging import bind_job, get_logger, setup_logging
+from .pbconv import style_guide_from_json
 from .schemas import JobRequest
-from .service import PhaseNotImplemented, PipelineService, ServiceUnavailable
+from .service import PipelineService, RenderFailed, ServiceUnavailable
 
 logger = get_logger(__name__)
 
@@ -45,13 +47,14 @@ _state: dict[str, object] = {}
 
 
 class PlanRequest(BaseModel):
-    """POST /v1/plan 的请求体（调试用：只跑导演智能体）。"""
+    """POST /v1/plan 与 /v1/pipeline 的请求体。"""
 
     job_id: str = Field(default="debug-plan", description="任务标识，仅用于日志串联")
     raw_script: str = Field(min_length=1, description="科普脚本原文")
     target_duration_sec: float = Field(default=90.0, gt=0, le=3600)
     locale: str = "zh-CN"
     style_guide_json: str = Field(default="", description="风格约束的 JSON 字符串，可空")
+    max_attempts_per_shot: int = Field(default=3, ge=1, le=10)
 
 
 class HealthResponse(BaseModel):
@@ -64,11 +67,31 @@ class HealthResponse(BaseModel):
     #: 逐引擎的工具链就绪度。单独成一个字段（而不是只塞进 capabilities 字符串）
     #: 是为了让监控系统能直接结构化消费，不必解析字符串。
     engines: dict[str, bool] = Field(default_factory=dict)
+    checkpoint_backend: str = "unknown"
 
 
 # ===========================================================================
 # FastAPI 应用
 # ===========================================================================
+
+
+def _to_job_request(request: PlanRequest) -> JobRequest:
+    """把 HTTP 请求体转成领域请求。
+
+    单独抽出来是为了让 /v1/plan 与 /v1/pipeline 走**同一套**参数解析，
+    避免两个端点在风格约束的解析上出现差异（那是很难发现的 bug）。
+    """
+    job_request = JobRequest(
+        job_id=request.job_id,
+        raw_script=request.raw_script,
+        target_duration_sec=request.target_duration_sec,
+        locale=request.locale,
+        max_attempts_per_shot=request.max_attempts_per_shot,
+        checkpoint_thread_id=request.job_id,
+    )
+    if request.style_guide_json:
+        job_request.style_guide = style_guide_from_json(request.style_guide_json)
+    return job_request
 
 
 @asynccontextmanager
@@ -92,11 +115,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # grace=30s 让正在渲染的镜头把产物写完，避免留下半截 MP4。
         logger.info("正在停止 gRPC 服务（最长等待 30s）")
         stopped = grpc_server.stop(grace=30)
-        # grpc 的 stop() 返回 Future；同步等待以保证进程不会提前退出。
         try:
             stopped.wait(timeout=35) if hasattr(stopped, "wait") else None
         except Exception:  # noqa: BLE001 - 收尾阶段的异常不应阻止退出
             logger.warning("等待 gRPC 停止超时，强制退出")
+        # 释放 checkpointer 的 Postgres 连接。
+        service.close()
         logger.info("AI 大脑已退出")
 
 
@@ -109,7 +133,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(
         title="SciDirector AI Brain",
         version=__version__,
-        description="多智能体科学视频导演：导演 / 编码 / 审查",
+        description="多智能体科学视频导演：导演 / 编码 / 渲染 / 审查",
         lifespan=lifespan,
     )
     app.state.settings = cfg
@@ -145,9 +169,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # ------------------------------------------------------------------
     # 异常处理：把领域异常映射为稳定的 HTTP 状态码
     # ------------------------------------------------------------------
-    @app.exception_handler(PhaseNotImplemented)
-    async def _phase_not_implemented(_: Request, exc: PhaseNotImplemented) -> JSONResponse:
-        return JSONResponse(status_code=501, content={"error": "NOT_IMPLEMENTED", "message": str(exc)})
+    @app.exception_handler(RenderFailed)
+    async def _render_failed(_: Request, exc: RenderFailed) -> JSONResponse:
+        # 412 Precondition Failed：语义上表示"环境/前置条件不满足"，
+        # 与 503（稍后重试可能成功）区分开，避免客户端盲目重试。
+        return JSONResponse(
+            status_code=412, content={"error": "RENDER_FAILED", "message": str(exc)}
+        )
 
     @app.exception_handler(ServiceUnavailable)
     async def _unavailable(_: Request, exc: ServiceUnavailable) -> JSONResponse:
@@ -178,6 +206,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             capabilities=status.capabilities,
             toolchain=status.toolchain,
             engines=status.engines,
+            checkpoint_backend=status.checkpoint_backend,
         )
 
     @app.get("/readyz", tags=["ops"])
@@ -188,8 +217,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         所有渲染引擎的工具链都不可用时返回 503，让编排系统把流量摘走
         （此时服务确实一个镜头都产不出来）。
 
-        注意 ``sandbox_ready`` 的含义是**工具链就绪度**，不是「渲染器已实现」——
-        阶段一尚未实现任何渲染器，详见 docs/ROADMAP.md。
+        注意 ``sandbox_ready`` 的含义是**工具链就绪度**，不是「渲染器已实现」。
         """
         status = service.health()
         payload = {
@@ -197,6 +225,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "sandbox_ready": status.sandbox_ready,
             "engines": status.engines,
             "toolchain": status.toolchain,
+            "checkpoint_backend": status.checkpoint_backend,
             "capabilities": status.capabilities,
         }
         return JSONResponse(status_code=200 if status.sandbox_ready else 503, content=payload)
@@ -209,24 +238,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def plan(request: PlanRequest) -> dict[str, object]:
         """只执行导演智能体：脚本 -> 分镜表。
 
-        这是阶段一即可端到端跑通的能力，因此单独开放一个 HTTP 端点，
         方便在没有 Go 层的情况下用 curl 直接验证提示词与模型配置。
 
         LLM 调用是阻塞的，用 ``to_thread`` 挪到线程池，
         否则会卡住整个事件循环（表现为所有请求一起变慢）。
         """
         bind_job(request.job_id)
-        job_request = JobRequest(
-            job_id=request.job_id,
-            raw_script=request.raw_script,
-            target_duration_sec=request.target_duration_sec,
-            locale=request.locale,
-        )
-        if request.style_guide_json:
-            from .grpc_server import style_guide_from_json
-
-            job_request.style_guide = style_guide_from_json(request.style_guide_json)
-
+        job_request = _to_job_request(request)
         plan_result = await asyncio.to_thread(service.plan_script, job_request)
         return {
             "job_id": request.job_id,
@@ -236,12 +254,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         }
 
     @app.post("/v1/pipeline", tags=["pipeline"])
-    async def run_pipeline(request: PlanRequest) -> dict[str, object]:
-        """完整流水线（阶段二实现）。当前返回 501，明确告知而非假装成功。"""
-        raise HTTPException(
-            status_code=501,
-            detail="阶段二实现：LangGraph 多智能体流水线；阶段一请使用 /v1/plan",
-        )
+    def run_pipeline(request: PlanRequest) -> StreamingResponse:
+        """完整流水线，以 **NDJSON** 流式返回事件。
+
+        刻意声明为**同步**函数：Starlette 会把同步生成器放到线程池里执行，
+        从而避免阻塞事件循环 —— 流水线是长时间的阻塞型工作，
+        写成 async 反而会让整个服务失去响应。
+
+        调试提示：把 ``SCID_SANDBOX_WORK_DIR`` 指向临时目录，
+        避免反复调试时把磁盘写满。
+        """
+        bind_job(request.job_id)
+        job_request = _to_job_request(request)
+
+        def event_stream() -> Iterator[str]:
+            count = 0
+            for event in service.run_pipeline(job_request):
+                count += 1
+                yield json.dumps(event, ensure_ascii=False, default=str) + "\n"
+            # 显式的结束行：客户端据此判断"流正常结束"而不是"连接被掐断"。
+            yield json.dumps(
+                {"node": "stream", "message": f"流结束，共 {count} 条事件"}, ensure_ascii=False
+            ) + "\n"
+
+        return StreamingResponse(event_stream(), media_type="application/x-ndjson")
 
     return app
 
@@ -258,19 +294,24 @@ def cli() -> int:
     settings = get_settings()
     setup_logging(settings.log_level, settings.service_name, json_output=not settings.is_dev)
 
-    logger.info("SciDirector AI 大脑启动中", extra={"version": __version__, **settings.public_summary()})
+    logger.info(
+        "SciDirector AI 大脑启动中", extra={"version": __version__, **settings.public_summary()}
+    )
 
     # 工具链预检：缺失会告警但不阻止启动 —— 只有对应标签的镜头会失败，
     # 而「整个服务起不来」会让所有任务都跑不了，那是更差的结果。
-    toolchain = settings.toolchain_report()
-    missing = [name for name, ok in toolchain.items() if not ok]
+    from .renderer import renderer_availability
+
+    engines = renderer_availability(settings)
+    missing = [name for name, ok in engines.items() if not ok]
     if missing:
         logger.warning(
-            "工具链不完整，相关标签的镜头将无法渲染",
-            extra={"missing": missing, "toolchain": toolchain},
+            "部分渲染引擎不可用，相关标签的镜头将无法渲染",
+            extra={"missing_engines": missing, "engines": engines,
+                   "toolchain": settings.toolchain_report()},
         )
     else:
-        logger.info("工具链检查通过", extra={"toolchain": toolchain})
+        logger.info("全部渲染引擎就绪", extra={"engines": engines})
 
     app = create_app(settings)
 

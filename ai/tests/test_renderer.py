@@ -287,6 +287,28 @@ class TestHtmlContract:
         assert not report.ok
         assert any("window.__seek" in v.reason for v in report.errors)
 
+    def test_missing_seek_feedback_is_readable(self) -> None:
+        """违规反馈会被**原样回灌给编码智能体**，必须是通顺且可执行的指令。
+
+        契约类违规是"缺少某物"，若套用"使用了被禁止的 X"的默认措辞，
+        会生成"使用了被禁止的 缺少渲染契约…"这种病句 ——
+        而那条文本正是模型改错的唯一线索。
+        """
+        report = check_html_contract("<div>静态</div>")
+        feedback = report.summary()
+        assert "使用了被禁止的" not in feedback, f"反馈是病句：{feedback}"
+        assert "window.__seek" in feedback
+        assert "window.__ready" in feedback, "应当告诉模型还需要 __ready"
+
+    def test_cdn_feedback_is_readable(self) -> None:
+        report = check_html_contract(
+            "<script src='https://cdn.jsdelivr.net/d3.min.js'></script>\nwindow.__seek=(t)=>{}"
+        )
+        feedback = report.summary()
+        assert "使用了被禁止的" not in feedback
+        assert "没有网络" in feedback
+        assert "SVG" in feedback or "Canvas" in feedback
+
     @pytest.mark.parametrize(
         "cdn",
         ["cdn.jsdelivr.net", "unpkg.com", "cdnjs.cloudflare.com", "d3js.org"],
