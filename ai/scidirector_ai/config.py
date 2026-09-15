@@ -91,6 +91,23 @@ class Settings(BaseSettings):
     # 沙盒工作目录根；每个 job 在其下建独立子目录。
     sandbox_work_dir: str = "./.data/sandbox"
 
+    # ------------------------------------------------------------------
+    # Manim 渲染沙盒（数学镜头）
+    # ------------------------------------------------------------------
+    #: Manim 渲染的**墙钟超时**（秒）。到点即 SIGKILL 整棵进程树。
+    #:
+    #: 默认 30s：足以完成常规场景，同时能挡住死循环把机器拖死。
+    #: 一个必须知道的取舍：**首次** LaTeX 编译可能就要 20~30s（生成字体格式），
+    #: 所以冷启动环境下 30s 会偏紧。生产建议在镜像构建期预热 TeX 缓存
+    #: （见 ai/Dockerfile），或用 SCID_MANIM_TIMEOUT_SEC 调大。
+    #: 调太小会让合法但偏慢的场景被误杀，那比超时更糟 —— 因为它会静默地把
+    #: 好镜头推给人工。
+    manim_timeout_sec: int = Field(default=30, ge=5, le=1800)
+    #: Manim 渲染沙盒的**内存上限**（MB）。超限即杀整棵进程树。
+    #: LaTeX 是内存大户，且它由 Manim 派生 —— 因此限制必须覆盖整棵树
+    #: （POSIX 靠 RLIMIT_AS 继承，Windows 靠 Job Object）。
+    manim_max_memory_mb: int = Field(default=2048, ge=128, le=32768)
+
     render_fps: int = Field(default=30, ge=1, le=120)
     render_width: int = Field(default=1920, ge=128, le=7680)
     render_height: int = Field(default=1080, ge=128, le=4320)
@@ -169,6 +186,8 @@ class Settings(BaseSettings):
             "openai_api_key": "***" if self.openai_api_key else "(未配置)",
             "openai_base_url": self.openai_base_url or "(默认)",
             "sandbox_timeout_sec": self.sandbox_timeout_sec,
+            "manim_timeout_sec": self.manim_timeout_sec,
+            "manim_max_memory_mb": self.manim_max_memory_mb,
             "manim_quality": self.sandbox_manim_quality,
             "critic_score_threshold": self.critic_score_threshold,
         }
