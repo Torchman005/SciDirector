@@ -14,8 +14,8 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..logging import get_logger
-from ..sandbox.runner import ResourceLimits, SandboxRunner
+from .logging import get_logger
+from .sandbox.runner import ResourceLimits, SandboxRunner
 
 logger = get_logger(__name__)
 
@@ -214,53 +214,43 @@ def render_ambient(
     * 依赖最少（只要有 ffmpeg），因此在任何环境下都能跑通 ——
       这使 AMBIENCE 成为整条流水线最可靠的"兜底镜头"。
 
-    文字是**可选**的：找不到中文字体时自动跳过绘制，
-    而不是让整个镜头渲染失败（缺字体是环境问题，不该让内容生产停摆）。
+    文字是**可选装饰**，三级降级：
+      1. 找不到中文字体 -> 跳过绘制；
+      2. drawtext 滤镜在当前 ffmpeg 构建里不可用 -> **自动去掉文字重试**并缓存该结论；
+      3. 仍失败 -> 抛错。
+    缺字体/缺滤镜都是环境问题，不该让内容生产停摆。
     """
     target = Path(out_path).resolve()
     target.parent.mkdir(parents=True, exist_ok=True)
 
-    c0, c1, c2 = colors
-    filters = [
-        f"gradients=s={width}x{height}:c0={c0}:c1={c1}:c2={c2}:n=3"
-        f":speed=0.05:d={duration_sec:.3f}:r={fps}"
-    ]
-
     font = find_font()
-    if text and font:
-        safe_text = _escape_drawtext(text)
-        fade_out_start = max(duration_sec - 0.8, 0)
-        filters.append(
-            "drawtext="
-            f"fontfile='{font}':text='{safe_text}':"
-            f"fontcolor=white:fontsize={font_size}:"
-            # 居中 + 淡入淡出，让静态标题不至于太生硬。
-            "x=(w-text_w)/2:y=(h-text_h)/2:"
-            f"alpha='if(lt(t,0.8),t/0.8,if(gt(t,{fade_out_start:.3f}),"
-            f"max(0,({duration_sec:.3f}-t)/0.8),1))'"
-        )
-    elif text:
+    wants_text = bool(text) and bool(font)
+    if text and not font:
         logger.debug("未找到中文字体，氛围镜头将不绘制文字")
 
-    vf = ",".join(filters)
+    # 已知 drawtext 不可用时直接跳过，避免每个镜头都白跑一次失败的渲染。
+    if wants_text and not _drawtext_available():
+        logger.debug("本构建的 ffmpeg 不支持 drawtext，跳过文字绘制")
+        wants_text = False
 
-    result = runner.run(
-        [
-            _binary("ffmpeg"), "-hide_banner", "-nostdin", "-y",
-            "-f", "lavfi", "-i", vf,
-            "-t", f"{duration_sec:.3f}",
-            "-r", str(fps),
-            "-pix_fmt", "yuv420p",
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
-            "-movflags", "+faststart",
-            str(target),
-        ],
-        cwd=target.parent,
-        limits=ResourceLimits(
-            timeout_sec=max(int(duration_sec * 10) + 60, 90),
-            max_memory_mb=2048,
-        ),
-    )
+    if wants_text:
+        result = _run_ambient(target, runner, duration_sec, width, height, fps, colors,
+                              font=font, text=text, font_size=font_size)
+        if result.ok and target.is_file():
+            return str(target)
+
+        # drawtext 失败 -> 记住结论并**去掉文字重试一次**。
+        # 这一步是刻意加的：drawtext 对字体路径转义与 fontconfig 极度敏感，
+        # 不同 ffmpeg 构建的行为差异很大（本项目在 Windows 的 gyan 构建上
+        # 实际踩到过 fontconfig 缺失导致滤镜初始化失败）。
+        # 标题只是装饰，不该因为它让整个镜头渲染不出来。
+        _mark_drawtext_unavailable()
+        logger.warning(
+            "drawtext 渲染失败，改为不绘制文字重试（后续镜头将直接跳过文字）",
+            extra={"error": result.tail(300)},
+        )
+
+    result = _run_ambient(target, runner, duration_sec, width, height, fps, colors)
     if not result.ok or not target.is_file():
         raise MediaToolError(f"氛围镜头渲染失败：{result.summary()}；{result.tail(800)}")
     return str(target)
@@ -306,6 +296,103 @@ def encode_frames(
 
 
 # ---------------------------------------------------------------------------
+# 氛围镜头的内部实现
+# ---------------------------------------------------------------------------
+
+#: 进程内缓存「本构建的 ffmpeg 是否支持 drawtext」。
+#:
+#: 为什么需要缓存：drawtext 对字体路径转义与 fontconfig 极度敏感，
+#: 不同构建行为差异很大（Windows 的 gyan 构建缺 fontconfig 配置会直接失败）。
+#: 不缓存的话，每个氛围镜头都要白跑一次失败的渲染才发现这件事。
+_DRAWTEXT_STATE: dict[str, bool] = {"probed": False, "available": True}
+
+
+def _drawtext_available() -> bool:
+    return _DRAWTEXT_STATE["available"]
+
+
+def _mark_drawtext_unavailable() -> None:
+    _DRAWTEXT_STATE["available"] = False
+    _DRAWTEXT_STATE["probed"] = True
+
+
+def reset_drawtext_cache() -> None:
+    """重置 drawtext 可用性缓存（供测试使用）。"""
+    _DRAWTEXT_STATE["available"] = True
+    _DRAWTEXT_STATE["probed"] = False
+
+
+def _build_filtergraph(
+    *,
+    duration_sec: float,
+    width: int,
+    height: int,
+    fps: int,
+    colors: tuple[str, str, str],
+    font: str | None = None,
+    text: str = "",
+    font_size: int = 64,
+) -> str:
+    """构造 lavfi 滤镜图：渐变源（可选叠加 drawtext 标题）。"""
+    c0, c1, c2 = colors
+    filters = [
+        f"gradients=s={width}x{height}:c0={c0}:c1={c1}:c2={c2}:n=3"
+        f":speed=0.05:d={duration_sec:.3f}:r={fps}"
+    ]
+
+    if font and text:
+        fade_out_start = max(duration_sec - 0.8, 0)
+        filters.append(
+            "drawtext="
+            f"fontfile={_escape_fontfile(font)}:"
+            f"text='{_escape_drawtext(text)}':"
+            f"fontcolor=white:fontsize={font_size}:"
+            # 居中 + 淡入淡出，让静态标题不至于太生硬。
+            "x=(w-text_w)/2:y=(h-text_h)/2:"
+            f"alpha='if(lt(t,0.8),t/0.8,if(gt(t,{fade_out_start:.3f}),"
+            f"max(0,({duration_sec:.3f}-t)/0.8),1))'"
+        )
+    return ",".join(filters)
+
+
+def _run_ambient(
+    target: Path,
+    runner: SandboxRunner,
+    duration_sec: float,
+    width: int,
+    height: int,
+    fps: int,
+    colors: tuple[str, str, str],
+    *,
+    font: str | None = None,
+    text: str = "",
+    font_size: int = 64,
+):
+    """执行一次 lavfi 渲染。"""
+    vf = _build_filtergraph(
+        duration_sec=duration_sec, width=width, height=height, fps=fps,
+        colors=colors, font=font, text=text, font_size=font_size,
+    )
+    return runner.run(
+        [
+            _binary("ffmpeg"), "-hide_banner", "-nostdin", "-y",
+            "-f", "lavfi", "-i", vf,
+            "-t", f"{duration_sec:.3f}",
+            "-r", str(fps),
+            "-pix_fmt", "yuv420p",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+            "-movflags", "+faststart",
+            str(target),
+        ],
+        cwd=target.parent,
+        limits=ResourceLimits(
+            timeout_sec=max(int(duration_sec * 10) + 60, 90),
+            max_memory_mb=2048,
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
 # 工具函数
 # ---------------------------------------------------------------------------
 
@@ -328,15 +415,39 @@ def _parse_rational(value: object) -> float:
     return _to_float(num) / d
 
 
-def _escape_drawtext(text: str) -> str:
-    """转义 drawtext 的特殊字符。
+def _escape_fontfile(path: str) -> str:
+    """转义 drawtext 的 ``fontfile`` 值 —— 需要**两级**转义。
 
-    drawtext 的 filter 语法里 ``:`` 分隔参数、``'`` 包裹字符串、
-    ``%`` 触发时间格式展开、``\\`` 是转义符。不转义会直接让 filter 解析失败。
+    ffmpeg 的滤镜图有两次解析：先按「滤镜描述」解析（``\\`` 是转义符），
+    再按「选项值」解析（``:`` 分隔选项、``\\`` 是转义符）。
+    因此 Windows 路径里的 ``C:`` 必须写成 ``C\\\\:``（字符串里是两个反斜杠）。
+
+    这是**实测**出来的：只写 ``\\:`` 会得到
+    ``No option name near '/Windows/Fonts/msyh.ttc:...'`` ——
+    第一级解析把反斜杠吃掉后，第二级仍然在冒号处把选项切开。
+
+    注意这里不能用单引号包裹（``fontfile='C:/...'``）：引号分组在
+    ``text=`` 上有效，但对 ``fontfile=`` 不生效，实测同样报
+    ``No option name``。
     """
+    return path.replace("\\", "\\\\").replace(":", "\\\\:")
+
+
+def _escape_drawtext(text: str) -> str:
+    """转义 drawtext 的 ``text`` 值（外层用单引号包裹）。
+
+    实测结论：
+    * 单引号包裹对 ``text`` **有效**，其中的中文、全角括号、
+      ASCII 冒号都可原样保留，无需额外转义；
+    * ``%`` **不需要**转义 —— 裸 ``100%`` 渲染正常。
+      只有 ``%{...}`` 这种展开序列才特殊，而标题里几乎不会出现，
+      过度转义反而会把反斜杠渲染进画面（早期版本踩过）。
+    """
+    # 反斜杠要转义，否则会被当作滤镜图的转义符吃掉。
     escaped = text.replace("\\", "\\\\")
-    escaped = escaped.replace(":", "\\:").replace("'", "\u2019")
-    escaped = escaped.replace("%", "\\%")
-    # 换行在单行 filter 里必须转成字面量 \n
-    escaped = escaped.replace("\n", "\\n")
+    # 单引号是包裹符，替换成同形的全角右单引号，避免破坏引号配对。
+    escaped = escaped.replace("'", "\u2019")
+    # 换行在单行滤镜里会破坏语法，统一压成空格。
+    escaped = escaped.replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
     return escaped
+

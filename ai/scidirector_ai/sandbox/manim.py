@@ -36,7 +36,7 @@ from ..config import Settings, get_settings
 from ..logging import get_logger
 from ..sandbox.policy import PolicyReport, check_source
 from ..sandbox.runner import ExecResult, ResourceLimits, SandboxRunner
-from ..tools.media import MediaInfo, MediaToolError, probe
+from ..media import MediaInfo, MediaToolError, probe
 
 logger = get_logger(__name__)
 
