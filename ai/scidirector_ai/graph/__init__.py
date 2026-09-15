@@ -1,5 +1,30 @@
-"""LangGraph 流水线：状态定义与图拓扑。"""
+"""LangGraph 流水线：状态定义、节点实现、图装配与持久化。"""
 
+from .builder import (
+    ASSUMED_MAX_SHOTS,
+    NODES_PER_ATTEMPT,
+    PipelineRunner,
+    RunOutcome,
+    build_graph,
+)
+from .checkpoint import CheckpointHandle, build_checkpointer
+from .nodes import (
+    HINT_CRITIQUE,
+    HINT_DONE,
+    HINT_HUMAN,
+    HINT_NEXT,
+    HINT_OK,
+    HINT_RENDER,
+    HINT_RETRY,
+    PipelineDeps,
+    PipelineError,
+    PipelineNodes,
+    route_after_advance,
+    route_after_code,
+    route_after_critique,
+    route_after_render,
+    route_after_revise,
+)
 from .state import (
     END_CURSOR,
     NODE_ADVANCE,
@@ -18,7 +43,16 @@ from .state import (
 )
 
 __all__ = [
+    "ASSUMED_MAX_SHOTS",
     "END_CURSOR",
+    "HINT_CRITIQUE",
+    "HINT_DONE",
+    "HINT_HUMAN",
+    "HINT_NEXT",
+    "HINT_OK",
+    "HINT_RENDER",
+    "HINT_RETRY",
+    "NODES_PER_ATTEMPT",
     "NODE_ADVANCE",
     "NODE_CODE",
     "NODE_COMPOSE",
@@ -26,10 +60,23 @@ __all__ = [
     "NODE_PLAN",
     "NODE_RENDER",
     "NODE_REVISE",
+    "CheckpointHandle",
+    "PipelineDeps",
+    "PipelineError",
+    "PipelineNodes",
+    "PipelineRunner",
     "PipelineState",
+    "RunOutcome",
+    "build_checkpointer",
+    "build_graph",
     "current_shot",
     "initial_state",
     "make_event",
     "progress_ratio",
+    "route_after_advance",
+    "route_after_code",
+    "route_after_critique",
+    "route_after_render",
+    "route_after_revise",
     "shot_attempt",
 ]
