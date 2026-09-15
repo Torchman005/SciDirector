@@ -1,0 +1,22 @@
+# Docker 构建上下文排除规则。
+# 目的：把上下文从数 GB 降到 MB 级。尤其重要的是排除 .gocache 与 node_modules，
+# 它们动辄上万文件，会显著拖慢每一次 docker build。
+.git
+.gitignore
+.gocache
+.pylibs
+.data
+**/node_modules
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.ruff_cache
+**/.mypy_cache
+backend/bin
+web/dist
+docs
+*.md
+!Agent.md
+.env
+.env.*
+!.env.example

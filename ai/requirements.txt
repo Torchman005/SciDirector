@@ -1,0 +1,48 @@
+# =============================================================================
+# SciDirector AI 大脑（Python）运行时依赖
+# -----------------------------------------------------------------------------
+# 版本策略：核心框架使用「兼容上限」约束（~=），避免上游破坏性变更；
+# 渲染相关（manim/playwright）单独分组，便于在无渲染需求的场景下裁剪镜像。
+# =============================================================================
+
+# ---- Web / gRPC 服务 ----
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.30,<1.0
+grpcio>=1.66,<2.0
+grpcio-tools>=1.66,<2.0
+grpcio-health-checking>=1.66,<2.0
+protobuf>=5.28,<7.0
+python-multipart>=0.0.9
+
+# ---- 配置与校验 ----
+pydantic>=2.9,<3.0
+pydantic-settings>=2.5,<3.0
+
+# ---- 多智能体编排 ----
+langgraph>=1.0,<2.0
+langgraph-checkpoint>=2.0
+langgraph-checkpoint-postgres>=2.0
+langchain-core>=0.3
+
+# ---- LLM / VLM ----
+openai>=1.50
+
+# ---- 状态与存储 ----
+redis>=5.0
+psycopg[binary,pool]>=3.2
+
+# ---- 数学渲染（[数学] 镜头）----
+# 注意：Manim 依赖 LaTeX（TeX Live / MiKTeX），必须装在镜像里而不是 pip。
+manim>=0.18
+
+# ---- 数据/代码镜头渲染（headless 浏览器录帧）----
+playwright>=1.47
+
+# ---- 工具 ----
+structlog>=24.1
+tenacity>=9.0
+numpy>=1.26
+
+# ---- 测试 ----
+pytest>=8.0
+pytest-asyncio>=0.24

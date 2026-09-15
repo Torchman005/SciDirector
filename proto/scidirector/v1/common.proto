@@ -1,0 +1,176 @@
+// =============================================================================
+// SciDirector 跨语言公共契约
+// -----------------------------------------------------------------------------
+// 该文件是 Go 层与 Python 层之间的「唯一真源」。任何字段改动都必须：
+//   1) 遵循 proto3 兼容规则（只增不改 tag，不复用已删除的字段号）
+//   2) 执行 `make proto` 重新生成两侧代码
+//   3) 同步更新 docs/API.md 与 Agent.md §5 的智能体契约
+// =============================================================================
+
+syntax = "proto3";
+
+package scidirector.v1;
+
+option go_package = "github.com/itJinYu/SciDirector/backend/internal/pb/scidirector/v1;scidirectorv1";
+
+// -----------------------------------------------------------------------------
+// 场景标签：由导演智能体打标，决定后续「编码智能体」的路由目标。
+// 这是整套路由逻辑的枢纽 —— 标签错了，后面全错。
+// -----------------------------------------------------------------------------
+enum SceneTag {
+  SCENE_TAG_UNSPECIFIED = 0;
+
+  // [数学] 公式推导、几何演示 -> Manim（LaTeX 排版，符号天然正确）
+  SCENE_TAG_MATH = 1;
+
+  // [数据] 统计图表、趋势对比 -> D3.js / ECharts（数值来自脚本，坐标轴由代码决定）
+  SCENE_TAG_DATA = 2;
+
+  // [代码] 算法讲解、代码演示 -> 语法高亮打字动画
+  SCENE_TAG_CODE = 3;
+
+  // [氛围] 过渡、情绪铺陈、实拍感空镜 -> 素材检索 / 渐变占位
+  SCENE_TAG_AMBIENCE = 4;
+}
+
+// -----------------------------------------------------------------------------
+// 渲染引擎：由标签「确定性映射」得到，不允许模型自由发挥。
+// 映射表见 Agent.md §5.2。
+// -----------------------------------------------------------------------------
+enum RenderEngine {
+  RENDER_ENGINE_UNSPECIFIED = 0;
+  RENDER_ENGINE_MANIM = 1;    // Python + Manim + LaTeX
+  RENDER_ENGINE_D3 = 2;       // HTML + D3.js，headless 浏览器录制
+  RENDER_ENGINE_ECHARTS = 3;  // HTML + ECharts，headless 浏览器录制
+  RENDER_ENGINE_CODE_ANIM = 4;// 代码高亮打字动画
+  RENDER_ENGINE_STOCK = 5;    // 素材检索 / 程序化渐变兜底
+}
+
+// -----------------------------------------------------------------------------
+// 分镜状态机：合法迁移在 backend/internal/domain/state.go 中硬编码。
+// 流程图见 docs/DESIGN.md 与 Agent.md §6。
+// -----------------------------------------------------------------------------
+enum ShotStatus {
+  SHOT_STATUS_UNSPECIFIED = 0;
+  SHOT_STATUS_PENDING = 1;        // 待生成
+  SHOT_STATUS_GENERATING = 2;     // 生成中（LLM 正在写代码 / 改代码）
+  SHOT_STATUS_RENDERING = 3;      // 渲染中（沙盒执行代码）
+  SHOT_STATUS_CRITIQUING = 4;     // 审查中（VLM 看帧）
+  SHOT_STATUS_APPROVED = 5;       // 已完成
+  SHOT_STATUS_REJECTED = 6;       // 已打回（语义不合格）
+  SHOT_STATUS_RETRYING = 7;       // 重试中
+  SHOT_STATUS_FAILED = 8;         // 失败（技术性失败）
+  SHOT_STATUS_AWAITING_HUMAN = 9; // 等待人工介入（重试达上限，熔断）
+}
+
+// 意见来源：VLM 自动审查 or 人类审核员。二者共用同一结构，
+// 使 Coder 侧无需区分来源，简化回灌逻辑。
+enum FeedbackSource {
+  FEEDBACK_SOURCE_UNSPECIFIED = 0;
+  FEEDBACK_SOURCE_VLM = 1;
+  FEEDBACK_SOURCE_HUMAN = 2;
+  FEEDBACK_SOURCE_SYSTEM = 3; // 例如沙盒编译报错，也走同一通道回灌
+}
+
+// -----------------------------------------------------------------------------
+// 核心数据结构
+// -----------------------------------------------------------------------------
+
+// 时间区间，单位为秒。用于镜头时长与字幕轴对齐。
+message TimeRange {
+  double start_sec = 1;
+  double end_sec = 2;
+}
+
+// 分镜规格：导演智能体的产出，也是全流程的输入。
+message ShotSpec {
+  string shot_id = 1;         // 稳定 ID（由 job_id + index 派生），HITL 重做时按它定位
+  int32 index = 2;            // 在全片中的序号，从 0 开始
+  string narration = 3;       // 画外音 / 字幕文本
+  string visual_brief = 4;    // 视觉意图的自然语言描述（送给 Coder 与 Critic）
+  SceneTag tag = 5;           // 场景标签（路由依据）
+  RenderEngine engine = 6;    // 目标渲染引擎
+  double duration_sec = 7;    // 目标时长
+  repeated string keywords = 8; // 检索关键词（RAG few-shot / 素材检索）
+  string code = 9;            // 当前版本的渲染源码
+  string language = 10;       // 源码语言：python / html+js
+  map<string, string> meta = 11; // 扩展位，禁止放二进制
+}
+
+// 渲染产物：只传「路径与元数据」，视频二进制永远不走 gRPC。
+message RenderArtifact {
+  string artifact_id = 1;
+  string shot_id = 2;
+  string video_path = 3;              // MP4 片段路径（共享卷或对象存储 key）
+  string audio_path = 4;              // TTS 音轨，可空
+  string subtitle_path = 5;           // 字幕文件，可空
+  double duration_sec = 6;
+  int32 width = 7;
+  int32 height = 8;
+  int32 fps = 9;
+  int32 attempt = 10;                 // 第几次尝试产出
+  string engine = 11;                 // 产出引擎名（便于排查是哪个渲染器的问题）
+  repeated string frame_samples = 12; // 抽帧 PNG 路径，供 VLM 审查
+  int64 rendered_at_unix_ms = 13;
+  double render_cost_sec = 14;        // 渲染耗时，用于指标
+}
+
+// 审查意见：VLM 与人类共用。
+message CriticFeedback {
+  bool passed = 1;                  // 是否通过
+  double score = 2;                 // 0.0 ~ 1.0
+  repeated string issues = 3;       // 发现的问题（可读性、逻辑、节奏…）
+  repeated string suggestions = 4;  // 【必须可执行】例如「字号 24 -> 48」
+  string raw_response = 5;          // 模型原始输出，用于排查与提示词迭代
+  string model = 6;                 // 审查所用模型
+  FeedbackSource source = 7;        // 来源
+  int32 attempt = 8;                // 这是第几次尝试的审查结果
+  double logic_score = 9;           // 分维度得分：逻辑一致性
+  double readability_score = 10;    // 分维度得分：文字可读性
+  double pacing_score = 11;         // 分维度得分：节奏
+  double aesthetics_score = 12;     // 分维度得分：美观度
+  int64 created_at_unix_ms = 13;
+}
+
+// 流水线事件：Python -> Go 的实时事件，Go 转发给 WebSocket 与 Redis 事件流。
+message PipelineEvent {
+  string job_id = 1;
+  string shot_id = 2;
+  string node = 3;                  // LangGraph 节点名：plan / code / render / critique / revise
+  ShotStatus status = 4;            // 该 shot 迁移到的状态
+  string message = 5;               // 人类可读的说明，直接展示在 UI 时间线
+  int32 attempt = 6;
+  int32 shot_index = 7;
+  int32 total_shots = 8;
+  double progress = 9;              // 0.0 ~ 1.0 全任务进度
+  RenderArtifact artifact = 10;
+  CriticFeedback feedback = 11;
+  string error = 12;                // 技术性错误信息（非空时 status 通常为 FAILED）
+  int64 ts_unix_ms = 13;
+  string payload_json = 14;         // 结构化扩展负载（如分镜表快照），保持向后兼容
+}
+
+// 任务级元信息：用于 REST 查询与前端展示。
+message JobProgress {
+  string job_id = 1;
+  int32 total_shots = 2;
+  int32 approved_shots = 3;
+  int32 failed_shots = 4;
+  int32 awaiting_human_shots = 5;
+  double progress = 6;
+  int64 started_at_unix_ms = 7;
+  int64 updated_at_unix_ms = 8;
+}
+
+// 简单健康检查响应，供 Go 侧就绪探针使用。
+message HealthRequest {}
+
+message HealthResponse {
+  bool healthy = 1;
+  string version = 2;
+  string llm_provider = 3;
+  string vlm_model = 4;
+  bool sandbox_ready = 5;           // Manim/LaTeX 是否可用
+  repeated string capabilities = 6; // 例如 ["manim", "d3", "vlm"]
+  int64 uptime_sec = 7;
+}

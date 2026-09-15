@@ -1,0 +1,140 @@
+// =============================================================================
+// SciDirector AI 服务契约（Go 层 -> Python 大脑）
+// -----------------------------------------------------------------------------
+// 设计要点：
+//   1) 粗粒度 RunPipeline 用「服务端流式」，让 Go 能实时把 导演/编码/渲染/审查
+//      的每一步事件转发给 WebSocket，而不用轮询。
+//   2) 细粒度 PlanScript / GenerateShot / CritiqueShot / ReviseShot 供 HITL
+//      单点重做 —— 人类打回一个镜头时只重跑那一镜，不重跑全片（成本控制关键）。
+//   3) 所有请求都携带 job_id / shot_id，保证两侧状态可对齐、日志可串联。
+// =============================================================================
+
+syntax = "proto3";
+
+package scidirector.v1;
+
+import "scidirector/v1/common.proto";
+
+option go_package = "github.com/itJinYu/SciDirector/backend/internal/pb/scidirector/v1;scidirectorv1";
+
+// 服务端并发策略：Python 侧用线程池处理阻塞型渲染调用。
+service AiDirectorService {
+  // 就绪与能力探测。Go 侧在启动与熔断恢复时调用。
+  rpc Health(HealthRequest) returns (HealthResponse);
+
+  // ---------------------------------------------------------------------------
+  // 粗粒度：把整条 LangGraph 交给 Python 跑，Go 只消费事件流并维护对外状态。
+  // 注意：这是「长连接」，Go 侧必须设置足够大的超时与心跳策略。
+  // ---------------------------------------------------------------------------
+  rpc RunPipeline(RunPipelineRequest) returns (stream PipelineEvent);
+
+  // ---------------------------------------------------------------------------
+  // 细粒度：人类反馈闭环（HITL）与调试用。
+  // ---------------------------------------------------------------------------
+
+  // 仅执行导演智能体：脚本 -> 分镜表。
+  rpc PlanScript(PlanScriptRequest) returns (PlanScriptResponse);
+
+  // 仅执行编码 + 渲染：给定分镜（可选携带反馈）产出视频片段。
+  rpc GenerateShot(GenerateShotRequest) returns (GenerateShotResponse);
+
+  // 仅执行审查：给定产物路径与抽帧，返回 VLM 审查意见。
+  rpc CritiqueShot(CritiqueShotRequest) returns (CritiqueShotResponse);
+
+  // 人工意见回灌：把审核员的自然语言意见转成可执行指令，重新生成该镜头。
+  rpc ReviseShot(ReviseShotRequest) returns (ReviseShotResponse);
+}
+
+// -----------------------------------------------------------------------------
+// RunPipeline
+// -----------------------------------------------------------------------------
+message RunPipelineRequest {
+  string job_id = 1;
+  string raw_script = 2;            // 用户原始脚本
+  string style_guide_json = 3;      // 风格约束：配色、字体、语速、术语表
+  double target_duration_sec = 4;   // 目标总时长，导演据此分配各镜头时长
+  int32 max_attempts_per_shot = 5;  // 每镜头重试上限（熔断阈值）
+  string locale = 6;                // 语言/地区，影响 TTS 与字幕
+  bool resume = 7;                  // true 时尝试从 Postgres checkpoint 续跑
+  string checkpoint_thread_id = 8;  // LangGraph 线程 ID，通常等于 job_id
+}
+
+// -----------------------------------------------------------------------------
+// PlanScript
+// -----------------------------------------------------------------------------
+message PlanScriptRequest {
+  string job_id = 1;
+  string raw_script = 2;
+  string style_guide_json = 3;
+  double target_duration_sec = 4;
+  string locale = 5;
+}
+
+message PlanScriptResponse {
+  repeated ShotSpec shots = 1;
+  string outline = 2;               // 全片叙事大纲，便于人工审核与调试
+  int32 total_tokens = 3;           // 成本可观测量
+  double elapsed_sec = 4;
+}
+
+// -----------------------------------------------------------------------------
+// GenerateShot
+// -----------------------------------------------------------------------------
+message GenerateShotRequest {
+  string job_id = 1;
+  ShotSpec shot = 2;
+  int32 attempt = 3;                // 第几次尝试（从 1 开始）
+  CriticFeedback feedback = 4;      // 上一轮的审查/人工意见，用于修正式重写
+  string style_guide_json = 5;
+  bool draft_only = 6;              // true=低分辨率草稿渲染，用于先验证再高清重渲
+  string output_dir = 7;            // Go 指定的产物目录，保证两侧路径一致
+}
+
+message GenerateShotResponse {
+  ShotSpec shot = 1;                // 回填 code / engine 等字段后的分镜
+  RenderArtifact artifact = 2;
+  bool success = 3;
+  string error = 4;                 // 技术性失败原因（编译错误、超时等）
+  int32 total_tokens = 5;
+  double elapsed_sec = 6;
+}
+
+// -----------------------------------------------------------------------------
+// CritiqueShot
+// -----------------------------------------------------------------------------
+message CritiqueShotRequest {
+  string job_id = 1;
+  ShotSpec shot = 2;
+  RenderArtifact artifact = 3;
+  int32 attempt = 4;
+  string style_guide_json = 5;
+}
+
+message CritiqueShotResponse {
+  CriticFeedback feedback = 1;
+  bool degraded = 2;                // true=模型不可用，走了降级策略（转人工）
+  int32 total_tokens = 3;
+  double elapsed_sec = 4;
+}
+
+// -----------------------------------------------------------------------------
+// ReviseShot（人工反馈回灌）
+// -----------------------------------------------------------------------------
+message ReviseShotRequest {
+  string job_id = 1;
+  ShotSpec shot = 2;
+  string human_comment = 3;         // 审核员自然语言意见，如「坐标轴标签重叠了」
+  int32 attempt = 4;
+  string style_guide_json = 5;
+  string output_dir = 6;
+}
+
+message ReviseShotResponse {
+  ShotSpec shot = 1;                // 含改写后的源码
+  RenderArtifact artifact = 2;
+  CriticFeedback feedback = 3;      // 自动复审结果；供 UI 展示是否已修好
+  bool success = 4;
+  string error = 5;
+  int32 total_tokens = 6;
+  double elapsed_sec = 7;
+}

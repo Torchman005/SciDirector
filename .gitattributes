@@ -1,0 +1,40 @@
+# =============================================================================
+# 统一换行符策略
+# -----------------------------------------------------------------------------
+# 为什么必须有这个文件：
+#   Windows 默认 core.autocrlf=true，会把工作区的换行转成 CRLF。
+#   对 Makefile 来说这是**致命的** —— CRLF 会让 make 报
+#   "missing separator"，而这类问题只在 Linux/CI 上才暴露，
+#   本地一切正常，排查成本极高。
+#
+# 策略：仓库内一律存 LF，检出时也保持 LF（eol=lf），
+#       让 Windows / Linux / macOS / 容器内的行为完全一致。
+# =============================================================================
+
+* text=auto eol=lf
+
+# ---- 二进制：不参与任何换行转换 ----
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.webp binary
+*.ico  binary
+*.mp4  binary
+*.mkv  binary
+*.wav  binary
+*.mp3  binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.exe  binary
+*.dll  binary
+*.so   binary
+*.zip  binary
+
+# ---- 生成代码：GitHub 上折叠 diff（机器产物，人工不逐行看）----
+backend/internal/pb/**   linguist-generated=true
+ai/scidirector_ai/pb/**  linguist-generated=true
+
+# ---- 锁文件：同样折叠，避免污染 PR 视图 ----
+backend/go.sum           linguist-generated=true

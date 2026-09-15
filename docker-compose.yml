@@ -1,0 +1,221 @@
+# =============================================================================
+# SciDirector - 本地/单机生产编排
+# -----------------------------------------------------------------------------
+# 责任划分：
+#   · infra 层：redis（任务队列 + 状态）、postgres（LangGraph checkpoint）、
+#               minio（分镜片段/成片等大文件对象存储）
+#   · svc   层：ai（Python 多智能体大脑）、api（Go 网关）、worker（Go 编排/媒体）、
+#               web（React 分镜审核台）
+#
+# 启动：docker compose up -d --build
+# 仅起依赖：docker compose up -d redis postgres minio
+# =============================================================================
+
+name: scidirector
+
+x-restart: &restart
+  restart: unless-stopped
+
+x-go-build: &go-build
+  context: .
+  dockerfile: backend/Dockerfile
+
+x-common-env: &common-env
+  SCID_ENV: ${SCID_ENV:-dev}
+  SCID_LOG_LEVEL: ${SCID_LOG_LEVEL:-info}
+  SCID_REDIS_ADDR: redis:6379
+  SCID_POSTGRES_DSN: postgres://scidirector:scidirector@postgres:5432/scidirector?sslmode=disable
+  SCID_AI_GRPC_ADDR: ai:50051
+  SCID_S3_ENDPOINT: http://minio:9000
+  SCID_S3_ACCESS_KEY: ${SCID_S3_ACCESS_KEY:-scidirector}
+  SCID_S3_SECRET_KEY: ${SCID_S3_SECRET_KEY:-scidirector-secret}
+  SCID_S3_BUCKET: ${SCID_S3_BUCKET:-scidirector-artifacts}
+  SCID_MEDIA_WORK_DIR: /data/work
+
+services:
+  # ---------------------------------------------------------------------------
+  # Redis：Asynq 任务队列 + 分镜状态缓存 + 分布式锁
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7.4-alpine
+    container_name: scid-redis
+    <<: *restart
+    command:
+      - redis-server
+      - /usr/local/etc/redis/redis.conf
+    ports:
+      - "${SCID_REDIS_PORT:-6379}:6379"
+    volumes:
+      - ./deploy/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ---------------------------------------------------------------------------
+  # Postgres：LangGraph checkpointer（状态持久化 / 断点续跑）+ 任务元数据
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:17-alpine
+    container_name: scid-postgres
+    <<: *restart
+    environment:
+      POSTGRES_USER: ${SCID_PG_USER:-scidirector}
+      POSTGRES_PASSWORD: ${SCID_PG_PASSWORD:-scidirector}
+      POSTGRES_DB: ${SCID_PG_DB:-scidirector}
+    ports:
+      - "${SCID_PG_PORT:-5432}:5432"
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+      - ./deploy/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${SCID_PG_USER:-scidirector} -d ${SCID_PG_DB:-scidirector}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ---------------------------------------------------------------------------
+  # MinIO：S3 兼容对象存储，存放分镜 MP4 / 抽帧 PNG / 最终成片
+  # ---------------------------------------------------------------------------
+  minio:
+    image: minio/minio:latest
+    container_name: scid-minio
+    <<: *restart
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${SCID_S3_ACCESS_KEY:-scidirector}
+      MINIO_ROOT_PASSWORD: ${SCID_S3_SECRET_KEY:-scidirector-secret}
+    ports:
+      - "${SCID_MINIO_PORT:-9000}:9000"
+      - "${SCID_MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # 创建默认 bucket，随后退出
+  minio-init:
+    image: minio/mc:latest
+    container_name: scid-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set scid http://minio:9000 ${SCID_S3_ACCESS_KEY:-scidirector} ${SCID_S3_SECRET_KEY:-scidirector-secret} &&
+      mc mb --ignore-existing scid/${SCID_S3_BUCKET:-scidirector-artifacts} &&
+      mc anonymous set download scid/${SCID_S3_BUCKET:-scidirector-artifacts} &&
+      echo '[minio-init] bucket ready'
+      "
+
+  # ---------------------------------------------------------------------------
+  # Python AI 大脑：FastAPI(HTTP) + gRPC server + LangGraph worker pool
+  # ---------------------------------------------------------------------------
+  ai:
+    build:
+      context: .
+      dockerfile: ai/Dockerfile
+    container_name: scid-ai
+    <<: *restart
+    environment:
+      <<: *common-env
+      SCID_AI_GRPC_PORT: "50051"
+      SCID_AI_HTTP_PORT: "8000"
+      SCID_LLM_PROVIDER: ${SCID_LLM_PROVIDER:-openai}
+      SCID_LLM_MODEL: ${SCID_LLM_MODEL:-gpt-4o}
+      SCID_VLM_MODEL: ${SCID_VLM_MODEL:-gpt-4o}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      SCID_SANDBOX_TIMEOUT_SEC: "180"
+      SCID_SANDBOX_MAX_MEMORY_MB: "2048"
+    ports:
+      - "${SCID_AI_GRPC_PORT:-50051}:50051"
+      - "${SCID_AI_HTTP_PORT:-8000}:8000"
+    volumes:
+      - media-work:/data/work
+      - ./ai:/app:delegated
+    # Manim 渲染 + LaTeX 编译对 CPU/内存要求较高，按需开启
+    shm_size: "1gb"
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3).status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # Go API 网关：REST + WebSocket，接收脚本、推送进度、回流人工意见
+  # ---------------------------------------------------------------------------
+  api:
+    build:
+      <<: *go-build
+    container_name: scid-api
+    <<: *restart
+    command: ["/app/scid-api"]
+    environment:
+      <<: *common-env
+      SCID_HTTP_ADDR: 0.0.0.0:8080
+    ports:
+      - "${SCID_API_PORT:-8080}:8080"
+    volumes:
+      - media-work:/data/work
+    depends_on:
+      redis:
+        condition: service_healthy
+      ai:
+        condition: service_started
+
+  # ---------------------------------------------------------------------------
+  # Go Worker：Asynq 消费者，编排 gRPC 调用 + ffmpeg 并发合成
+  # ---------------------------------------------------------------------------
+  worker:
+    build:
+      <<: *go-build
+    container_name: scid-worker
+    <<: *restart
+    command: ["/app/scid-worker"]
+    environment:
+      <<: *common-env
+      SCID_WORKER_CONCURRENCY: ${SCID_WORKER_CONCURRENCY:-4}
+      SCID_FFMPEG_BIN: ffmpeg
+      SCID_FFMPEG_MAX_PARALLEL: ${SCID_FFMPEG_MAX_PARALLEL:-4}
+    volumes:
+      - media-work:/data/work
+    depends_on:
+      redis:
+        condition: service_healthy
+      ai:
+        condition: service_started
+
+  # ---------------------------------------------------------------------------
+  # React 分镜审核台（人类反馈闭环 HITL）
+  # ---------------------------------------------------------------------------
+  web:
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+      args:
+        VITE_API_BASE: ${VITE_API_BASE:-http://localhost:8080}
+        VITE_WS_BASE: ${VITE_WS_BASE:-ws://localhost:8080}
+    container_name: scid-web
+    <<: *restart
+    ports:
+      - "${SCID_WEB_PORT:-5173}:80"
+    depends_on:
+      - api
+
+volumes:
+  redis-data:
+  pg-data:
+  minio-data:
+  media-work:

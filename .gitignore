@@ -216,3 +216,62 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# =============================================================================
+# SciDirector 项目补充
+# =============================================================================
+
+# ---- 运行时数据（媒体中间产物、渲染输出、日志）----
+.data/
+*.mp4
+*.mkv
+*.wav
+*.srt
+*.ass
+renders/
+media/
+logs/
+
+# ---- Go ----
+# 本项目把 GOMODCACHE/GOCACHE 固定在仓库内以避免污染全局环境，绝不入库
+.gocache/
+backend/bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+vendor/
+
+# ---- Python：仓库内的依赖与临时目录 ----
+# .pylibs 用于存放不便装进全局环境的依赖（例如受限环境下的 grpcio），
+# 它体积大且可由 scripts/dev-env.ps1 重建，因此不入库。
+.pylibs/
+.tmp/
+.wheels/
+
+# ---- Node / 前端 ----
+node_modules/
+web/dist/
+web/.vite/
+*.local
+.pnpm-store/
+
+# ---- 环境与密钥 ----
+.env
+.env.*
+!.env.example
+
+# ---- IDE / OS ----
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# ---- 构建产物 ----
+dist/
+coverage/
+*.prof
