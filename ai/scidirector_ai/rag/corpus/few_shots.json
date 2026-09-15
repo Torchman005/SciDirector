@@ -1,0 +1,66 @@
+{
+  "_comment": "SciDirector Few-shot 语料。每条都是人工精选、经过验证的范式，用于在编码智能体生成前注入上下文。新增范例时请确保：1) 代码可直接运行；2) summary 写清「为什么这样写」而不是「写了什么」；3) keywords 用可检索的技术词；4) HTML 类必须实现 window.__seek(t) 纯函数式动画。",
+  "_version": "1.0",
+  "examples": [
+    {
+      "id": "math-001",
+      "title": "公式逐步高亮推导",
+      "tag": "MATH",
+      "engine": "manim",
+      "keywords": ["公式", "推导", "高亮", "MathTex", "逐步"],
+      "summary": "把公式拆成多个 SubString 分批高亮，一次只强调一处，观众视线才有落点。字号用 72 并 scale_to_fit_width 兜底，避免长公式溢出画面。",
+      "source": "internal",
+      "code": "from manim import *\n\n\nclass SciShotScene(Scene):\n    def construct(self):\n        self.camera.background_color = \"#0B1020\"\n\n        title = Text(\"动量守恒\", font_size=48, color=WHITE)\n        title.to_edge(UP, buff=0.7)\n\n        eq = MathTex(r\"m_1 v_1 + m_2 v_2 = m_1 v_1' + m_2 v_2'\", font_size=64)\n        eq.scale_to_fit_width(config.frame_width - 1.5)\n\n        self.play(Write(title), run_time=1.2)\n        self.play(FadeIn(eq, shift=UP * 0.3), run_time=1.5)\n        self.wait(0.6)\n\n        # 逐段高亮：先左侧（碰撞前），再右侧（碰撞后）。\n        left = eq[0][0:9]\n        right = eq[0][10:]\n        self.play(left.animate.set_color(YELLOW), run_time=1.3)\n        self.wait(0.5)\n        self.play(right.animate.set_color(GREEN), run_time=1.3)\n        self.wait(1.0)\n"
+    },
+    {
+      "id": "math-002",
+      "title": "几何对象按构造顺序生长",
+      "tag": "MATH",
+      "engine": "manim",
+      "keywords": ["几何", "圆", "切线", "标注", "Create", "GrowFromCenter"],
+      "summary": "几何演示的关键是让观众看清构造顺序：先画容器（圆），再画被定义的对象（切线），最后才加标注。标注用 font_size>=44 并放在空白一侧，避免压住图形。",
+      "source": "internal",
+      "code": "from manim import *\n\n\nclass SciShotScene(Scene):\n    def construct(self):\n        self.camera.background_color = \"#0B1020\"\n        random.seed(0)\n\n        circle = Circle(radius=1.8, color=BLUE, stroke_width=6)\n        center = Dot(circle.get_center(), color=WHITE)\n\n        anchor = circle.point_at_angle(0.6 * PI)\n        radius = Line(circle.get_center(), anchor, color=YELLOW, stroke_width=5)\n        tangent = Line(anchor + LEFT * 1.6, anchor + RIGHT * 1.6, color=GREEN, stroke_width=5)\n\n        label_r = MathTex(r\"r\", font_size=52, color=YELLOW)\n        label_r.next_to(radius.get_center(), UP + LEFT, buff=0.25)\n        label_t = Text(\"切线\", font_size=44, color=GREEN)\n        label_t.next_to(tangent, DOWN, buff=0.35)\n\n        self.play(Create(circle), run_time=1.4)\n        self.play(FadeIn(center), Create(radius), run_time=1.4)\n        self.play(Write(label_r), run_time=1.0)\n        self.play(Create(tangent), run_time=1.4)\n        self.play(Write(label_t), run_time=1.0)\n        self.wait(1.2)\n"
+    },
+    {
+      "id": "data-001",
+      "title": "横向条形图依次生长",
+      "tag": "DATA",
+      "engine": "d3",
+      "keywords": ["条形图", "柱状图", "对比", "数值标签", "生长"],
+      "summary": "三个要点：1) 进度完全由 window.__seek(t) 纯函数决定，不能用 CSS transition（逐帧截图下不会推进）；2) 每个柱子有独立时间窗，形成节奏；3) 数值标签跟随柱长并用 dominant-baseline 垂直居中，避免压在柱子上。",
+      "source": "internal",
+      "code": "<div id=\"chart\"></div>\n<script>\n  const W = 1920, H = 1080, DUR = 8;\n  const NS = \"http://www.w3.org/2000/svg\";\n  const el = (t) => document.createElementNS(NS, t);\n\n  // 数值直接来自脚本，不要现场随机生成 —— 科学视频的数据必须可追溯。\n  const DATA = [\n    { name: \"实验组\", value: 92 },\n    { name: \"对照组 A\", value: 61 },\n    { name: \"对照组 B\", value: 44 },\n    { name: \"基线\", value: 23 },\n  ];\n\n  const svg = el(\"svg\");\n  svg.setAttribute(\"viewBox\", `0 0 ${W} ${H}`);\n  svg.setAttribute(\"width\", W);\n  svg.setAttribute(\"height\", H);\n  document.getElementById(\"chart\").appendChild(svg);\n\n  const title = el(\"text\");\n  title.textContent = \"各组指标对比\";\n  title.setAttribute(\"x\", W / 2);\n  title.setAttribute(\"y\", 110);\n  title.setAttribute(\"text-anchor\", \"middle\");\n  title.setAttribute(\"font-size\", 56);\n  title.setAttribute(\"fill\", \"#FFFFFF\");\n  svg.appendChild(title);\n\n  const PAD = { l: 340, r: 240, t: 180, b: 140 };\n  const maxV = Math.max(...DATA.map((d) => d.value));\n  const rowH = (H - PAD.t - PAD.b) / DATA.length;\n  const maxW = W - PAD.l - PAD.r;\n\n  const rows = DATA.map((d, i) => {\n    const y = PAD.t + rowH * i + rowH * 0.18;\n    const h = rowH * 0.62;\n\n    const label = el(\"text\");\n    label.textContent = d.name;\n    label.setAttribute(\"x\", PAD.l - 32);\n    label.setAttribute(\"y\", y + h * 0.72);\n    label.setAttribute(\"text-anchor\", \"end\");\n    label.setAttribute(\"font-size\", 40);\n    label.setAttribute(\"fill\", \"#E6ECFF\");\n    svg.appendChild(label);\n\n    const bar = el(\"rect\");\n    bar.setAttribute(\"x\", PAD.l);\n    bar.setAttribute(\"y\", y);\n    bar.setAttribute(\"height\", h);\n    bar.setAttribute(\"rx\", 12);\n    bar.setAttribute(\"fill\", i === 0 ? \"#FF6B6B\" : \"#4F8CFF\");\n    svg.appendChild(bar);\n\n    const value = el(\"text\");\n    value.setAttribute(\"font-size\", 44);\n    value.setAttribute(\"fill\", \"#FFFFFF\");\n    value.setAttribute(\"dominant-baseline\", \"middle\");\n    svg.appendChild(value);\n\n    return { bar, value, d, y, h };\n  });\n\n  window.__seek = (t) => {\n    const p = Math.min(Math.max(t / DUR, 0), 1);\n    title.setAttribute(\"opacity\", Math.min(p / 0.12, 1));\n    rows.forEach((row, i) => {\n      const start = 0.1 + i * 0.16;\n      const local = Math.min(Math.max((p - start) / 0.4, 0), 1);\n      const eased = 1 - Math.pow(1 - local, 3);\n      const w = Math.max(maxW * (row.d.value / maxV) * eased, 0);\n      row.bar.setAttribute(\"width\", w);\n      row.value.textContent = Math.round(row.d.value * eased);\n      row.value.setAttribute(\"x\", PAD.l + w + 24);\n      row.value.setAttribute(\"y\", row.y + row.h / 2);\n      row.value.setAttribute(\"opacity\", eased.toFixed(3));\n    });\n  };\n\n  window.__seek(0);\n  window.__ready = true;\n</script>\n"
+    },
+    {
+      "id": "data-002",
+      "title": "折线趋势图与坐标轴",
+      "tag": "DATA",
+      "engine": "echarts",
+      "keywords": ["折线图", "趋势", "坐标轴", "刻度", "时间序列"],
+      "summary": "折线图最常见的打回原因是刻度标签重叠：把刻度数量控制在 4~6 个，并给坐标轴加单位。用 path 逐段拼接实现「逐段画出」，进度同样由 t 决定，标签放在点上方 44px 避免压住折线。",
+      "source": "internal",
+      "code": "<div id=\"chart\"></div>\n<script>\n  const W = 1920, H = 1080, DUR = 9;\n  const NS = \"http://www.w3.org/2000/svg\";\n  const el = (t) => document.createElementNS(NS, t);\n\n  const POINTS = [\n    { x: \"2018\", y: 12 }, { x: \"2019\", y: 19 }, { x: \"2020\", y: 31 },\n    { x: \"2021\", y: 46 }, { x: \"2022\", y: 74 }, { x: \"2023\", y: 108 },\n  ];\n\n  const svg = el(\"svg\");\n  svg.setAttribute(\"viewBox\", `0 0 ${W} ${H}`);\n  svg.setAttribute(\"width\", W);\n  svg.setAttribute(\"height\", H);\n  document.getElementById(\"chart\").appendChild(svg);\n\n  const PAD = { l: 240, r: 180, t: 220, b: 220 };\n  const plotW = W - PAD.l - PAD.r;\n  const plotH = H - PAD.t - PAD.b;\n  const maxY = 120;\n  const px = (i) => PAD.l + (plotW * i) / (POINTS.length - 1);\n  const py = (v) => PAD.t + plotH - (plotH * v) / maxY;\n\n  const axis = el(\"path\");\n  axis.setAttribute(\"d\", `M ${PAD.l} ${PAD.t} V ${PAD.t + plotH} H ${PAD.l + plotW}`);\n  axis.setAttribute(\"stroke\", \"#3A4763\");\n  axis.setAttribute(\"stroke-width\", 3);\n  axis.setAttribute(\"fill\", \"none\");\n  svg.appendChild(axis);\n\n  const yTitle = el(\"text\");\n  yTitle.textContent = \"累计量（万次）\";\n  yTitle.setAttribute(\"x\", 60);\n  yTitle.setAttribute(\"y\", PAD.t - 50);\n  yTitle.setAttribute(\"font-size\", 38);\n  yTitle.setAttribute(\"fill\", \"#9FB3D9\");\n  svg.appendChild(yTitle);\n\n  // 刻度只留 5 条，避免标签互相挤压（这是最常被打回的一点）。\n  for (let i = 0; i <= 4; i++) {\n    const v = (maxY / 4) * i;\n    const y = py(v);\n    const grid = el(\"line\");\n    grid.setAttribute(\"x1\", PAD.l);\n    grid.setAttribute(\"x2\", PAD.l + plotW);\n    grid.setAttribute(\"y1\", y);\n    grid.setAttribute(\"y2\", y);\n    grid.setAttribute(\"stroke\", \"#1E2740\");\n    grid.setAttribute(\"stroke-width\", 2);\n    svg.appendChild(grid);\n\n    const tick = el(\"text\");\n    tick.textContent = String(v);\n    tick.setAttribute(\"x\", PAD.l - 24);\n    tick.setAttribute(\"y\", y + 12);\n    tick.setAttribute(\"text-anchor\", \"end\");\n    tick.setAttribute(\"font-size\", 36);\n    tick.setAttribute(\"fill\", \"#9FB3D9\");\n    svg.appendChild(tick);\n  }\n\n  POINTS.forEach((p, i) => {\n    const tick = el(\"text\");\n    tick.textContent = p.x;\n    tick.setAttribute(\"x\", px(i));\n    tick.setAttribute(\"y\", PAD.t + plotH + 60);\n    tick.setAttribute(\"text-anchor\", \"middle\");\n    tick.setAttribute(\"font-size\", 36);\n    tick.setAttribute(\"fill\", \"#9FB3D9\");\n    svg.appendChild(tick);\n  });\n\n  const path = el(\"path\");\n  path.setAttribute(\"fill\", \"none\");\n  path.setAttribute(\"stroke\", \"#4F8CFF\");\n  path.setAttribute(\"stroke-width\", 6);\n  path.setAttribute(\"stroke-linecap\", \"round\");\n  svg.appendChild(path);\n\n  const dots = POINTS.map((p, i) => {\n    const dot = el(\"circle\");\n    dot.setAttribute(\"cx\", px(i));\n    dot.setAttribute(\"cy\", py(p.y));\n    dot.setAttribute(\"r\", 12);\n    dot.setAttribute(\"fill\", \"#FF6B6B\");\n    svg.appendChild(dot);\n    return dot;\n  });\n\n  const labels = POINTS.map((p, i) => {\n    const t = el(\"text\");\n    t.textContent = String(p.y);\n    t.setAttribute(\"x\", px(i));\n    t.setAttribute(\"text-anchor\", \"middle\");\n    t.setAttribute(\"font-size\", 38);\n    t.setAttribute(\"fill\", \"#FFFFFF\");\n    svg.appendChild(t);\n    return t;\n  });\n\n  window.__seek = (t) => {\n    const p = Math.min(Math.max(t / DUR, 0), 1);\n    const drawn = p * (POINTS.length - 1);\n    let d = `M ${px(0)} ${py(POINTS[0].y)}`;\n    for (let i = 1; i < POINTS.length; i++) {\n      const seg = Math.min(Math.max(drawn - (i - 1), 0), 1);\n      const x = px(i - 1) + (px(i) - px(i - 1)) * seg;\n      const y = py(POINTS[i - 1].y) + (py(POINTS[i].y) - py(POINTS[i - 1].y)) * seg;\n      d += ` L ${x} ${y}`;\n    }\n    path.setAttribute(\"d\", d);\n\n    POINTS.forEach((pt, i) => {\n      const vis = drawn >= i;\n      dots[i].setAttribute(\"opacity\", vis ? 1 : 0);\n      labels[i].setAttribute(\"opacity\", vis ? 1 : 0);\n      // 数值标签放在点上方 44px，避免压住折线。\n      labels[i].setAttribute(\"y\", py(pt.y) - 44);\n    });\n  };\n\n  window.__seek(0);\n  window.__ready = true;\n</script>\n"
+    },
+    {
+      "id": "code-001",
+      "title": "代码逐行打字与高亮",
+      "tag": "CODE",
+      "engine": "code_anim",
+      "keywords": ["代码", "打字", "高亮", "逐行", "算法"],
+      "summary": "核心是「每字符耗时反推」：先把总时长减去收尾停顿，再除以总字符数，保证动画在时长内正好打完。光标闪烁必须由 t 推导（Math.floor(t*3)%2），用 setInterval 在逐帧截图下不会动。",
+      "source": "internal",
+      "code": "<div id=\"code\" style=\"padding:80px 120px; box-sizing:border-box; font-family:'Noto Sans Mono',Consolas,monospace; font-size:40px; line-height:1.7; color:#E6ECFF;\"></div>\n<script>\n  const DUR = 10;\n  const LINES = [\n    \"def fib(n):\",\n    \"    if n < 2:\",\n    \"        return n\",\n    \"    return fib(n - 1) + fib(n - 2)\",\n  ];\n\n  const KEYWORDS = /\\b(def|return|if|else|for|while|in|import|from|class|lambda|None|True|False)\\b/g;\n\n  const escapeHtml = (s) =>\n    s.replace(/&/g, \"&amp;\").replace(/</g, \"&lt;\").replace(/>/g, \"&gt;\");\n\n  const highlight = (s) =>\n    escapeHtml(s)\n      .replace(/(#.*)$/g, '<span style=\"color:#6A9955\">$1</span>')\n      .replace(/('[^']*'|\"[^\"]*\")/g, '<span style=\"color:#CE9178\">$1</span>')\n      .replace(/\\b(\\d+)\\b/g, '<span style=\"color:#B5CEA8\">$1</span>')\n      .replace(KEYWORDS, '<span style=\"color:#569CD6\">$1</span>');\n\n  const host = document.getElementById(\"code\");\n  const rows = LINES.map(() => {\n    const div = document.createElement(\"div\");\n    host.appendChild(div);\n    return div;\n  });\n\n  // 反推每字符耗时，留 0.8s 收尾停顿，保证 DUR 秒内正好打完。\n  const totalChars = LINES.reduce((acc, line) => acc + line.length + 1, 0);\n  const perChar = (DUR - 0.8) / Math.max(totalChars, 1);\n\n  window.__seek = (t) => {\n    let budget = Math.max(t, 0) / perChar;\n    const finished = budget >= totalChars;\n    LINES.forEach((line, i) => {\n      const shown = Math.max(0, Math.min(line.length, Math.floor(budget)));\n      budget -= line.length + 1;\n      const done = shown >= line.length;\n      // 光标闪烁由 t 推导：逐帧截图下 setInterval 不会推进。\n      const caret = !done && Math.floor(t * 3) % 2 === 0 ? \"▍\" : \"\";\n      rows[i].innerHTML = highlight(line.slice(0, shown)) + caret;\n      const active = !done && !finished;\n      rows[i].style.background = active ? \"rgba(79,140,255,0.14)\" : \"transparent\";\n      rows[i].style.borderLeft = active ? \"6px solid #4F8CFF\" : \"6px solid transparent\";\n      rows[i].style.paddingLeft = \"18px\";\n    });\n  };\n\n  window.__seek(0);\n  window.__ready = true;\n</script>\n"
+    },
+    {
+      "id": "ambience-001",
+      "title": "氛围镜头（程序化渐变）",
+      "tag": "AMBIENCE",
+      "engine": "stock",
+      "keywords": ["开场", "过渡", "标题", "渐变", "氛围"],
+      "summary": "氛围镜头不需要写任何代码：由 ffmpeg 的 lavfi 渐变源程序化生成，耗时不到 2 秒。因此编码智能体会直接跳过模型调用，标题由系统从画外音首句截取。",
+      "source": "internal",
+      "code": ""
+    }
+  ]
+}
