@@ -49,6 +49,9 @@ type Deps struct {
 	Queue  *queue.Client
 	AI     *ai.Client
 	Hub    *ws.Hub
+	// Inspector 提供队列深度与失败情况。可为 nil（未配置时接口返回 501），
+	// 这样 api 进程在没有 Redis 观测权限的部署里仍能正常启动。
+	Inspector *queue.Inspector
 	// StartedAt 用于 /version 报告进程运行时长。
 	StartedAt time.Time
 	Version   string

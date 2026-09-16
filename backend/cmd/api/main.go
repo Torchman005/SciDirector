@@ -77,12 +77,19 @@ func run() error {
 
 	hub := ws.NewHub(cfg.HTTP.CORSAllowedOrigins, logger)
 
+	// 队列观测。构造本身不连 Redis（Asynq 的 Inspector 是惰性建连的），
+	// 因此这里失败也不该阻断 api 启动 —— 观测能力缺失不该让网关不可用。
+	inspector := queue.NewInspector(cfg.Redis, cfg.Queue)
+	defer func() { _ = inspector.Close() }()
+	logger.Info("队列观测已启用", "queues", inspector.Queues())
+
 	deps := httpapi.Deps{
 		Config:    cfg,
 		Store:     st,
 		Queue:     q,
 		AI:        aiClient,
 		Hub:       hub,
+		Inspector: inspector,
 		StartedAt: time.Now().UTC(),
 		Version:   version,
 	}

@@ -47,6 +47,11 @@ func NewRouter(s *Server, deps Deps) *gin.Engine {
 	{
 		v1.POST("/generate", s.HandleGenerate)
 
+		// 队列可观测：让「任务卡住了吗」有一个不需要翻 Redis 的答案。
+		// 放在 /api/v1 下而不是 /healthz：它是运维视角的诊断信息，
+		// 不参与编排系统的存活/就绪判定 —— 队列积压不该让实例被摘除。
+		v1.GET("/queue/stats", s.HandleQueueStats)
+
 		jobs := v1.Group("/jobs/:jobID")
 		{
 			jobs.GET("", s.HandleGetJob)
@@ -66,6 +71,31 @@ func NewRouter(s *Server, deps Deps) *gin.Engine {
 	})
 
 	return r
+}
+
+// HandleQueueStats 返回队列深度与失败情况。
+//
+// 这些指标解决的具体问题：
+//   - size/retry 持续不为 0 → 有任务在反复失败；
+//   - archived → 任务级最终失败，需要人工介入；
+//   - latency_sec → 用户要等多久才开始执行。它比深度更能说明体感：
+//     深度 3 但都等了 10 分钟，与深度 300 但只等 1 秒，是完全不同的两种问题。
+//
+// 采集失败返回 503 而不是 500：这是依赖不可用（Redis 抖动），
+// 而不是服务端代码错误，语义上更准确，也便于告警分流。
+func (s *Server) HandleQueueStats(c *gin.Context) {
+	if s.deps.Inspector == nil {
+		abortWith(c, http.StatusNotImplemented, ErrCodeInternal,
+			"队列观测未启用（未配置 Inspector）", nil)
+		return
+	}
+
+	stats, err := s.deps.Inspector.Stats(c.Request.Context())
+	if err != nil {
+		abortWith(c, http.StatusServiceUnavailable, ErrCodeInternal, "队列状态采集失败", err)
+		return
+	}
+	c.JSON(http.StatusOK, stats)
 }
 
 // HandleJobWS 处理审核台的 WebSocket 连接。

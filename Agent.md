@@ -130,12 +130,18 @@ SciDirector/
   - [x] LangGraph 图拓扑 + 带反馈循环 + 重试上限 + 熔断转人工 + checkpoint 持久化
   - [x] RAG：Few-shot 优秀案例检索（可解释打分，中文用 CJK 二元组匹配）
   - [x] 5 个 RPC 全部实现并经 Go 侧 gRPC 端到端调通（`RunPipeline` 服务端流式）
-- [ ] **阶段三 · Go 编排与媒体处理**
+- [x] **阶段三 · Go 编排与媒体处理**
   - [x] `/api/v1/generate` → Redis 队列
   - [x] Worker 消费 → gRPC 流式调用 → 状态推进
   - [x] ffmpeg 并发归一化 + concat 合成（基础版）
-  - [ ] 全片 TTS 配音与字幕时间轴对齐
-  - [ ] 转场与统一调色
+  - [x] **并发收敛**：任务内 Worker Pool + 进程级全局闸门（防 OOM 两道防线）
+  - [x] **进程生命周期**：`WaitDelay` 兜底 + 杀进程树 + 单命令硬超时
+  - [x] **跨镜头转场**（xfade / acrossfade）与**统一规格＋调色**（色彩范围转换与打标）
+  - [x] **字幕时间轴对齐 + 软字幕封装**（mov_text）
+  - [ ] 全片 TTS 配音 —— **待办**：本机无可用引擎，且需先确定服务商。接口已就绪
+  - [x] **局部重渲染**：只重渲某几秒并拼回原片（按引擎能力如实降级）
+  - [x] **产物归档**：none/local/s3 三后端 + 本地卷保留策略
+  - [x] **队列可观测**：`GET /api/v1/queue/stats`
 - [ ] **阶段四 · 反馈闭环与前端**
   - [x] WebSocket 服务端（快照重放 + 扇出 + 背压 + 多实例 Pub/Sub）
   - [ ] React 分镜审核台
@@ -269,6 +275,12 @@ make up / make down   # docker compose 全栈
 | **含非 ASCII 的 `.ps1` 必须带 UTF-8 BOM** | Windows PowerShell 5.1 对**无 BOM** 的脚本按 ANSI（中文系统上是 GBK）解码。中文注释被误码后会产生游离引号/反引号并**吞掉换行**，导致整个文件无法解析，而报错行号还指向错误的位置（本项目 `gen-proto.ps1` 与 `dev-env.ps1` 都因此完全不可用，报出的 `Unexpected token 'import'` 让排查方向完全跑偏）。注意：这个环境的 `pwsh` 实际就是 5.1，不能指望「新版本默认 UTF-8」 |
 | `.ps1` 里给原生命令做能力探测时，必须临时把 `$ErrorActionPreference` 置为 `Continue` | PowerShell 会把原生命令写到 stderr 的任何内容包装成 `NativeCommandError`，而 `2>$null` **只丢弃输出、挡不住这个错误**。在 `Stop` 下，「探测到某工具未安装」这条完全正常的退路会直接中断脚本 —— 表现为「本该自动回退的路径永远走不到」 |
 | `.ps1` 避免反引号续行与 here-string | 两者对行边界/编码异常极度敏感，一旦解码出错会连带整份文件不可解析。外部命令一律用**数组参数**传递（`& cmd @args`），没有续行符也不受引号转义影响 |
+| `asynq.Inspector.GetQueueInfo` 对**不存在的队列**返回的是内部 RDB 错误，既不包装 `ErrQueueNotFound` 也无从判定 | Asynq 自己的文档说会 wrap，实际实现没有（`GetQueueInfo` 直接透传 `rdb.CurrentStats` 的错误）。判定「队列不存在」必须改用文档化的 `Inspector.Queues()` 先列现存队列。更根本的一条：**队列不存在 == 队列为空**，应当返回全 0 而不是错误 —— 否则观测接口会在最需要它的时刻（全新部署上确认「没东西卡住」）整个失败 |
+| concat 滤镜同时处理音视频时，输入必须**交替排列**为 `[v0][a0][v1][a1]` | 写成 `[v0][v1]…[a0][a1]…` 时 ffmpeg 不会说「顺序错了」，只报像素格式/采样率之类的费解错误 |
+| 分流**音频**必须用 `asplit`，`split` 是视频专用滤镜 | 用错时 ffmpeg 抛出的是「Media type mismatch … (video) … (audio)」，极具误导性，会让人以为是标签或流选择写错了 |
+| 删除是不可逆操作，保留策略要做成**纯函数** | `PlanCleanup` 不碰 IO、不看时间，因此「什么情况下会删什么」可被完整断言；散落在若干 if 里的隐式删除行为无法被测试，也没人敢改 |
+| 归档失败时**不清理本地**，且归档/清理失败都不改变任务结果 | 「宁可占盘，不可丢件」—— 磁盘可以加，数据丢了找不回来；而产物已生成、任务已成功时，因对象存储抖动判失败，用户看到的是「失败」而片子其实好好的 |
+| 对象键必须清洗文件名 | 文件名可能来自渲染器并含 `..` 或路径分隔符。对象存储的键没有目录概念，但按前缀授权的策略会因此被绕过 |
 | 模型调用的意图必须**显式传参**（`llm.Task.*`），禁止从提示词文本嗅探关键词 | mock 客户端曾因导演提示词含「审查」二字而返回错误结构，被静默解析成「空分镜表」——这类「看起来成功」的失败形态比抛异常危险得多 |
 | 派生的模拟数据必须**结构上等价**于真实产出 | 否则 mock 模式会掩盖真实的解析/校验问题，联调通过但上线即挂 |
 | 仓库内自带的依赖目录（`.pylibs`）必须置于 `PYTHONPATH` **末尾** | 它可能包含被深度依赖的包（如 `typing_extensions`），置于前面会遮蔽版本更完整的同名包 |
@@ -306,3 +318,4 @@ make up / make down   # docker compose 全栈
 | v0.1.1 | 阶段一（修订） | **回退阶段二的提前实现**，把仓库收敛到经过验证的阶段一状态：移除编码/审查智能体、沙盒运行器、渲染与媒体工具、RAG、图拓扑与 checkpointer；`RunPipeline` / `GenerateShot` / `CritiqueShot` / `ReviseShot` 恢复为返回 `UNIMPLEMENTED`。保留阶段一两处前置能力（导演智能体、沙盒静态安全策略）。修复 `scripts/dev-env.ps1` 的 `PYTHONPATH` 顺序缺陷（`.pylibs` 必须置于**末尾**，否则会遮蔽版本更完整的同名包，表现为 pydantic 导入时莫名的 `cannot import name`） |
 | v0.1.2 | 阶段一（修复） | 手工联调实测发现并修复两项语义缺陷：① `UNIMPLEMENTED` 不再被 Asynq 重试（新增哨兵 `ai.ErrNotImplemented`，worker 返回 `asynq.SkipRetry` 直接归档）；② `sandbox_ready` 改为「至少一个渲染引擎可用」并新增结构化 `engines` 字段，使实现与文档一致。新增 `scripts/smoke-grpc.py`、`scripts/smoke-ws.py` 两个可复用冒烟脚本与 `make smoke*` 目标；README 新增「手动测试」章节。Go 测试 +1 包，Python 测试 71 → 83 |
 | v0.2.0 | 阶段二 | **Python 多智能体核心落地，Go 侧全链路打通**。沙盒执行器（超时 30s 强杀 + 内存上限，Windows Job Object / POSIX rlimit 双实现，留痕 `killed_reason`）→ Manim 沙盒（四层防御）→ 媒体层（抽帧含首末帧、lavfi 环境镜头、drawtext 三级降级）→ 渲染器抽象（Manim/Html/Ambient 确定性路由 + 就绪探测 + HTML 契约校验）→ 编码智能体（按标签选提示词、RAG 召回、策略校验后重写）→ 审查智能体（分维度加权 + 硬性下限 + 程序侧复核 + VLM 不可用降级转人工，中文强约束 JSON 提示词）→ RAG（可解释打分，中文走 CJK 二元组）→ LangGraph 图（带反馈循环、`route_hint` 路由、重试上限熔断转 `AWAITING_HUMAN`、Postgres checkpointer 显式降级）→ `pbconv` 双向转换 → 5 个 RPC 全部实现。拆分顺序按依赖自底向上，每层落地即测。Python 测试 83 → 368；`go vet` / `gofmt` / `go test ./internal/...` 全绿；`scripts/smoke-grpc.py` 25/25 通过；真实端到端任务 `job-799a0041b7ad3434` 产出 2 个可播放 MP4、2 个镜头按预期熔断。验收明细见 `docs/ROADMAP.md` |
+| v0.3.0 | 阶段三 | **Go 编排与媒体处理**。①**FFmpeg 并发收敛**为两道防线：任务内 Worker Pool（`errgroup.SetLimit`，内存 O(limit) 而非 O(分镜数)）+ 进程级全局单例闸门（真正的 OOM 防线），并修掉「每次合成新建信号量导致全局上限随任务数成倍放大」与「`Probe` 完全绕过闸门」两个缺陷；进程生命周期加固（`WaitDelay` 兜住孙进程占用管道导致的 `Wait` 永久阻塞、自定义 `Cancel` 杀整棵进程树、单命令硬超时）。②**转场与统一规格**：`PlanTransitions` 纯函数（offset 必须基于累积游标）、音频同长 `acrossfade`、Normalize 显式转换并打标色彩范围（解决 Manim 与浏览器录制的质感割裂）。③**字幕**：窗口建立在转场后的时间轴、跨语言语音权重、最短显示时长、SRT 输出；软字幕 mov_text 封装。④**局部重渲染**：`PlanSplice` 纯函数 + 单次 filter_complex 拼接，按引擎能力如实降级（Manim 按动画序号渲染，无法按秒截取）。⑤**产物归档**：none/local/s3 三后端 + 保留策略（纯函数）。⑥**队列可观测**：`GET /api/v1/queue/stats`。测试：Go media 包 0 → 68 项、archive 包 27 项、queue 包 6 项；Python 368 → 377。**同时修复三处端到端才能发现的缺陷**：`MuxFinal` 的 `-map` 下标写死导致软字幕永远封不进去、`-shortest` 把末尾字幕压成零长、`filepath.ToSlash` 破坏 concat 引号转义；以及两处仓库级问题：`.gitignore` 未锚定的 `media/` 吞掉整个 Go 包、含中文的 `.ps1` 缺 UTF-8 BOM 导致脚本完全不可解析。**待办**：全片 TTS 配音、B4/B5 验收、s3 归档路径的端到端验证 |
