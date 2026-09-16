@@ -76,6 +76,35 @@ class RenderRequest:
     #: 额外注入给子进程的环境变量（仅受信任的调用方，例如测试）。
     env_extra: dict[str, str] = field(default_factory=dict)
 
+    #: ---- 局部重渲染 ----
+    #: 只渲染 [range_start_sec, range_end_sec) 这一段，用于「只改了一处细节」。
+    #:
+    #: 只在**时间轴可控**的引擎上有意义：AMBIENCE（lavfi）与 HTML（逐帧 seek）
+    #: 可以按秒精确截取；MANIM 是按动画序号驱动渲染的，
+    #: 「第 3~5 秒」无法可靠映射到动画区间，因此会忽略该区间并整镜重渲。
+    #:
+    #: 注意局部渲染的语义是「产出正好覆盖该区间的一段视频」，
+    #: 由 Go 侧负责把它拼回原片，Python 侧不关心拼接。
+    range_start_sec: float = 0.0
+    range_end_sec: float = 0.0
+
+    @property
+    def wants_range(self) -> bool:
+        """是否请求了局部渲染。"""
+        return self.range_end_sec > self.range_start_sec >= 0
+
+    @property
+    def effective_duration_sec(self) -> float:
+        """本次实际需要渲染的时长。"""
+        if self.wants_range:
+            return self.range_end_sec - self.range_start_sec
+        return self.duration_sec
+
+    @property
+    def effective_start_sec(self) -> float:
+        """本次渲染在镜头时间轴上的起点。"""
+        return self.range_start_sec if self.wants_range else 0.0
+
 
 @dataclass
 class RenderResult:
@@ -89,6 +118,9 @@ class RenderResult:
     peak_memory_mb: float | None = None
     #: 渲染过程中产生的中间目录，便于失败时人工排查。
     work_dir: str = ""
+    #: 本次是否真的只渲染了请求的区间（引擎不支持时为 False）。
+    #: 必须如实回填：Go 侧据此决定是拼接回原片还是整镜替换。
+    partial_range_honored: bool = False
 
     # 便捷只读属性：让调用方不必每次都写 result.media.xxx
     @property
@@ -175,6 +207,20 @@ class ManimRenderer:
                 detail=exc.detail or (exc.policy.summary() if exc.policy else ""),
             ) from exc
 
+        # Manim **不支持**局部重渲染，必须如实上报 partial_range_honored=False。
+        #
+        # 原因是语义层面的，不是实现层面的：Manim 按**动画序号**驱动渲染，
+        # 而「第 3~5 秒」到动画区间的映射取决于每个动画各自的耗时，
+        # 无法在不完整渲染的前提下可靠求出。
+        # 硬做的话只能"先整镜渲染再截取"，那样没有任何成本收益，
+        # 反而制造出「以为省了、其实没省」的错觉。
+        # 因此这里整镜渲染，并由 Go 侧据此走整体替换。
+        if request.wants_range:
+            logger.debug(
+                "Manim 不支持局部重渲染，改为整镜渲染",
+                extra={"shot_id": request.shot_id},
+            )
+
         return RenderResult(
             video_path=outcome.video_path,
             engine=self.engine,
@@ -183,6 +229,7 @@ class ManimRenderer:
             logs=outcome.stdout_tail,
             peak_memory_mb=outcome.peak_memory_mb,
             work_dir=str(request.output_dir),
+            partial_range_honored=False,
         )
 
 
@@ -228,11 +275,16 @@ class HtmlRenderer:
         html.write_text(_wrap_html(request), encoding="utf-8")
 
         fps = request.fps
-        total_frames = max(int(round(request.duration_sec * fps)), 1)
+        # 局部重渲染：只截取请求的区间，帧号从该区间的起点开始计。
+        # 时间轴可控（我们逐帧驱动 __seek(t)），所以「按秒截取」在这里是精确的。
+        honored = request.wants_range
+        start_sec = request.effective_start_sec
+        render_duration = request.effective_duration_sec
+        total_frames = max(int(round(render_duration * fps)), 1)
         started = time.monotonic()
 
         try:
-            self._capture(html, frames_dir, total_frames, fps, request)
+            self._capture(html, frames_dir, total_frames, fps, request, start_sec=start_sec)
         except RendererError:
             raise
         except Exception as exc:  # noqa: BLE001 - Playwright 异常类型繁多
@@ -242,7 +294,7 @@ class HtmlRenderer:
 
         mp4 = work / f"{request.shot_id}_{self.engine}.mp4"
         try:
-            encode_frames(frames_dir, mp4, runner, fps=fps, duration_sec=request.duration_sec)
+            encode_frames(frames_dir, mp4, runner, fps=fps, duration_sec=render_duration)
             info = probe(mp4, runner)
         except MediaToolError as exc:
             # 统一归一化为 RendererError：让流水线只需处理一种失败形态，
@@ -256,8 +308,10 @@ class HtmlRenderer:
             engine=self.engine,
             media=info,
             render_cost_sec=cost,
-            logs=f"逐帧截图 {total_frames} 帧 @ {fps}fps",
+            logs=f"逐帧截图 {total_frames} 帧 @ {fps}fps"
+            + (f"（局部 {start_sec:.2f}s~{start_sec + render_duration:.2f}s）" if honored else ""),
             work_dir=str(work),
+            partial_range_honored=honored,
         )
 
     def _capture(
@@ -267,6 +321,7 @@ class HtmlRenderer:
         total_frames: int,
         fps: int,
         request: RenderRequest,
+        start_sec: float = 0.0,
     ) -> None:
         """用 Playwright 逐帧截图。"""
         from playwright.sync_api import sync_playwright
@@ -296,7 +351,11 @@ class HtmlRenderer:
                     )
 
                 for index in range(total_frames):
-                    page.evaluate("(t) => window.__seek(t)", index / fps)
+                    # 局部重渲染时，帧号从区间起点开始计：
+                    # 第 0 帧对应 start_sec，而不是整镜的第 0 秒。
+                    # 这里漏加偏移是最典型的错误 —— 画面能出来、时长也对，
+                    # 但内容整体前移了 start_sec，且只有把片段拼回原片才看得出来。
+                    page.evaluate("(t) => window.__seek(t)", start_sec + index / fps)
                     # 等待 rAF 完成一帧，避免截到动画中间态。
                     page.evaluate("() => new Promise(r => requestAnimationFrame(() => r()))")
                     page.screenshot(path=str(frames_dir / f"frame_{index:05d}.png"))
@@ -336,6 +395,9 @@ class AmbientRenderer:
         work.mkdir(parents=True, exist_ok=True)
         mp4 = work / f"{request.shot_id}_ambient.mp4"
 
+        # 局部重渲染：lavfi 源的相位由整镜时长决定，因此在滤镜链末尾 trim
+        # （见 media._build_filtergraph 的说明），画面对齐整镜渲染，只编码窗口段。
+        honored = request.wants_range
         started = time.monotonic()
         try:
             render_ambient(
@@ -351,6 +413,8 @@ class AmbientRenderer:
                     _hex_to_ffmpeg(_shift(request.primary_color)),
                 ),
                 text=request.overlay_text,
+                window_start_sec=request.range_start_sec if honored else 0.0,
+                window_end_sec=request.range_end_sec if honored else 0.0,
             )
             info = probe(mp4, runner)
         except MediaToolError as exc:
@@ -364,8 +428,14 @@ class AmbientRenderer:
             engine=self.engine,
             media=info,
             render_cost_sec=cost,
-            logs="ffmpeg lavfi 动态渐变",
+            logs="ffmpeg lavfi 动态渐变"
+            + (
+                f"（局部 {request.range_start_sec:.2f}s~{request.range_end_sec:.2f}s）"
+                if honored
+                else ""
+            ),
             work_dir=str(work),
+            partial_range_honored=honored,
         )
 
 

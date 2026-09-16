@@ -241,8 +241,13 @@ class PipelineService:
         feedback: CriticFeedback | None = None,
         output_dir: str = "",
         draft_only: bool = False,
-    ) -> tuple[ShotSpec, RenderArtifact]:
-        """编码 + 渲染单个镜头（供 HITL 细化操作与调试使用）。"""
+        range_start_sec: float = 0.0,
+        range_end_sec: float = 0.0,
+    ) -> tuple[ShotSpec, RenderArtifact, bool]:
+        """编码 + 渲染单个镜头（供 HITL 细化操作与调试使用）。
+
+        返回 (分镜, 产物, 是否真的只渲染了请求的区间)。
+        """
         engine = shot.engine.value if shot.engine else "stock"
         logger.info(
             "收到单镜头生成请求",
@@ -272,11 +277,12 @@ class PipelineService:
                 update={"meta": {**updated.meta, "overlay_text": result.overlay_text}}
             )
 
-        artifact = self._render_shot(
+        artifact, honored = self._render_shot(
             job_id=job_id, shot=updated, code=result.code, style_guide=style_guide,
             attempt=attempt, output_dir=output_dir, draft_only=draft_only,
+            range_start_sec=range_start_sec, range_end_sec=range_end_sec,
         )
-        return updated, artifact
+        return updated, artifact, honored
 
     # ------------------------------------------------------------------
     # 单镜头：审查
@@ -317,12 +323,16 @@ class PipelineService:
         attempt: int,
         style_guide: StyleGuide,
         output_dir: str = "",
-    ) -> tuple[ShotSpec, RenderArtifact, CriticFeedback]:
+        range_start_sec: float = 0.0,
+        range_end_sec: float = 0.0,
+    ) -> tuple[ShotSpec, RenderArtifact, CriticFeedback, bool]:
         """把人工意见转成可执行指令，重写代码、重新渲染并自动复审。
 
         人工意见与 VLM 意见走**完全相同的通道**（都变成一段回灌文本），
         因此这里只需把 ``human_comment`` 当作 feedback 传下去 ——
         编码侧无需知道意见来自人还是模型。
+
+        返回 (分镜, 产物, 复审反馈, 是否真的只渲染了请求的区间)。
         """
         logger.info(
             "收到镜头重做请求",
@@ -359,9 +369,10 @@ class PipelineService:
                 update={"meta": {**updated.meta, "overlay_text": result.overlay_text}}
             )
 
-        artifact = self._render_shot(
+        artifact, honored = self._render_shot(
             job_id=job_id, shot=updated, code=result.code, style_guide=style_guide,
             attempt=attempt, output_dir=output_dir, draft_only=False,
+            range_start_sec=range_start_sec, range_end_sec=range_end_sec,
         )
 
         # 重做后自动复审：让审核台立刻知道"改好了没有"，
@@ -370,7 +381,7 @@ class PipelineService:
             shot=updated, artifact=artifact, style_guide=style_guide,
             attempt=attempt, previous_feedback=human_comment,
         )
-        return updated, artifact, outcome.feedback
+        return updated, artifact, outcome.feedback, honored
 
     # ------------------------------------------------------------------
     # 内部：渲染
@@ -386,11 +397,16 @@ class PipelineService:
         attempt: int,
         output_dir: str = "",
         draft_only: bool = False,
-    ) -> RenderArtifact:
+        range_start_sec: float = 0.0,
+        range_end_sec: float = 0.0,
+    ) -> tuple[RenderArtifact, bool]:
         """渲染单个镜头并抽帧。
 
         抽帧与渲染绑定在一起，因为只有渲染现场才知道真实时长与产物路径 ——
         让调用方自己再抽一次会出现"用了错误时长导致抽到黑帧"的问题。
+
+        返回 (产物, 是否真的只渲染了请求的区间)。后者必须如实上报：
+        Go 侧据此决定把结果拼接回原片还是整镜替换。
         """
         engine = shot.engine.value if shot.engine else "stock"
         work_dir = (
@@ -411,6 +427,8 @@ class PipelineService:
             overlay_text=shot.meta.get("overlay_text", ""),
             primary_color=style_guide.primary_color,
             background_color=style_guide.background_color,
+            range_start_sec=range_start_sec,
+            range_end_sec=range_end_sec,
         )
 
         try:
@@ -449,7 +467,7 @@ class PipelineService:
             frame_samples=frames,
             rendered_at_unix_ms=int(time.time() * 1000),
             render_cost_sec=round(result.render_cost_sec, 3),
-        )
+        ), result.partial_range_honored
 
 
 def _feedback_to_text(feedback: CriticFeedback | None) -> str:

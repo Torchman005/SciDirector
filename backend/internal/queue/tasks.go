@@ -58,8 +58,23 @@ type RenderShotPayload struct {
 	HumanComment string `json:"human_comment,omitempty"` // 审核员的自然语言意见
 	// TriggeredBy 记录是谁触发的重做：worker（自动）还是 api（人工）。
 	// 用于审计与「一次通过率」指标的口径区分。
-	TriggeredBy string    `json:"triggered_by"`
-	EnqueuedAt  time.Time `json:"enqueued_at"`
+	TriggeredBy string `json:"triggered_by"`
+	// PatchStartSec / PatchEndSec 指定**只重渲这一段**（局部重渲染）。
+	//
+	// 两者相等或 End <= Start 表示整镜重渲。
+	// 只在时间轴可控的引擎上生效（AMBIENCE/HTML）；MATH 会退化为整镜重渲，
+	// 由 AI 服务在响应里如实告知，Go 侧据此决定拼接还是整体替换。
+	//
+	// 典型来源：审核员指出「第 3 秒的坐标轴标签重叠了」，
+	// 前端把意见对应的时间点填进来，从而避免重渲整个镜头。
+	PatchStartSec float64   `json:"patch_start_sec,omitempty"`
+	PatchEndSec   float64   `json:"patch_end_sec,omitempty"`
+	EnqueuedAt    time.Time `json:"enqueued_at"`
+}
+
+// WantsPartialRender 判断载荷是否请求局部重渲染。
+func (p *RenderShotPayload) WantsPartialRender() bool {
+	return p.PatchEndSec > p.PatchStartSec && p.PatchStartSec >= 0
 }
 
 // ComposeJobPayload 是合成任务的载荷。

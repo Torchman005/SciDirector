@@ -336,6 +336,54 @@ func syncShotsFromPayload(job *domain.Job, payloadJSON string) error {
 //
 // 与 HandleGenerateJob 的区别：这里走的是**细粒度 RPC**（ReviseShot），
 // 只重跑「编码 -> 渲染 -> 审查」三个节点，跳过导演与全片合成。
+// splicePartialRender 把局部重渲得到的片段拼回原片，返回拼接产物路径与方案。
+//
+// 三步，缺一不可：
+//
+//  1. **探测原片**拿到真实时长。拼接方案的切点完全由它决定，
+//     用分镜表里的「计划时长」会让切点逐帧漂移。
+//  2. **归一化新片段**到与原片完全一致的规格。渲染器产出的分辨率/帧率/
+//     像素格式/色彩范围几乎必然与原片不同；规格不一致时 concat 会花屏
+//     或直接报错。原片本来就是归一化流程的产物，新片段必须对齐它。
+//  3. **规划并拼接**。若替换区间占比过大，PlanSplice 会判定拼接不划算，
+//     此时直接把新片段当作整镜产物返回，而不是硬拼。
+func (p *Processor) splicePartialRender(
+	ctx context.Context,
+	shot *domain.Shot,
+	patchPath string,
+	start, end float64,
+	workDir string,
+) (string, media.SplicePlan, error) {
+	if patchPath == "" {
+		return "", media.SplicePlan{}, fmt.Errorf("worker: 局部重渲染未返回片段路径")
+	}
+	basePath := shot.Artifact.VideoPath
+
+	baseProbe, err := p.media.Probe(ctx, basePath)
+	if err != nil {
+		return "", media.SplicePlan{}, fmt.Errorf("worker: 探测原片失败: %w", err)
+	}
+
+	plan := media.PlanSplice(baseProbe.DurationSec, start, end)
+	if plan.FullReplace {
+		// 拼接不划算或区间非法：直接采用整段新产物。
+		return patchPath, plan, nil
+	}
+
+	spec := p.media.DefaultNormalizeSpec()
+	normPatch := filepath.Join(workDir, "patch_norm.mp4")
+	if err := p.media.Normalize(ctx, patchPath, normPatch, spec); err != nil {
+		return "", plan, fmt.Errorf("worker: 归一化局部重渲片段失败: %w", err)
+	}
+
+	out := filepath.Join(workDir, "spliced.mp4")
+	if err := p.media.SpliceSegment(ctx, basePath, normPatch, out, plan); err != nil {
+		return "", plan, fmt.Errorf("worker: 拼接局部重渲片段失败: %w", err)
+	}
+	return out, plan, nil
+}
+
+// HandleRenderShot 处理单镜头重做任务（人工反馈闭环的出口）。
 func (p *Processor) HandleRenderShot(ctx context.Context, task RenderShotTask) error {
 	jobID, shotID := task.Payload.JobID, task.Payload.ShotID
 	ctx = logging.WithJob(ctx, jobID)
@@ -420,6 +468,12 @@ func (p *Processor) HandleRenderShot(ctx context.Context, task RenderShotTask) e
 	})
 
 	outputDir := p.shotWorkDir(jobID, shot.Index)
+
+	// 局部重渲染：只在载荷指定了区间、且该镜头**已有可用产物**时才成立 ——
+	// 拼接的前提是有一个可以保留前后段的原片。
+	partial := task.Payload.WantsPartialRender() &&
+		shot.Artifact != nil && shot.Artifact.VideoPath != ""
+
 	req := &pb.ReviseShotRequest{
 		JobId:          jobID,
 		Shot:           pbconv.ShotToPB(shot),
@@ -427,6 +481,15 @@ func (p *Processor) HandleRenderShot(ctx context.Context, task RenderShotTask) e
 		Attempt:        int32(task.Payload.Attempt),
 		StyleGuideJson: mustJSON(job.StyleGuide),
 		OutputDir:      outputDir,
+	}
+	if partial {
+		req.RangeStartSec = task.Payload.PatchStartSec
+		req.RangeEndSec = task.Payload.PatchEndSec
+		lg.Info("请求局部重渲染",
+			"shot_id", shotID,
+			"range_start_sec", task.Payload.PatchStartSec,
+			"range_end_sec", task.Payload.PatchEndSec,
+			"engine", string(shot.Engine))
 	}
 
 	resp, err := p.ai.ReviseShot(ctx, req)
@@ -442,6 +505,44 @@ func (p *Processor) HandleRenderShot(ctx context.Context, task RenderShotTask) e
 		return err
 	}
 
+	// 局部重渲的结果只是原片的一小段，必须拼回去才是完整镜头。
+	// 服务端会如实告知是否真的只渲了该区间 —— 猜错的后果是把只渲了 2 秒的
+	// 片段当成完整镜头拼进成片，那会毁掉整部片子的时长与音画同步。
+	artifactPathOverride := ""
+	if resp.GetPartialRangeHonored() && partial {
+		spliced, plan, serr := p.splicePartialRender(ctx, shot, resp.GetArtifact().GetVideoPath(),
+			task.Payload.PatchStartSec, task.Payload.PatchEndSec, outputDir)
+		if serr != nil {
+			// 拼接失败不能让本次重做白费：退回整片段替换，
+			// 并留下明确的告警，避免「优化静默失效」。
+			lg.Warn("局部重渲染拼接失败，退回整体替换该镜头",
+				"error", serr.Error(), "shot_id", shotID)
+			_, _ = p.emit(ctx, &domain.Event{
+				JobID: jobID, ShotID: shotID, Node: "render",
+				Message:   "局部重渲染拼接失败，已退回整体替换：" + serr.Error(),
+				Error:     serr.Error(),
+				Timestamp: time.Now().UTC(),
+			})
+		} else {
+			artifactPathOverride = spliced
+			lg.Info("局部重渲染拼接完成",
+				"shot_id", shotID,
+				"segments", plan.Segments,
+				"saved_ratio", plan.SavedRatio())
+			_, _ = p.emit(ctx, &domain.Event{
+				JobID: jobID, ShotID: shotID, Node: "render",
+				Message: fmt.Sprintf("已只重渲 %.1fs~%.1fs 并拼接回原片（省下约 %.0f%% 的渲染量）",
+					task.Payload.PatchStartSec, task.Payload.PatchEndSec, plan.SavedRatio()*100),
+				Payload: map[string]any{
+					"partial_render": true,
+					"segments":       plan.Segments,
+					"saved_ratio":    plan.SavedRatio(),
+				},
+				Timestamp: time.Now().UTC(),
+			})
+		}
+	}
+
 	// 把重做结果写回状态。
 	final, err := p.store.UpdateJob(ctx, jobID, func(j *domain.Job) error {
 		s := j.FindShot(shotID)
@@ -453,6 +554,10 @@ func (p *Processor) HandleRenderShot(ctx context.Context, task RenderShotTask) e
 			s.Language = resp.GetShot().GetLanguage()
 		}
 		if art := pbconv.ArtifactFromPB(resp.GetArtifact()); art != nil {
+			if artifactPathOverride != "" {
+				// 拼接产物才是完整的镜头；直接覆盖路径，其余元数据沿用服务端回填的。
+				art.VideoPath = artifactPathOverride
+			}
 			s.Artifact = art
 		}
 		if fb := resp.GetFeedback(); fb != nil {

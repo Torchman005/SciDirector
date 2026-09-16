@@ -1,4 +1,4 @@
-# =============================================================================
+﻿# =============================================================================
 # SciDirector —— 由 proto 生成 Go + Python 的 gRPC 代码（Windows / PowerShell）
 # -----------------------------------------------------------------------------
 # 用法：
@@ -11,6 +11,13 @@
 # 支持两种 Python 生成方式（按可用性自动选择）：
 #   1) grpc_tools.protoc —— 官方推荐，跨平台一致（需 pip install grpcio-tools）
 #   2) 本地 protoc + grpc_python_plugin —— 无需安装 grpcio-tools 的退路
+#
+# 实现注记（踩过的坑）：
+#   本脚本**刻意不使用反引号续行，也不使用 here-string**。
+#   早期版本两者都用，结果整个文件无法被 PowerShell 解析，报出的
+#   「Unexpected token 'import'」还指向了错误的行号（解析器丢失了行边界），
+#   排查成本很高。所有外部命令一律用**数组参数**传递：
+#   既没有续行符，也不受引号/转义影响，可读性反而更好。
 # =============================================================================
 
 $ErrorActionPreference = 'Stop'
@@ -45,15 +52,21 @@ foreach ($plugin in 'protoc-gen-go', 'protoc-gen-go-grpc') {
             'google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest'
         }
         & go install $module
+        if ($LASTEXITCODE -ne 0) { throw "安装 $plugin 失败（exit=$LASTEXITCODE）" }
+        # go install 的产物落在 GOPATH/bin，重新加入 PATH 才能被 protoc 找到。
+        if (Test-Path $GoBin) { $env:PATH = "$GoBin;$env:PATH" }
     }
 }
 
 New-Item -ItemType Directory -Force -Path $GoOut | Out-Null
 Write-Host '[gen-proto] 生成 Go 代码 ...' -ForegroundColor Cyan
-& protoc -I proto `
-    "--go_out=$GoOut" --go_opt=paths=source_relative `
-    "--go-grpc_out=$GoOut" --go-grpc_opt=paths=source_relative `
-    @Protos
+
+$protoArgs = @('-I', 'proto')
+$goArgs = @(
+    "--go_out=$GoOut", '--go_opt=paths=source_relative',
+    "--go-grpc_out=$GoOut", '--go-grpc_opt=paths=source_relative'
+)
+& protoc @protoArgs @goArgs @Protos
 if ($LASTEXITCODE -ne 0) { throw "Go 代码生成失败（exit=$LASTEXITCODE）" }
 
 # ---------------------------------------------------------------------------
@@ -61,13 +74,25 @@ if ($LASTEXITCODE -ne 0) { throw "Go 代码生成失败（exit=$LASTEXITCODE）"
 # ---------------------------------------------------------------------------
 New-Item -ItemType Directory -Force -Path $PyOut | Out-Null
 
+$pyOutArgs = @("--python_out=$PyOut", "--pyi_out=$PyOut", "--grpc_python_out=$PyOut")
+
 $UsedGRPCTools = $false
-& python -c "import grpc_tools" 2>$null
-if ($LASTEXITCODE -eq 0) {
+
+# 探测 grpc_tools 时**必须临时关掉 Stop**。
+#
+# 本脚本开了 $ErrorActionPreference='Stop'，而 PowerShell 会把原生命令写到
+# stderr 的任何内容都包装成 NativeCommandError —— `2>$null` 只丢弃输出，
+# **挡不住**这个错误。于是「没装 grpcio-tools」这条完全正常的退路
+# 会在探测阶段直接中断整个脚本，让本该自动回退到 grpc_python_plugin 的路径失效。
+$SavedEAP = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+& python -c 'import grpc_tools' 2>$null
+$UsedGRPCTools = ($LASTEXITCODE -eq 0)
+$ErrorActionPreference = $SavedEAP
+
+if ($UsedGRPCTools) {
     Write-Host '[gen-proto] 使用 grpc_tools.protoc 生成 Python 代码 ...' -ForegroundColor Cyan
-    & python -m grpc_tools.protoc -I proto `
-        "--python_out=$PyOut" "--pyi_out=$PyOut" "--grpc_python_out=$PyOut" `
-        @Protos
+    & python -m grpc_tools.protoc @protoArgs @pyOutArgs @Protos
     if ($LASTEXITCODE -ne 0) { throw "Python 代码生成失败（grpc_tools，exit=$LASTEXITCODE）" }
     $UsedGRPCTools = $true
 }
@@ -78,23 +103,23 @@ if (-not $UsedGRPCTools) {
     $PluginPath = (Get-Command grpc_python_plugin.exe -ErrorAction SilentlyContinue).Source
     if (-not $PluginPath) {
         # 常见位置：Anaconda 的 Library\bin
-        $Candidate = Join-Path (Split-Path (Get-Command python).Source -Parent) 'Library\bin\grpc_python_plugin.exe'
+        $PythonExe = (Get-Command python).Source
+        $Candidate = Join-Path (Split-Path $PythonExe -Parent) 'Library\bin\grpc_python_plugin.exe'
         if (Test-Path $Candidate) { $PluginPath = $Candidate }
     }
     if (-not $PluginPath) {
-        throw @'
-未找到 grpc_python_plugin.exe，且未安装 grpcio-tools。
-请任选其一：
-  * pip install grpcio-tools        （推荐，跨平台一致）
-  * 安装带 grpc_python_plugin 的 protoc 发行版
-'@
+        $msg = @(
+            '未找到 grpc_python_plugin.exe，且未安装 grpcio-tools。'
+            '请任选其一：'
+            '  * pip install grpcio-tools        （推荐，跨平台一致）'
+            '  * 安装带 grpc_python_plugin 的 protoc 发行版'
+        ) -join [Environment]::NewLine
+        throw $msg
     }
 
     Write-Host "[gen-proto] 使用系统 protoc + $PluginPath 生成 Python 代码 ..." -ForegroundColor Yellow
-    & protoc -I proto `
-        "--plugin=protoc-gen-grpc_python=$PluginPath" `
-        "--python_out=$PyOut" "--pyi_out=$PyOut" "--grpc_python_out=$PyOut" `
-        @Protos
+    $pluginArgs = @("--plugin=protoc-gen-grpc_python=$PluginPath")
+    & protoc @protoArgs @pluginArgs @pyOutArgs @Protos
     if ($LASTEXITCODE -ne 0) { throw "Python 代码生成失败（protoc 退路，exit=$LASTEXITCODE）" }
 }
 

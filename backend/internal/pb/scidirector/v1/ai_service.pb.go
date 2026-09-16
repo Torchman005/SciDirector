@@ -294,8 +294,20 @@ type GenerateShotRequest struct {
 	StyleGuideJson string                 `protobuf:"bytes,5,opt,name=style_guide_json,json=styleGuideJson,proto3" json:"style_guide_json,omitempty"`
 	DraftOnly      bool                   `protobuf:"varint,6,opt,name=draft_only,json=draftOnly,proto3" json:"draft_only,omitempty"` // true=低分辨率草稿渲染，用于先验证再高清重渲
 	OutputDir      string                 `protobuf:"bytes,7,opt,name=output_dir,json=outputDir,proto3" json:"output_dir,omitempty"`  // Go 指定的产物目录，保证两侧路径一致
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// ---- 局部重渲染（阶段三）----
+	//
+	// 只重渲镜头的某一段，而不是整镜，用于「只改了一处细节」的场景。
+	//
+	// 只在**时间轴可控**的引擎上有意义：AMBIENCE（lavfi）与 HTML（逐帧 seek）
+	// 可以按秒精确截取；MATH/Manim 是按动画序号驱动渲染的，
+	// 「第 3~5 秒」无法可靠映射到动画区间，因此对该引擎会忽略这两个字段
+	// 并整镜重渲（由 `partial_range_honored` 如实回填）。
+	//
+	// range_end_sec <= range_start_sec 表示不启用局部重渲（整镜渲染）。
+	RangeStartSec float64 `protobuf:"fixed64,8,opt,name=range_start_sec,json=rangeStartSec,proto3" json:"range_start_sec,omitempty"`
+	RangeEndSec   float64 `protobuf:"fixed64,9,opt,name=range_end_sec,json=rangeEndSec,proto3" json:"range_end_sec,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *GenerateShotRequest) Reset() {
@@ -377,16 +389,34 @@ func (x *GenerateShotRequest) GetOutputDir() string {
 	return ""
 }
 
+func (x *GenerateShotRequest) GetRangeStartSec() float64 {
+	if x != nil {
+		return x.RangeStartSec
+	}
+	return 0
+}
+
+func (x *GenerateShotRequest) GetRangeEndSec() float64 {
+	if x != nil {
+		return x.RangeEndSec
+	}
+	return 0
+}
+
 type GenerateShotResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Shot          *ShotSpec              `protobuf:"bytes,1,opt,name=shot,proto3" json:"shot,omitempty"` // 回填 code / engine 等字段后的分镜
-	Artifact      *RenderArtifact        `protobuf:"bytes,2,opt,name=artifact,proto3" json:"artifact,omitempty"`
-	Success       bool                   `protobuf:"varint,3,opt,name=success,proto3" json:"success,omitempty"`
-	Error         string                 `protobuf:"bytes,4,opt,name=error,proto3" json:"error,omitempty"` // 技术性失败原因（编译错误、超时等）
-	TotalTokens   int32                  `protobuf:"varint,5,opt,name=total_tokens,json=totalTokens,proto3" json:"total_tokens,omitempty"`
-	ElapsedSec    float64                `protobuf:"fixed64,6,opt,name=elapsed_sec,json=elapsedSec,proto3" json:"elapsed_sec,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	Shot        *ShotSpec              `protobuf:"bytes,1,opt,name=shot,proto3" json:"shot,omitempty"` // 回填 code / engine 等字段后的分镜
+	Artifact    *RenderArtifact        `protobuf:"bytes,2,opt,name=artifact,proto3" json:"artifact,omitempty"`
+	Success     bool                   `protobuf:"varint,3,opt,name=success,proto3" json:"success,omitempty"`
+	Error       string                 `protobuf:"bytes,4,opt,name=error,proto3" json:"error,omitempty"` // 技术性失败原因（编译错误、超时等）
+	TotalTokens int32                  `protobuf:"varint,5,opt,name=total_tokens,json=totalTokens,proto3" json:"total_tokens,omitempty"`
+	ElapsedSec  float64                `protobuf:"fixed64,6,opt,name=elapsed_sec,json=elapsedSec,proto3" json:"elapsed_sec,omitempty"`
+	// partial_range_honored 表示本次是否真的只渲染了请求的时间区间。
+	// 必须如实回填：Go 侧据此决定是「直接替换该区间」还是「整镜替换」，
+	// 猜错的后果是把只渲染了 2 秒的片段当成完整镜头拼进成片。
+	PartialRangeHonored bool `protobuf:"varint,7,opt,name=partial_range_honored,json=partialRangeHonored,proto3" json:"partial_range_honored,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *GenerateShotResponse) Reset() {
@@ -459,6 +489,13 @@ func (x *GenerateShotResponse) GetElapsedSec() float64 {
 		return x.ElapsedSec
 	}
 	return 0
+}
+
+func (x *GenerateShotResponse) GetPartialRangeHonored() bool {
+	if x != nil {
+		return x.PartialRangeHonored
+	}
+	return false
 }
 
 // -----------------------------------------------------------------------------
@@ -619,8 +656,16 @@ type ReviseShotRequest struct {
 	Attempt        int32                  `protobuf:"varint,4,opt,name=attempt,proto3" json:"attempt,omitempty"`
 	StyleGuideJson string                 `protobuf:"bytes,5,opt,name=style_guide_json,json=styleGuideJson,proto3" json:"style_guide_json,omitempty"`
 	OutputDir      string                 `protobuf:"bytes,6,opt,name=output_dir,json=outputDir,proto3" json:"output_dir,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// ---- 局部重渲染（阶段三）----
+	//
+	// 人工反馈最主要的入口。审核员指出「第 3 秒坐标轴标签重叠了」时，
+	// 前端把意见对应的时间点填进来，即可只重渲这一段而不是整个镜头。
+	// 语义与 GenerateShotRequest 的同名字段一致；
+	// range_end_sec <= range_start_sec 表示整镜重渲。
+	RangeStartSec float64 `protobuf:"fixed64,7,opt,name=range_start_sec,json=rangeStartSec,proto3" json:"range_start_sec,omitempty"`
+	RangeEndSec   float64 `protobuf:"fixed64,8,opt,name=range_end_sec,json=rangeEndSec,proto3" json:"range_end_sec,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ReviseShotRequest) Reset() {
@@ -695,17 +740,33 @@ func (x *ReviseShotRequest) GetOutputDir() string {
 	return ""
 }
 
+func (x *ReviseShotRequest) GetRangeStartSec() float64 {
+	if x != nil {
+		return x.RangeStartSec
+	}
+	return 0
+}
+
+func (x *ReviseShotRequest) GetRangeEndSec() float64 {
+	if x != nil {
+		return x.RangeEndSec
+	}
+	return 0
+}
+
 type ReviseShotResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Shot          *ShotSpec              `protobuf:"bytes,1,opt,name=shot,proto3" json:"shot,omitempty"` // 含改写后的源码
-	Artifact      *RenderArtifact        `protobuf:"bytes,2,opt,name=artifact,proto3" json:"artifact,omitempty"`
-	Feedback      *CriticFeedback        `protobuf:"bytes,3,opt,name=feedback,proto3" json:"feedback,omitempty"` // 自动复审结果；供 UI 展示是否已修好
-	Success       bool                   `protobuf:"varint,4,opt,name=success,proto3" json:"success,omitempty"`
-	Error         string                 `protobuf:"bytes,5,opt,name=error,proto3" json:"error,omitempty"`
-	TotalTokens   int32                  `protobuf:"varint,6,opt,name=total_tokens,json=totalTokens,proto3" json:"total_tokens,omitempty"`
-	ElapsedSec    float64                `protobuf:"fixed64,7,opt,name=elapsed_sec,json=elapsedSec,proto3" json:"elapsed_sec,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	Shot        *ShotSpec              `protobuf:"bytes,1,opt,name=shot,proto3" json:"shot,omitempty"` // 含改写后的源码
+	Artifact    *RenderArtifact        `protobuf:"bytes,2,opt,name=artifact,proto3" json:"artifact,omitempty"`
+	Feedback    *CriticFeedback        `protobuf:"bytes,3,opt,name=feedback,proto3" json:"feedback,omitempty"` // 自动复审结果；供 UI 展示是否已修好
+	Success     bool                   `protobuf:"varint,4,opt,name=success,proto3" json:"success,omitempty"`
+	Error       string                 `protobuf:"bytes,5,opt,name=error,proto3" json:"error,omitempty"`
+	TotalTokens int32                  `protobuf:"varint,6,opt,name=total_tokens,json=totalTokens,proto3" json:"total_tokens,omitempty"`
+	ElapsedSec  float64                `protobuf:"fixed64,7,opt,name=elapsed_sec,json=elapsedSec,proto3" json:"elapsed_sec,omitempty"`
+	// 见 GenerateShotResponse.partial_range_honored。
+	PartialRangeHonored bool `protobuf:"varint,8,opt,name=partial_range_honored,json=partialRangeHonored,proto3" json:"partial_range_honored,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *ReviseShotResponse) Reset() {
@@ -787,6 +848,13 @@ func (x *ReviseShotResponse) GetElapsedSec() float64 {
 	return 0
 }
 
+func (x *ReviseShotResponse) GetPartialRangeHonored() bool {
+	if x != nil {
+		return x.PartialRangeHonored
+	}
+	return false
+}
+
 var File_scidirector_v1_ai_service_proto protoreflect.FileDescriptor
 
 const file_scidirector_v1_ai_service_proto_rawDesc = "" +
@@ -814,7 +882,7 @@ const file_scidirector_v1_ai_service_proto_rawDesc = "" +
 	"\aoutline\x18\x02 \x01(\tR\aoutline\x12!\n" +
 	"\ftotal_tokens\x18\x03 \x01(\x05R\vtotalTokens\x12\x1f\n" +
 	"\velapsed_sec\x18\x04 \x01(\x01R\n" +
-	"elapsedSec\"\x98\x02\n" +
+	"elapsedSec\"\xe4\x02\n" +
 	"\x13GenerateShotRequest\x12\x15\n" +
 	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12,\n" +
 	"\x04shot\x18\x02 \x01(\v2\x18.scidirector.v1.ShotSpecR\x04shot\x12\x18\n" +
@@ -824,7 +892,9 @@ const file_scidirector_v1_ai_service_proto_rawDesc = "" +
 	"\n" +
 	"draft_only\x18\x06 \x01(\bR\tdraftOnly\x12\x1d\n" +
 	"\n" +
-	"output_dir\x18\a \x01(\tR\toutputDir\"\xf4\x01\n" +
+	"output_dir\x18\a \x01(\tR\toutputDir\x12&\n" +
+	"\x0frange_start_sec\x18\b \x01(\x01R\rrangeStartSec\x12\"\n" +
+	"\rrange_end_sec\x18\t \x01(\x01R\vrangeEndSec\"\xa8\x02\n" +
 	"\x14GenerateShotResponse\x12,\n" +
 	"\x04shot\x18\x01 \x01(\v2\x18.scidirector.v1.ShotSpecR\x04shot\x12:\n" +
 	"\bartifact\x18\x02 \x01(\v2\x1e.scidirector.v1.RenderArtifactR\bartifact\x12\x18\n" +
@@ -832,7 +902,8 @@ const file_scidirector_v1_ai_service_proto_rawDesc = "" +
 	"\x05error\x18\x04 \x01(\tR\x05error\x12!\n" +
 	"\ftotal_tokens\x18\x05 \x01(\x05R\vtotalTokens\x12\x1f\n" +
 	"\velapsed_sec\x18\x06 \x01(\x01R\n" +
-	"elapsedSec\"\xda\x01\n" +
+	"elapsedSec\x122\n" +
+	"\x15partial_range_honored\x18\a \x01(\bR\x13partialRangeHonored\"\xda\x01\n" +
 	"\x13CritiqueShotRequest\x12\x15\n" +
 	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12,\n" +
 	"\x04shot\x18\x02 \x01(\v2\x18.scidirector.v1.ShotSpecR\x04shot\x12:\n" +
@@ -844,7 +915,7 @@ const file_scidirector_v1_ai_service_proto_rawDesc = "" +
 	"\bdegraded\x18\x02 \x01(\bR\bdegraded\x12!\n" +
 	"\ftotal_tokens\x18\x03 \x01(\x05R\vtotalTokens\x12\x1f\n" +
 	"\velapsed_sec\x18\x04 \x01(\x01R\n" +
-	"elapsedSec\"\xe0\x01\n" +
+	"elapsedSec\"\xac\x02\n" +
 	"\x11ReviseShotRequest\x12\x15\n" +
 	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12,\n" +
 	"\x04shot\x18\x02 \x01(\v2\x18.scidirector.v1.ShotSpecR\x04shot\x12#\n" +
@@ -852,7 +923,9 @@ const file_scidirector_v1_ai_service_proto_rawDesc = "" +
 	"\aattempt\x18\x04 \x01(\x05R\aattempt\x12(\n" +
 	"\x10style_guide_json\x18\x05 \x01(\tR\x0estyleGuideJson\x12\x1d\n" +
 	"\n" +
-	"output_dir\x18\x06 \x01(\tR\toutputDir\"\xae\x02\n" +
+	"output_dir\x18\x06 \x01(\tR\toutputDir\x12&\n" +
+	"\x0frange_start_sec\x18\a \x01(\x01R\rrangeStartSec\x12\"\n" +
+	"\rrange_end_sec\x18\b \x01(\x01R\vrangeEndSec\"\xe2\x02\n" +
 	"\x12ReviseShotResponse\x12,\n" +
 	"\x04shot\x18\x01 \x01(\v2\x18.scidirector.v1.ShotSpecR\x04shot\x12:\n" +
 	"\bartifact\x18\x02 \x01(\v2\x1e.scidirector.v1.RenderArtifactR\bartifact\x12:\n" +
@@ -861,7 +934,8 @@ const file_scidirector_v1_ai_service_proto_rawDesc = "" +
 	"\x05error\x18\x05 \x01(\tR\x05error\x12!\n" +
 	"\ftotal_tokens\x18\x06 \x01(\x05R\vtotalTokens\x12\x1f\n" +
 	"\velapsed_sec\x18\a \x01(\x01R\n" +
-	"elapsedSec2\x90\x04\n" +
+	"elapsedSec\x122\n" +
+	"\x15partial_range_honored\x18\b \x01(\bR\x13partialRangeHonored2\x90\x04\n" +
 	"\x11AiDirectorService\x12G\n" +
 	"\x06Health\x12\x1d.scidirector.v1.HealthRequest\x1a\x1e.scidirector.v1.HealthResponse\x12R\n" +
 	"\vRunPipeline\x12\".scidirector.v1.RunPipelineRequest\x1a\x1d.scidirector.v1.PipelineEvent0\x01\x12S\n" +

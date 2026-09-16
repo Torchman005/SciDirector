@@ -164,7 +164,7 @@ class AiDirectorServicer(pb_grpc.AiDirectorServiceServicer):
         try:
             shot = shot_from_pb(request.shot)
             feedback = feedback_from_pb(request.feedback) if request.HasField("feedback") else None
-            new_shot, artifact = self.service.generate_shot(
+            new_shot, artifact, honored = self.service.generate_shot(
                 job_id=request.job_id,
                 shot=shot,
                 attempt=request.attempt,
@@ -172,6 +172,8 @@ class AiDirectorServicer(pb_grpc.AiDirectorServiceServicer):
                 feedback=feedback,
                 output_dir=request.output_dir,
                 draft_only=request.draft_only,
+                range_start_sec=request.range_start_sec,
+                range_end_sec=request.range_end_sec,
             )
             return pb.GenerateShotResponse(
                 shot=shot_to_pb(new_shot),
@@ -179,6 +181,9 @@ class AiDirectorServicer(pb_grpc.AiDirectorServiceServicer):
                 success=True,
                 total_tokens=self.service.llm.usage.total_tokens,
                 elapsed_sec=time.monotonic() - started,
+                # 如实回填：Go 侧据此决定拼接回原片还是整镜替换。
+                # 谎报 True 会把只渲了一小段的片段当成完整镜头拼进成片。
+                partial_range_honored=honored,
             )
         except RenderFailed as exc:
             # FAILED_PRECONDITION：渲染失败（缺引擎/代码错误）重试没有意义，
@@ -238,13 +243,15 @@ class AiDirectorServicer(pb_grpc.AiDirectorServiceServicer):
         bind_job(request.job_id)
         started = time.monotonic()
         try:
-            shot, artifact, feedback = self.service.revise_shot(
+            shot, artifact, feedback, honored = self.service.revise_shot(
                 job_id=request.job_id,
                 shot=shot_from_pb(request.shot),
                 human_comment=request.human_comment,
                 attempt=request.attempt,
                 style_guide=style_guide_from_json(request.style_guide_json),
                 output_dir=request.output_dir,
+                range_start_sec=request.range_start_sec,
+                range_end_sec=request.range_end_sec,
             )
             return pb.ReviseShotResponse(
                 shot=shot_to_pb(shot),
@@ -255,6 +262,7 @@ class AiDirectorServicer(pb_grpc.AiDirectorServiceServicer):
                 success=bool(feedback.passed),
                 total_tokens=self.service.llm.usage.total_tokens,
                 elapsed_sec=time.monotonic() - started,
+                partial_range_honored=honored,
             )
         except RenderFailed as exc:
             context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(exc))

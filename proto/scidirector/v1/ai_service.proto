@@ -88,6 +88,19 @@ message GenerateShotRequest {
   string style_guide_json = 5;
   bool draft_only = 6;              // true=低分辨率草稿渲染，用于先验证再高清重渲
   string output_dir = 7;            // Go 指定的产物目录，保证两侧路径一致
+
+  // ---- 局部重渲染（阶段三）----
+  //
+  // 只重渲镜头的某一段，而不是整镜，用于「只改了一处细节」的场景。
+  //
+  // 只在**时间轴可控**的引擎上有意义：AMBIENCE（lavfi）与 HTML（逐帧 seek）
+  // 可以按秒精确截取；MATH/Manim 是按动画序号驱动渲染的，
+  // 「第 3~5 秒」无法可靠映射到动画区间，因此对该引擎会忽略这两个字段
+  // 并整镜重渲（由 `partial_range_honored` 如实回填）。
+  //
+  // range_end_sec <= range_start_sec 表示不启用局部重渲（整镜渲染）。
+  double range_start_sec = 8;
+  double range_end_sec = 9;
 }
 
 message GenerateShotResponse {
@@ -97,6 +110,10 @@ message GenerateShotResponse {
   string error = 4;                 // 技术性失败原因（编译错误、超时等）
   int32 total_tokens = 5;
   double elapsed_sec = 6;
+  // partial_range_honored 表示本次是否真的只渲染了请求的时间区间。
+  // 必须如实回填：Go 侧据此决定是「直接替换该区间」还是「整镜替换」，
+  // 猜错的后果是把只渲染了 2 秒的片段当成完整镜头拼进成片。
+  bool partial_range_honored = 7;
 }
 
 // -----------------------------------------------------------------------------
@@ -127,6 +144,15 @@ message ReviseShotRequest {
   int32 attempt = 4;
   string style_guide_json = 5;
   string output_dir = 6;
+
+  // ---- 局部重渲染（阶段三）----
+  //
+  // 人工反馈最主要的入口。审核员指出「第 3 秒坐标轴标签重叠了」时，
+  // 前端把意见对应的时间点填进来，即可只重渲这一段而不是整个镜头。
+  // 语义与 GenerateShotRequest 的同名字段一致；
+  // range_end_sec <= range_start_sec 表示整镜重渲。
+  double range_start_sec = 7;
+  double range_end_sec = 8;
 }
 
 message ReviseShotResponse {
@@ -137,4 +163,6 @@ message ReviseShotResponse {
   string error = 5;
   int32 total_tokens = 6;
   double elapsed_sec = 7;
+  // 见 GenerateShotResponse.partial_range_honored。
+  bool partial_range_honored = 8;
 }

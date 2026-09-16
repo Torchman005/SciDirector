@@ -205,6 +205,8 @@ def render_ambient(
     colors: tuple[str, str, str] = ("0x0B1020", "0x4F8CFF", "0xFF6B6B"),
     text: str = "",
     font_size: int = 64,
+    window_start_sec: float = 0.0,
+    window_end_sec: float = 0.0,
 ) -> str:
     """用 ffmpeg 的 lavfi 源渲染一个"氛围"镜头。
 
@@ -235,7 +237,9 @@ def render_ambient(
 
     if wants_text:
         result = _run_ambient(target, runner, duration_sec, width, height, fps, colors,
-                              font=font, text=text, font_size=font_size)
+                              font=font, text=text, font_size=font_size,
+                              window_start_sec=window_start_sec,
+                              window_end_sec=window_end_sec)
         if result.ok and target.is_file():
             return str(target)
 
@@ -250,7 +254,9 @@ def render_ambient(
             extra={"error": result.tail(300)},
         )
 
-    result = _run_ambient(target, runner, duration_sec, width, height, fps, colors)
+    result = _run_ambient(target, runner, duration_sec, width, height, fps, colors,
+                          window_start_sec=window_start_sec,
+                          window_end_sec=window_end_sec)
     if not result.ok or not target.is_file():
         raise MediaToolError(f"氛围镜头渲染失败：{result.summary()}；{result.tail(800)}")
     return str(target)
@@ -332,8 +338,19 @@ def _build_filtergraph(
     font: str | None = None,
     text: str = "",
     font_size: int = 64,
+    window_start_sec: float = 0.0,
+    window_end_sec: float = 0.0,
 ) -> str:
-    """构造 lavfi 滤镜图：渐变源（可选叠加 drawtext 标题）。"""
+    """构造 lavfi 滤镜图：渐变源（可选叠加 drawtext 标题）。
+
+    局部重渲染（window_start_sec < window_end_sec）时，在链**末尾**追加 trim。
+
+    放在末尾是刻意的：drawtext 的 alpha 表达式依赖 t（原始时间轴），
+    若在它之前就 trim，标题的淡入淡出相位会整体前移，
+    拼回原片后表现为「标题在错误的时间点亮起」。
+    放在末尾则 drawtext 仍按整镜时间轴求值，只有最终输出的帧被裁到窗口内，
+    因此编码量按窗口大小下降，而画面内容与整镜渲染完全一致。
+    """
     c0, c1, c2 = colors
     filters = [
         f"gradients=s={width}x{height}:c0={c0}:c1={c1}:c2={c2}:n=3"
@@ -352,6 +369,14 @@ def _build_filtergraph(
             f"alpha='if(lt(t,0.8),t/0.8,if(gt(t,{fade_out_start:.3f}),"
             f"max(0,({duration_sec:.3f}-t)/0.8),1))'"
         )
+
+    if window_end_sec > window_start_sec:
+        # setpts 归零是必须的：trim 之后的帧仍带着原始时间戳，
+        # 不归零会让编码器把前面的空档也算进去，产出带长空白开头的片段。
+        filters.append(
+            f"trim=start={window_start_sec:.3f}:end={window_end_sec:.3f},setpts=PTS-STARTPTS"
+        )
+
     return ",".join(filters)
 
 
@@ -367,17 +392,28 @@ def _run_ambient(
     font: str | None = None,
     text: str = "",
     font_size: int = 64,
+    window_start_sec: float = 0.0,
+    window_end_sec: float = 0.0,
 ):
-    """执行一次 lavfi 渲染。"""
+    """执行一次 lavfi 渲染。
+
+    注意 duration_sec 始终是**整镜**时长（滤镜图的相位基准），
+    局部重渲染时由 window_* 决定实际输出哪一段。
+    """
     vf = _build_filtergraph(
         duration_sec=duration_sec, width=width, height=height, fps=fps,
         colors=colors, font=font, text=text, font_size=font_size,
+        window_start_sec=window_start_sec, window_end_sec=window_end_sec,
     )
+    if window_end_sec > window_start_sec:
+        out_duration = window_end_sec - window_start_sec
+    else:
+        out_duration = duration_sec
     return runner.run(
         [
             _binary("ffmpeg"), "-hide_banner", "-nostdin", "-y",
             "-f", "lavfi", "-i", vf,
-            "-t", f"{duration_sec:.3f}",
+            "-t", f"{out_duration:.3f}",
             "-r", str(fps),
             "-pix_fmt", "yuv420p",
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",

@@ -53,7 +53,7 @@ class PlanScriptResponse(_message.Message):
     def __init__(self, shots: _Optional[_Iterable[_Union[_common_pb2.ShotSpec, _Mapping]]] = ..., outline: _Optional[str] = ..., total_tokens: _Optional[int] = ..., elapsed_sec: _Optional[float] = ...) -> None: ...
 
 class GenerateShotRequest(_message.Message):
-    __slots__ = ("job_id", "shot", "attempt", "feedback", "style_guide_json", "draft_only", "output_dir")
+    __slots__ = ("job_id", "shot", "attempt", "feedback", "style_guide_json", "draft_only", "output_dir", "range_start_sec", "range_end_sec")
     JOB_ID_FIELD_NUMBER: _ClassVar[int]
     SHOT_FIELD_NUMBER: _ClassVar[int]
     ATTEMPT_FIELD_NUMBER: _ClassVar[int]
@@ -61,6 +61,8 @@ class GenerateShotRequest(_message.Message):
     STYLE_GUIDE_JSON_FIELD_NUMBER: _ClassVar[int]
     DRAFT_ONLY_FIELD_NUMBER: _ClassVar[int]
     OUTPUT_DIR_FIELD_NUMBER: _ClassVar[int]
+    RANGE_START_SEC_FIELD_NUMBER: _ClassVar[int]
+    RANGE_END_SEC_FIELD_NUMBER: _ClassVar[int]
     job_id: str
     shot: _common_pb2.ShotSpec
     attempt: int
@@ -68,23 +70,27 @@ class GenerateShotRequest(_message.Message):
     style_guide_json: str
     draft_only: bool
     output_dir: str
-    def __init__(self, job_id: _Optional[str] = ..., shot: _Optional[_Union[_common_pb2.ShotSpec, _Mapping]] = ..., attempt: _Optional[int] = ..., feedback: _Optional[_Union[_common_pb2.CriticFeedback, _Mapping]] = ..., style_guide_json: _Optional[str] = ..., draft_only: bool = ..., output_dir: _Optional[str] = ...) -> None: ...
+    range_start_sec: float
+    range_end_sec: float
+    def __init__(self, job_id: _Optional[str] = ..., shot: _Optional[_Union[_common_pb2.ShotSpec, _Mapping]] = ..., attempt: _Optional[int] = ..., feedback: _Optional[_Union[_common_pb2.CriticFeedback, _Mapping]] = ..., style_guide_json: _Optional[str] = ..., draft_only: bool = ..., output_dir: _Optional[str] = ..., range_start_sec: _Optional[float] = ..., range_end_sec: _Optional[float] = ...) -> None: ...
 
 class GenerateShotResponse(_message.Message):
-    __slots__ = ("shot", "artifact", "success", "error", "total_tokens", "elapsed_sec")
+    __slots__ = ("shot", "artifact", "success", "error", "total_tokens", "elapsed_sec", "partial_range_honored")
     SHOT_FIELD_NUMBER: _ClassVar[int]
     ARTIFACT_FIELD_NUMBER: _ClassVar[int]
     SUCCESS_FIELD_NUMBER: _ClassVar[int]
     ERROR_FIELD_NUMBER: _ClassVar[int]
     TOTAL_TOKENS_FIELD_NUMBER: _ClassVar[int]
     ELAPSED_SEC_FIELD_NUMBER: _ClassVar[int]
+    PARTIAL_RANGE_HONORED_FIELD_NUMBER: _ClassVar[int]
     shot: _common_pb2.ShotSpec
     artifact: _common_pb2.RenderArtifact
     success: bool
     error: str
     total_tokens: int
     elapsed_sec: float
-    def __init__(self, shot: _Optional[_Union[_common_pb2.ShotSpec, _Mapping]] = ..., artifact: _Optional[_Union[_common_pb2.RenderArtifact, _Mapping]] = ..., success: bool = ..., error: _Optional[str] = ..., total_tokens: _Optional[int] = ..., elapsed_sec: _Optional[float] = ...) -> None: ...
+    partial_range_honored: bool
+    def __init__(self, shot: _Optional[_Union[_common_pb2.ShotSpec, _Mapping]] = ..., artifact: _Optional[_Union[_common_pb2.RenderArtifact, _Mapping]] = ..., success: bool = ..., error: _Optional[str] = ..., total_tokens: _Optional[int] = ..., elapsed_sec: _Optional[float] = ..., partial_range_honored: bool = ...) -> None: ...
 
 class CritiqueShotRequest(_message.Message):
     __slots__ = ("job_id", "shot", "artifact", "attempt", "style_guide_json")
@@ -113,23 +119,27 @@ class CritiqueShotResponse(_message.Message):
     def __init__(self, feedback: _Optional[_Union[_common_pb2.CriticFeedback, _Mapping]] = ..., degraded: bool = ..., total_tokens: _Optional[int] = ..., elapsed_sec: _Optional[float] = ...) -> None: ...
 
 class ReviseShotRequest(_message.Message):
-    __slots__ = ("job_id", "shot", "human_comment", "attempt", "style_guide_json", "output_dir")
+    __slots__ = ("job_id", "shot", "human_comment", "attempt", "style_guide_json", "output_dir", "range_start_sec", "range_end_sec")
     JOB_ID_FIELD_NUMBER: _ClassVar[int]
     SHOT_FIELD_NUMBER: _ClassVar[int]
     HUMAN_COMMENT_FIELD_NUMBER: _ClassVar[int]
     ATTEMPT_FIELD_NUMBER: _ClassVar[int]
     STYLE_GUIDE_JSON_FIELD_NUMBER: _ClassVar[int]
     OUTPUT_DIR_FIELD_NUMBER: _ClassVar[int]
+    RANGE_START_SEC_FIELD_NUMBER: _ClassVar[int]
+    RANGE_END_SEC_FIELD_NUMBER: _ClassVar[int]
     job_id: str
     shot: _common_pb2.ShotSpec
     human_comment: str
     attempt: int
     style_guide_json: str
     output_dir: str
-    def __init__(self, job_id: _Optional[str] = ..., shot: _Optional[_Union[_common_pb2.ShotSpec, _Mapping]] = ..., human_comment: _Optional[str] = ..., attempt: _Optional[int] = ..., style_guide_json: _Optional[str] = ..., output_dir: _Optional[str] = ...) -> None: ...
+    range_start_sec: float
+    range_end_sec: float
+    def __init__(self, job_id: _Optional[str] = ..., shot: _Optional[_Union[_common_pb2.ShotSpec, _Mapping]] = ..., human_comment: _Optional[str] = ..., attempt: _Optional[int] = ..., style_guide_json: _Optional[str] = ..., output_dir: _Optional[str] = ..., range_start_sec: _Optional[float] = ..., range_end_sec: _Optional[float] = ...) -> None: ...
 
 class ReviseShotResponse(_message.Message):
-    __slots__ = ("shot", "artifact", "feedback", "success", "error", "total_tokens", "elapsed_sec")
+    __slots__ = ("shot", "artifact", "feedback", "success", "error", "total_tokens", "elapsed_sec", "partial_range_honored")
     SHOT_FIELD_NUMBER: _ClassVar[int]
     ARTIFACT_FIELD_NUMBER: _ClassVar[int]
     FEEDBACK_FIELD_NUMBER: _ClassVar[int]
@@ -137,6 +147,7 @@ class ReviseShotResponse(_message.Message):
     ERROR_FIELD_NUMBER: _ClassVar[int]
     TOTAL_TOKENS_FIELD_NUMBER: _ClassVar[int]
     ELAPSED_SEC_FIELD_NUMBER: _ClassVar[int]
+    PARTIAL_RANGE_HONORED_FIELD_NUMBER: _ClassVar[int]
     shot: _common_pb2.ShotSpec
     artifact: _common_pb2.RenderArtifact
     feedback: _common_pb2.CriticFeedback
@@ -144,4 +155,5 @@ class ReviseShotResponse(_message.Message):
     error: str
     total_tokens: int
     elapsed_sec: float
-    def __init__(self, shot: _Optional[_Union[_common_pb2.ShotSpec, _Mapping]] = ..., artifact: _Optional[_Union[_common_pb2.RenderArtifact, _Mapping]] = ..., feedback: _Optional[_Union[_common_pb2.CriticFeedback, _Mapping]] = ..., success: bool = ..., error: _Optional[str] = ..., total_tokens: _Optional[int] = ..., elapsed_sec: _Optional[float] = ...) -> None: ...
+    partial_range_honored: bool
+    def __init__(self, shot: _Optional[_Union[_common_pb2.ShotSpec, _Mapping]] = ..., artifact: _Optional[_Union[_common_pb2.RenderArtifact, _Mapping]] = ..., feedback: _Optional[_Union[_common_pb2.CriticFeedback, _Mapping]] = ..., success: bool = ..., error: _Optional[str] = ..., total_tokens: _Optional[int] = ..., elapsed_sec: _Optional[float] = ..., partial_range_honored: bool = ...) -> None: ...
