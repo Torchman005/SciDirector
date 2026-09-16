@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/hibiken/asynq"
 
+	"github.com/itJinYu/SciDirector/backend/internal/archive"
 	"github.com/itJinYu/SciDirector/backend/internal/domain"
 	"github.com/itJinYu/SciDirector/backend/internal/logging"
 	"github.com/itJinYu/SciDirector/backend/internal/media"
@@ -318,7 +320,89 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 	})
 	lg.Info("合成完成", "final_path", finalPath, "shots", len(normPaths),
 		"subtitle", subtitlePath, "progress", final.Progress)
+
+	// 收尾：归档 + 本地清理。**失败不改变任务结果** ——
+	// 产物已经生成、任务已经成功，因为对象存储抖动就把它判成失败，
+	// 代价远大于收益（用户看到的是"失败"，而片子其实好好的）。
+	p.finalizeArtifacts(ctx, jobID, finalPath, subtitlePath, workDir, lg)
+
 	return nil
+}
+
+// finalizeArtifacts 归档交付物并按策略清理本地中间产物。
+//
+// 顺序不能反：**先归档、后清理**。反过来会在归档失败时把唯一的副本删掉。
+// 虽然归档失败时我们本来就不会执行清理（见下），但把顺序写死比依赖条件更可靠。
+func (p *Processor) finalizeArtifacts(
+	ctx context.Context,
+	jobID, finalPath, subtitlePath, workDir string,
+	lg *slog.Logger,
+) {
+	archived := true
+
+	if p.archive.Enabled() {
+		type item struct {
+			path string
+			kind archive.ObjectKind
+		}
+		items := []item{{path: finalPath, kind: archive.KindFinal}}
+		if subtitlePath != "" {
+			items = append(items, item{path: subtitlePath, kind: archive.KindSubtitle})
+		}
+
+		for _, it := range items {
+			key := archive.ObjectKey(jobID, it.kind, filepath.Base(it.path))
+			uri, err := p.archive.Put(ctx, it.path, key)
+			if err != nil {
+				archived = false
+				lg.Error("产物归档失败", "path", it.path, "key", key, "error", err.Error())
+				continue
+			}
+			lg.Info("产物已归档", "path", it.path, "uri", uri, "backend", p.archive.Kind())
+		}
+
+		_, _ = p.emit(ctx, &domain.Event{
+			JobID: jobID, Node: "compose",
+			Message:   fmt.Sprintf("产物已归档到 %s", p.archive.Kind()),
+			Payload:   map[string]any{"backend": p.archive.Kind(), "ok": archived},
+			Timestamp: time.Now().UTC(),
+		})
+	}
+
+	// 归档失败时**不清理**：本地那份可能就是唯一的副本。
+	// 这是"宁可占盘，不可丢件"的取舍 —— 磁盘可以加，数据丢了找不回来。
+	if !archived {
+		lg.Warn("归档未全部成功，跳过本地清理以保留唯一副本")
+		return
+	}
+
+	entries, err := archive.CollectEntries(workDir)
+	if err != nil {
+		lg.Warn("扫描本地产物失败，跳过清理", "error", err.Error())
+		return
+	}
+	plan := archive.PlanCleanup(entries, archive.CleanupOptions{
+		KeepAll:        p.cfg.Archive.KeepAll,
+		KeepNormalized: p.cfg.Archive.KeepNormalized,
+	})
+	if len(plan) == 0 {
+		return
+	}
+
+	removed, failed := archive.Cleanup(plan)
+	var freed int64
+	for _, e := range entries {
+		for _, p := range plan {
+			if e.Path == p {
+				freed += e.SizeBytes
+			}
+		}
+	}
+	lg.Info("本地中间产物已清理",
+		"removed", removed, "failed", len(failed), "freed_mb", freed>>20)
+	for path, ferr := range failed {
+		lg.Warn("删除中间产物失败", "path", path, "error", ferr.Error())
+	}
 }
 
 // subtitleOptions 把配置映射成字幕参数。

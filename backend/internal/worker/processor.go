@@ -23,6 +23,7 @@ import (
 	"github.com/hibiken/asynq"
 
 	"github.com/itJinYu/SciDirector/backend/internal/ai"
+	"github.com/itJinYu/SciDirector/backend/internal/archive"
 	"github.com/itJinYu/SciDirector/backend/internal/config"
 	"github.com/itJinYu/SciDirector/backend/internal/domain"
 	"github.com/itJinYu/SciDirector/backend/internal/logging"
@@ -35,12 +36,13 @@ import (
 
 // Processor 汇总 worker 的全部依赖。所有 handler 都是它的方法。
 type Processor struct {
-	cfg   *config.Config
-	store *store.Store
-	ai    *ai.Client
-	q     *queue.Client
-	media *media.Runner
-	log   *slog.Logger
+	cfg     *config.Config
+	store   *store.Store
+	ai      *ai.Client
+	q       *queue.Client
+	media   *media.Runner
+	archive archive.Archiver
+	log     *slog.Logger
 }
 
 // NewProcessor 构造处理器。
@@ -49,15 +51,25 @@ type Processor struct {
 // 把事件推到 worker 进程内的 Hub 对前端毫无意义。
 // 事件统一写入 Redis 事件流（AppendEvent 内含 Publish），
 // 由 api 侧按任务订阅后扇出 —— 这条路径在单进程与多进程部署下行为一致。
+//
+// archiver 为 nil 时使用 NoopArchiver：未配置对象存储是一条**正常路径**，
+// 业务代码不该到处判空。
 func NewProcessor(
 	cfg *config.Config,
 	st *store.Store,
 	aiClient *ai.Client,
 	q *queue.Client,
 	runner *media.Runner,
+	archiver archive.Archiver,
 	logger *slog.Logger,
 ) *Processor {
-	return &Processor{cfg: cfg, store: st, ai: aiClient, q: q, media: runner, log: logger}
+	if archiver == nil {
+		archiver = archive.NoopArchiver{}
+	}
+	return &Processor{
+		cfg: cfg, store: st, ai: aiClient, q: q,
+		media: runner, archive: archiver, log: logger,
+	}
 }
 
 // ---------------------------------------------------------------------------

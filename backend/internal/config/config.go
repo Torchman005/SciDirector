@@ -25,6 +25,7 @@ type Config struct {
 	AI       AIConfig
 	Media    MediaConfig
 	Pipeline PipelineConfig
+	Archive  ArchiveConfig
 }
 
 // HTTPConfig 描述 Go API 网关的监听参数。
@@ -107,6 +108,26 @@ type PipelineConfig struct {
 	CriticScoreThreshold float64
 }
 
+// ArchiveConfig 描述产物归档与本地保留策略。
+type ArchiveConfig struct {
+	// Backend 取值 none / local / s3。
+	// 默认 none：单机开发与 CI 没有对象存储，缺省必须是一条能跑通的路径。
+	Backend string
+	// LocalDir 是 local 后端的根目录。
+	LocalDir string
+	// KeepAll 为 true 时不做任何本地清理（排查线上问题时保留现场）。
+	KeepAll bool
+	// KeepNormalized 保留归一化中间产物（逐镜头重做时可省一次转码）。
+	KeepNormalized bool
+
+	MinioEndpoint  string
+	MinioAccessKey string
+	MinioSecretKey string
+	MinioBucket    string
+	MinioUseSSL    bool
+	MinioRegion    string
+}
+
 // Load 从环境变量装载配置。任何非法值都会返回错误，由调用方决定是否终止进程。
 func Load() (*Config, error) {
 	cfg := &Config{
@@ -173,6 +194,18 @@ func Load() (*Config, error) {
 		Pipeline: PipelineConfig{
 			ShotMaxAttempts:      getInt("SCID_SHOT_MAX_ATTEMPTS", 3),
 			CriticScoreThreshold: getFloat("SCID_CRITIC_SCORE_THRESHOLD", 0.75),
+		},
+		Archive: ArchiveConfig{
+			Backend:        getEnv("SCID_ARCHIVE_BACKEND", "none"),
+			LocalDir:       getEnv("SCID_ARCHIVE_LOCAL_DIR", "./.data/archive"),
+			KeepAll:        getBool("SCID_ARCHIVE_KEEP_ALL", false),
+			KeepNormalized: getBool("SCID_ARCHIVE_KEEP_NORMALIZED", false),
+			MinioEndpoint:  getEnv("SCID_MINIO_ENDPOINT", ""),
+			MinioAccessKey: getEnv("SCID_MINIO_ACCESS_KEY", ""),
+			MinioSecretKey: getEnv("SCID_MINIO_SECRET_KEY", ""),
+			MinioBucket:    getEnv("SCID_MINIO_BUCKET", "scidirector"),
+			MinioUseSSL:    getBool("SCID_MINIO_USE_SSL", false),
+			MinioRegion:    getEnv("SCID_MINIO_REGION", ""),
 		},
 	}
 

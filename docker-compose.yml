@@ -209,6 +209,16 @@ services:
       SCID_SUBTITLE_ENABLED: ${SCID_SUBTITLE_ENABLED:-true}
       SCID_SUBTITLE_MAX_CHARS: ${SCID_SUBTITLE_MAX_CHARS:-18}
       SCID_SUBTITLE_MIN_CUE_SEC: ${SCID_SUBTITLE_MIN_CUE_SEC:-0.8}
+      # 产物归档。默认 none —— 单机开发与 CI 没有对象存储，
+      # 缺省必须是一条能跑通的路径。compose 里显式指向内置 MinIO。
+      SCID_ARCHIVE_BACKEND: ${SCID_ARCHIVE_BACKEND:-s3}
+      SCID_ARCHIVE_KEEP_ALL: ${SCID_ARCHIVE_KEEP_ALL:-false}
+      SCID_ARCHIVE_KEEP_NORMALIZED: ${SCID_ARCHIVE_KEEP_NORMALIZED:-false}
+      SCID_MINIO_ENDPOINT: ${SCID_MINIO_ENDPOINT:-minio:9000}
+      SCID_MINIO_ACCESS_KEY: ${SCID_MINIO_ACCESS_KEY:-minioadmin}
+      SCID_MINIO_SECRET_KEY: ${SCID_MINIO_SECRET_KEY:-minioadmin}
+      SCID_MINIO_BUCKET: ${SCID_MINIO_BUCKET:-scidirector}
+      SCID_MINIO_USE_SSL: ${SCID_MINIO_USE_SSL:-false}
     volumes:
       - media-work:/data/work
     depends_on:

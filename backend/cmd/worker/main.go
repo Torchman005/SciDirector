@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/itJinYu/SciDirector/backend/internal/ai"
+	"github.com/itJinYu/SciDirector/backend/internal/archive"
 	"github.com/itJinYu/SciDirector/backend/internal/config"
 	"github.com/itJinYu/SciDirector/backend/internal/logging"
 	"github.com/itJinYu/SciDirector/backend/internal/media"
@@ -110,7 +111,33 @@ func run() error {
 	}
 	cancelHealth()
 
-	processor := worker.NewProcessor(cfg, st, aiClient, q, runner, logger)
+	// 归档后端：配置错误必须在启动期暴露，而不是等到第一个任务合成完才发现
+	// 「产物不知道该送去哪」。
+	archiver, err := archive.New(archive.Options{
+		Backend:        cfg.Archive.Backend,
+		LocalDir:       cfg.Archive.LocalDir,
+		KeepAll:        cfg.Archive.KeepAll,
+		KeepNormalized: cfg.Archive.KeepNormalized,
+		S3: archive.S3Options{
+			Endpoint:  cfg.Archive.MinioEndpoint,
+			AccessKey: cfg.Archive.MinioAccessKey,
+			SecretKey: cfg.Archive.MinioSecretKey,
+			Bucket:    cfg.Archive.MinioBucket,
+			UseSSL:    cfg.Archive.MinioUseSSL,
+			Region:    cfg.Archive.MinioRegion,
+		},
+	}, logger)
+	if err != nil {
+		return fmt.Errorf("worker: 归档配置非法: %w", err)
+	}
+	logger.Info("归档后端",
+		"backend", archiver.Kind(),
+		"enabled", archiver.Enabled(),
+		"keep_all", cfg.Archive.KeepAll,
+		"keep_normalized", cfg.Archive.KeepNormalized,
+	)
+
+	processor := worker.NewProcessor(cfg, st, aiClient, q, runner, archiver, logger)
 
 	asynqServer := queue.NewServer(cfg.Redis, cfg.Queue, logger)
 	mux := queue.NewMux()
