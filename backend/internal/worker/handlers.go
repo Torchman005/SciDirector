@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/hibiken/asynq"
-	"golang.org/x/sync/errgroup"
 
 	"github.com/itJinYu/SciDirector/backend/internal/domain"
 	"github.com/itJinYu/SciDirector/backend/internal/logging"
@@ -136,47 +135,45 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 		return fmt.Errorf("worker: 创建合成工作目录失败: %w", err)
 	}
 
-	// 阶段一：归一化。用信号量限制并发 —— 单个 ffmpeg 会吃满多核，
-	// 无节制并发会让「并发」退化成互相抢占，总耗时反而更长。
-	sem := media.NewSemaphore(p.cfg.Media.MaxParallel)
+	// 阶段一：归一化。
+	//
+	// 两道防线分工必须说清楚，否则很容易「以为限制了、其实没有」：
+	//
+	//	Pool           限制**本任务内**同时在飞的 goroutine 数 → 内存占用是 O(limit) 而非 O(分镜数)
+	//	Runner 全局闸门 限制**整个 worker 进程**的 ffmpeg 子进程数 → 真正的 OOM 防线
+	//
+	// 早期实现是「无脑 fan-out + 每任务新建信号量」：能限制并发度，但分镜表一大
+	// 就会瞬间产生同样多的 goroutine 阻塞在信号量上，且每任务一个信号量会让
+	// 全局上限随并发任务数成倍放大。两处都已收敛。
+	pool := media.NewPool(p.cfg.Media.MaxParallel)
 	normPaths := make([]string, len(items))
 
-	// errgroup：任一分支返回错误即取消整个 group 的派生 context，
-	// 让其余正在跑的 ffmpeg 立刻收到取消并退出，不浪费 CPU。
-	g, gctx := errgroup.WithContext(ctx)
-	for i := range items {
-		i := i
-		g.Go(func() error {
-			release, aerr := sem.Acquire(gctx)
-			if aerr != nil {
-				return aerr
-			}
-			defer release()
+	// 任一分支失败即取消其余分支：正在跑的 ffmpeg 会收到取消并退出，不白烧 CPU。
+	// pool.Run 保证返回时**所有**分支都已收敛，因此下面可以安全地读 normPaths。
+	err = pool.Run(ctx, len(items), func(gctx context.Context, i int) error {
+		probe, perr := p.media.Probe(gctx, items[i].path)
+		if perr != nil {
+			return fmt.Errorf("分镜 %d 产物无效: %w", items[i].index, perr)
+		}
 
-			probe, perr := p.media.Probe(gctx, items[i].path)
-			if perr != nil {
-				return fmt.Errorf("分镜 %d 产物无效: %w", items[i].index, perr)
-			}
-
-			// 已经符合目标规格就跳过转码：转码既有损又耗时，能省则省。
-			if probe.Width == p.cfg.Media.Width &&
-				probe.Height == p.cfg.Media.Height &&
-				int(probe.FPS+0.5) == p.cfg.Media.FPS &&
-				probe.PixFmt == "yuv420p" {
-				normPaths[i] = items[i].path
-				return nil
-			}
-
-			out := filepath.Join(normDir, fmt.Sprintf("norm_%03d.mp4", items[i].index))
-			if nerr := p.media.Normalize(gctx, items[i].path, out,
-				p.cfg.Media.Width, p.cfg.Media.Height, p.cfg.Media.FPS); nerr != nil {
-				return fmt.Errorf("分镜 %d 归一化失败: %w", items[i].index, nerr)
-			}
-			normPaths[i] = out
+		// 已经符合目标规格就跳过转码：转码既有损又耗时，能省则省。
+		if probe.Width == p.cfg.Media.Width &&
+			probe.Height == p.cfg.Media.Height &&
+			int(probe.FPS+0.5) == p.cfg.Media.FPS &&
+			probe.PixFmt == "yuv420p" {
+			normPaths[i] = items[i].path
 			return nil
-		})
-	}
-	if err := g.Wait(); err != nil {
+		}
+
+		out := filepath.Join(normDir, fmt.Sprintf("norm_%03d.mp4", items[i].index))
+		if nerr := p.media.Normalize(gctx, items[i].path, out,
+			p.cfg.Media.Width, p.cfg.Media.Height, p.cfg.Media.FPS); nerr != nil {
+			return fmt.Errorf("分镜 %d 归一化失败: %w", items[i].index, nerr)
+		}
+		normPaths[i] = out
+		return nil
+	})
+	if err != nil {
 		// 只要有一个片段不可用，就不能产出「缺一段」的成片。
 		// 宁可失败并转人工提示，也不要交付一部中间少了几个镜头的视频。
 		msg := "合成前置校验失败：" + err.Error()

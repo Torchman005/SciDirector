@@ -85,8 +85,12 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("worker: ffmpeg 环境检查失败: %w", err)
 	}
+	// 打印 Runner 实际生效的并发上限，而不是配置原值：
+	// 配置非法时 Runner 会夹到 1，日志必须反映真正生效的值，
+	// 否则排查「并发怎么上不去」时会对着一个从未生效的数字发呆。
 	logger.Info("ffmpeg 环境检查通过",
-		"max_parallel", cfg.Media.MaxParallel,
+		"max_parallel", runner.MaxParallel(),
+		"cmd_timeout", cfg.Media.CommandTimeout.String(),
 		"work_dir", cfg.Media.WorkDir,
 	)
 

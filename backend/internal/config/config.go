@@ -67,9 +67,15 @@ type AIConfig struct {
 
 // MediaConfig 描述 ffmpeg 媒体处理参数。
 type MediaConfig struct {
-	FFmpegBin        string
-	FFprobeBin       string
-	MaxParallel      int
+	FFmpegBin  string
+	FFprobeBin string
+	// MaxParallel 是整个 worker 进程内**同时**运行的 ffmpeg/ffprobe 进程数上限。
+	// 它是防 OOM 的全局闸门，而不是「每个任务」的上限。
+	MaxParallel int
+	// CommandTimeout 是单条 ffmpeg/ffprobe 命令的硬超时。
+	// 没有它，一个卡死的进程会永久占住一个并发槽位；占满 MaxParallel 个之后
+	// 整条流水线静默停摆（没有任何错误可报），比直接崩溃更难排查。
+	CommandTimeout   time.Duration
 	WorkDir          string
 	KeepIntermediate bool
 	FPS              int
@@ -124,6 +130,7 @@ func Load() (*Config, error) {
 			FFmpegBin:        getEnv("SCID_FFMPEG_BIN", "ffmpeg"),
 			FFprobeBin:       getEnv("SCID_FFPROBE_BIN", "ffprobe"),
 			MaxParallel:      getInt("SCID_FFMPEG_MAX_PARALLEL", 4),
+			CommandTimeout:   getDuration("SCID_FFMPEG_CMD_TIMEOUT", 10*time.Minute),
 			WorkDir:          getEnv("SCID_MEDIA_WORK_DIR", "./.data/work"),
 			KeepIntermediate: getBool("SCID_MEDIA_KEEP_INTERMEDIATE", true),
 			FPS:              getInt("SCID_RENDER_FPS", 30),
