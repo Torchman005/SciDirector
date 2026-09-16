@@ -40,6 +40,12 @@ type ProbeResult struct {
 	HasAudio    bool
 	AudioCodec  string
 	BitRate     int64
+	// ColorRange 是色彩范围（tv/limited 或 pc/full）。
+	// 它是「同一部片子里这段发灰、那段正常」的首要原因，因此必须可被观测 ——
+	// 不可观测的约定等于没有约定。
+	ColorRange string
+	// ColorSpace 是色彩空间标记（如 bt709）。未标注时为空串。
+	ColorSpace string
 }
 
 // ffprobeOutput 对应 `ffprobe -print_format json -show_format -show_streams` 的结构。
@@ -58,6 +64,8 @@ type ffprobeOutput struct {
 		AvgFrameRate string `json:"avg_frame_rate"`
 		RFrameRate   string `json:"r_frame_rate"`
 		Duration     string `json:"duration"`
+		ColorRange   string `json:"color_range"`
+		ColorSpace   string `json:"color_space"`
 	} `json:"streams"`
 }
 
@@ -70,6 +78,9 @@ type ffprobeOutput struct {
 // cmd.Wait() 就会**永久阻塞** —— 表现为「任务取消失了，但 goroutine 永远卡住」。
 // 设了 WaitDelay 之后，超时即强制关闭管道并返回，进程与调用方都能脱身。
 const procWaitDelay = 5 * time.Second
+
+// defaultTransitionSec 是未显式配置时的转场时长。
+const defaultTransitionSec = 0.4
 
 // Runner 是无状态的 ffmpeg / ffprobe 调用器，可安全地被多个 goroutine 共用。
 type Runner struct {
@@ -91,10 +102,23 @@ type Runner struct {
 	// 没有它，一个卡死的 ffmpeg 会永久占住一个槽位；占满 MaxParallel 个之后
 	// 整条流水线彻底停摆 —— 这比进程崩溃更难恢复，因为没有错误可报。
 	cmdTimeout time.Duration
+	// defaultSpec 是配置决定的归一化目标规格，供编排层直接使用。
+	defaultSpec NormalizeSpec
+	// transition 是配置决定的转场方案（是否真的启用由 PlanTransitions 判定）。
+	transition TransitionSpec
 }
 
+// DefaultNormalizeSpec 返回配置决定的归一化目标规格。
+func (r *Runner) DefaultNormalizeSpec() NormalizeSpec { return r.defaultSpec }
+
+// Transition 返回配置决定的转场方案。
+func (r *Runner) Transition() TransitionSpec { return r.transition }
+
 // NewRunner 依据配置构造 Runner。
-func NewRunner(cfg config.MediaConfig) *Runner {
+//
+// 返回 error 而不是静默降级：转场名拼错属于配置错误，
+// 必须在进程启动期就报出来，而不是等到第一部成片出来才发现「转场没了」。
+func NewRunner(cfg config.MediaConfig) (*Runner, error) {
 	parallel := cfg.MaxParallel
 	if parallel < 1 {
 		parallel = 1
@@ -103,12 +127,39 @@ func NewRunner(cfg config.MediaConfig) *Runner {
 	if cmdTimeout <= 0 {
 		cmdTimeout = 10 * time.Minute
 	}
+
+	transitionType, err := ParseTransitionType(cfg.Transition)
+	if err != nil {
+		return nil, err
+	}
+	transitionDur := cfg.TransitionDurationSec
+	if transitionDur <= 0 {
+		transitionDur = defaultTransitionSec
+	}
+
+	fps := cfg.FPS
+	if fps < 1 {
+		fps = 30
+	}
+
 	return &Runner{
 		ffmpegBin:  cfg.FFmpegBin,
 		ffprobeBin: cfg.FFprobeBin,
 		sem:        NewSemaphore(parallel),
 		cmdTimeout: cmdTimeout,
-	}
+		defaultSpec: NormalizeSpec{
+			Width:  cfg.Width,
+			Height: cfg.Height,
+			FPS:    fps,
+			Color: ColorProfile{
+				Saturation: cfg.ColorSaturation,
+				Contrast:   cfg.ColorContrast,
+				Gamma:      cfg.ColorGamma,
+				Brightness: cfg.ColorBrightness,
+			},
+		},
+		transition: TransitionSpec{Type: transitionType, DurationSec: transitionDur},
+	}, nil
 }
 
 // MaxParallel 暴露全局并发上限，供启动日志与自检使用。
@@ -263,6 +314,8 @@ func (r *Runner) Probe(ctx context.Context, path string) (*ProbeResult, error) {
 				res.Height = s.Height
 				res.VideoCodec = s.CodecName
 				res.PixFmt = s.PixFmt
+				res.ColorRange = s.ColorRange
+				res.ColorSpace = s.ColorSpace
 				// avg_frame_rate 有时是 "0/0"，此时回退到 r_frame_rate。
 				res.FPS = parseRational(s.AvgFrameRate)
 				if res.FPS <= 0 {
@@ -289,24 +342,33 @@ func (r *Runner) Probe(ctx context.Context, path string) (*ProbeResult, error) {
 	return res, nil
 }
 
-// Normalize 把任意片段归一化到统一规格，使 concat 可靠。
+// Normalize 把任意片段归一化到统一规格，使 concat / xfade 可靠。
 //
-// 归一化目标由渲染配置决定（默认 1920x1080@30fps，yuv420p）。
+// 归一化**不只是**统一分辨率与帧率，还包括：
+//   - 统一像素格式（yuv420p）；
+//   - 统一色彩范围（转换到 limited/tv 并显式打标）；
+//   - 统一色彩空间标记（bt709）；
+//   - 无音轨时补静音轨，保证所有片段结构一致。
+//
+// 每一项都是 concat -c copy 与 xfade 能工作的必要条件。只统一分辨率
+// 而放着色彩范围不管，成片里就会出现「这段发灰、那段正常」的割裂感 ——
+// 而这在单个片段上看不出来，只有拼在一起才暴露。
+//
 // 使用 scale + pad 而非强制拉伸，避免改变画面宽高比。
-func (r *Runner) Normalize(ctx context.Context, in, out string, width, height, fps int) error {
-	vf := fmt.Sprintf(
-		"scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2:color=black,fps=%d,format=yuv420p",
-		width, height, width, height, fps,
-	)
+func (r *Runner) Normalize(ctx context.Context, in, out string, spec NormalizeSpec) error {
 	return r.run(ctx,
 		"-hide_banner", "-nostdin", "-y",
 		"-i", in,
-		// 无音轨时补一条静音轨，保证所有片段结构一致（后续 mux 才不会错位）。
+		// 无音轨时补一条静音轨，保证所有片段结构一致（后续 mux / acrossfade 才不会错位）。
 		"-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
 		"-map", "0:v:0", "-map", "1:a:0",
-		"-vf", vf,
+		"-vf", spec.normalizeVideoFilter(),
 		"-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
 		"-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
+		// 显式写出色彩标记。仅靠滤镜转换是不够的：不打标时播放器只能猜，
+		// 而不同的播放器猜法不同，同一部成片在两个平台上观感不一致。
+		"-color_range", "tv",
+		"-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709",
 		"-shortest",
 		"-movflags", "+faststart",
 		out,
@@ -448,6 +510,114 @@ func (r *Runner) ExtractFrames(ctx context.Context, videoPath, outDir string, co
 		return nil, fmt.Errorf("media: 从 %s 抽帧全部失败", videoPath)
 	}
 	return frames, nil
+}
+
+// ColorProfile 描述**统一调色**参数。
+//
+// 为什么需要它：本项目的片段来自三类差异极大的渲染器 ——
+// Manim（矢量、有限色彩范围）、无头浏览器逐帧截图（RGB 全范围）、
+// ffmpeg lavfi 合成。它们在成片里并排出现时会产生明显的「质感割裂」。
+//
+// 割裂的**首要原因是色彩范围不匹配**，而不是艺术风格差异：
+// 全范围内容被当成有限范围播放会显得发灰、对比度偏低。
+// 因此统一规格必须显式声明并转换色彩范围（见 Normalize），
+// 这里的参数只是在此基础上提供一层**全片一致**的微调能力。
+//
+// 零值表示该项不调整 —— 注意 eq 滤镜的默认值是 saturation/contrast/gamma = 1.0，
+// 把未配置的项写成 0 会让画面直接变黑，所以必须逐项判断而不是无脑拼参数。
+type ColorProfile struct {
+	Saturation float64 // 1.0 为原始饱和度
+	Contrast   float64 // 1.0 为原始对比度
+	Gamma      float64 // 1.0 为原始伽马
+	Brightness float64 // 0.0 为原始亮度
+}
+
+// filterExpr 把非零项编译成 eq 滤镜表达式；全为零时返回空串。
+func (c ColorProfile) filterExpr() string {
+	var parts []string
+	if c.Saturation > 0 {
+		parts = append(parts, fmt.Sprintf("saturation=%.4f", c.Saturation))
+	}
+	if c.Contrast > 0 {
+		parts = append(parts, fmt.Sprintf("contrast=%.4f", c.Contrast))
+	}
+	if c.Gamma > 0 {
+		parts = append(parts, fmt.Sprintf("gamma=%.4f", c.Gamma))
+	}
+	if c.Brightness != 0 {
+		parts = append(parts, fmt.Sprintf("brightness=%.4f", c.Brightness))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "eq=" + strings.Join(parts, ":")
+}
+
+// NormalizeSpec 描述归一化的目标规格。
+type NormalizeSpec struct {
+	Width  int
+	Height int
+	FPS    int
+	Color  ColorProfile
+}
+
+// normalizeVideoFilter 构造归一化的视频滤镜链。
+//
+// 顺序有讲究：先缩放与补边（几何），再统一帧率（时间），再做调色（像素），
+// 最后落到 yuv420p。把 format 放最后是必须的 —— eq 滤镜在 RGB 下工作，
+// 若先转成 yuv420p 再做色彩调整，会引入一次多余的有损往返。
+//
+// in_range=auto:out_range=limited 是「统一质感」的关键一步：
+// 标了全范围的输入会被真正转换到有限范围，而不是被错误地当成有限范围播出去。
+// 输入未标注范围时 auto 按有限范围处理，等于不做多余转换 —— 两种情况都正确。
+func (s NormalizeSpec) normalizeVideoFilter() string {
+	vf := fmt.Sprintf(
+		"scale=%d:%d:force_original_aspect_ratio=decrease:in_range=auto:out_range=limited,"+
+			"pad=%d:%d:(ow-iw)/2:(oh-ih)/2:color=black,"+
+			"fps=%d",
+		s.Width, s.Height, s.Width, s.Height, s.FPS,
+	)
+	if eq := s.Color.filterExpr(); eq != "" {
+		vf += "," + eq
+	}
+	return vf + ",format=yuv420p"
+}
+
+// ConcatWithTransition 用 xfade 把片段**带转场地**拼接起来。
+//
+// 与 Concat 的本质区别：xfade 必须解码再编码，因此**无法使用 -c copy**。
+// 这是转场的真实代价，也是默认走硬切路径的原因 —— 调用方应当先问
+// PlanTransitions 是否真的启用了转场，再决定走哪条路。
+//
+// 前置条件（由 Normalize 保证）：所有输入的分辨率、帧率、像素格式、
+// 色彩范围、时基完全一致，且都带音轨。任一条不满足都会导致花屏、
+// 转场位置漂移或滤镜图直接报错。
+func (r *Runner) ConcatWithTransition(ctx context.Context, inputs []string, out string, plan TransitionPlan) error {
+	if !plan.Enabled {
+		return fmt.Errorf("media: 转场方案未启用（%s），不应走 xfade 路径", plan.Reason)
+	}
+	filter, err := BuildXFadeFilter(plan, len(inputs))
+	if err != nil {
+		return err
+	}
+
+	args := []string{"-hide_banner", "-nostdin", "-y"}
+	for _, in := range inputs {
+		args = append(args, "-i", in)
+	}
+	args = append(args,
+		"-filter_complex", filter,
+		"-map", "[vout]", "-map", "[aout]",
+		"-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+		"-pix_fmt", "yuv420p",
+		"-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
+		// 与 Normalize 使用完全相同的色彩标记，保证成片内部一致。
+		"-color_range", "tv",
+		"-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709",
+		"-movflags", "+faststart",
+		out,
+	)
+	return r.run(ctx, args...)
 }
 
 // ---------------------------------------------------------------------------

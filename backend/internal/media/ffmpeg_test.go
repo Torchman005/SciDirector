@@ -35,12 +35,30 @@ func requireFFmpeg(t *testing.T) {
 // newTestRunner 构造一个并发上限可控的 Runner。
 func newTestRunner(t *testing.T, maxParallel int) *Runner {
 	t.Helper()
-	return NewRunner(config.MediaConfig{
+	return newTestRunnerWith(t, config.MediaConfig{
 		FFmpegBin:      "ffmpeg",
 		FFprobeBin:     "ffprobe",
 		MaxParallel:    maxParallel,
 		CommandTimeout: 2 * time.Minute,
+		Width:          320,
+		Height:         240,
+		FPS:            15,
 	})
+}
+
+// newTestRunnerWith 允许覆写媒体配置（转场、调色等）。
+func newTestRunnerWith(t *testing.T, cfg config.MediaConfig) *Runner {
+	t.Helper()
+	r, err := NewRunner(cfg)
+	if err != nil {
+		t.Fatalf("构造 Runner 失败: %v", err)
+	}
+	return r
+}
+
+// testSpec 是测试统一使用的归一化规格。
+func testSpec() NormalizeSpec {
+	return NormalizeSpec{Width: 320, Height: 240, FPS: 15}
 }
 
 // makeClip 用 lavfi 生成一段测试视频，避免测试依赖任何外部素材。
@@ -262,7 +280,7 @@ func TestNormalizeAndConcatDifferentSpecs(t *testing.T) {
 	normPaths := make([]string, 2)
 	for i, in := range []string{clipA, clipB} {
 		out := filepath.Join(dir, fmt.Sprintf("norm_%d.mp4", i))
-		if err := r.Normalize(ctx, in, out, wantW, wantH, wantFPS); err != nil {
+		if err := r.Normalize(ctx, in, out, NormalizeSpec{Width: wantW, Height: wantH, FPS: wantFPS}); err != nil {
 			t.Fatalf("归一化 %s 失败: %v", in, err)
 		}
 		normPaths[i] = out
@@ -334,10 +352,10 @@ func TestConcatHandlesApostropheInPath(t *testing.T) {
 	ctx := context.Background()
 	normQuoted := filepath.Join(dir, "norm_q.mp4")
 	normPlain := filepath.Join(dir, "norm_p.mp4")
-	if err := r.Normalize(ctx, quoted, normQuoted, 320, 240, 15); err != nil {
+	if err := r.Normalize(ctx, quoted, normQuoted, testSpec()); err != nil {
 		t.Fatalf("归一化含单引号路径失败: %v", err)
 	}
-	if err := r.Normalize(ctx, plain, normPlain, 320, 240, 15); err != nil {
+	if err := r.Normalize(ctx, plain, normPlain, testSpec()); err != nil {
 		t.Fatalf("归一化普通路径失败: %v", err)
 	}
 
@@ -361,6 +379,262 @@ func TestConcatHandlesApostropheInPath(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// 转场与统一调色：阶段三②的验收
+// ---------------------------------------------------------------------------
+
+// TestNormalizeUnifiesColorRangeAndSpace 是「统一调色」的验收项。
+//
+// 割裂的首要来源是色彩范围不匹配：Manim 的矢量输出是有限范围，
+// 无头浏览器录制出来的是 RGB 全范围。两者拼在一部片子里，
+// 全范围那段会被当成有限范围播出去，显得发灰、对比度偏低。
+//
+// 这里刻意构造一个**显式标注为全范围**的输入，验证它被归一化后
+// 与另一个普通输入的色彩标记完全一致。
+func TestNormalizeUnifiesColorRangeAndSpace(t *testing.T) {
+	requireFFmpeg(t)
+	if testing.Short() {
+		t.Skip("短模式跳过真实媒体集成测试")
+	}
+
+	r := newTestRunner(t, 2)
+	dir := t.TempDir()
+	ctx := context.Background()
+
+	// 片段 A：普通视频（ffmpeg 默认按有限范围编码）。
+	plain := filepath.Join(dir, "plain.mp4")
+	makeClip(t, r, plain, "320x240", 15, 2)
+
+	// 片段 B：显式标记为全范围（pc）的内容 —— 模拟浏览器录制。
+	fullRange := filepath.Join(dir, "full.mp4")
+	if err := r.run(ctx,
+		"-hide_banner", "-nostdin", "-y",
+		"-f", "lavfi", "-i", "testsrc=duration=2:size=320x240:rate=15",
+		"-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+		"-color_range", "pc", "-colorspace", "bt709",
+		fullRange,
+	); err != nil {
+		t.Fatalf("生成全范围测试片段失败: %v", err)
+	}
+
+	// 确认这个输入确实是全范围，否则整个测试的前提不成立。
+	pre, err := r.Probe(ctx, fullRange)
+	if err != nil {
+		t.Fatalf("探测全范围片段失败: %v", err)
+	}
+	if pre.ColorRange != "pc" {
+		t.Skipf("本机 ffmpeg 未能把输入标为 pc（实际 %q），跳过色彩范围一致性测试", pre.ColorRange)
+	}
+
+	normPlain := filepath.Join(dir, "n_plain.mp4")
+	normFull := filepath.Join(dir, "n_full.mp4")
+	if err := r.Normalize(ctx, plain, normPlain, testSpec()); err != nil {
+		t.Fatalf("归一化普通片段失败: %v", err)
+	}
+	if err := r.Normalize(ctx, fullRange, normFull, testSpec()); err != nil {
+		t.Fatalf("归一化全范围片段失败: %v", err)
+	}
+
+	a, err := r.Probe(ctx, normPlain)
+	if err != nil {
+		t.Fatalf("探测普通片段产物失败: %v", err)
+	}
+	b, err := r.Probe(ctx, normFull)
+	if err != nil {
+		t.Fatalf("探测全范围片段产物失败: %v", err)
+	}
+
+	// 核心断言：两个来源不同的片段，归一化后色彩标记必须**完全一致**。
+	if a.ColorRange != "tv" {
+		t.Errorf("普通片段归一化后 color_range = %q，期望 tv", a.ColorRange)
+	}
+	if b.ColorRange != "tv" {
+		t.Errorf("全范围片段归一化后 color_range = %q，期望被转换并标记为 tv", b.ColorRange)
+	}
+	if a.ColorSpace != b.ColorSpace {
+		t.Errorf("色彩空间标记不一致：%q vs %q —— 播放器会分别解释，观感割裂",
+			a.ColorSpace, b.ColorSpace)
+	}
+	if a.PixFmt != "yuv420p" || b.PixFmt != "yuv420p" {
+		t.Errorf("像素格式不一致：%q vs %q", a.PixFmt, b.PixFmt)
+	}
+}
+
+// TestConcatWithTransitionRealMerge 是转场的端到端验收：
+// 真实跑一次 xfade，验证成片时长等于 Σ时长 - (n-1)×T。
+//
+// 只断言「命令没报错」是不够的 —— offset 算错时 ffmpeg 多数情况下**不会报错**，
+// 只会产出转场位置漂移的片子。所以必须用时长的算术关系来验证。
+func TestConcatWithTransitionRealMerge(t *testing.T) {
+	requireFFmpeg(t)
+	if testing.Short() {
+		t.Skip("短模式跳过真实媒体集成测试")
+	}
+
+	r := newTestRunner(t, 2)
+	dir := t.TempDir()
+	ctx := context.Background()
+
+	// 三段各 2 秒。刻意用不同的输入尺寸，顺带验证归一化确实把规格拉平了。
+	sizes := []string{"320x240", "640x360", "320x240"}
+	inputs := make([]string, 0, len(sizes))
+	durations := make([]float64, 0, len(sizes))
+
+	for i, size := range sizes {
+		raw := filepath.Join(dir, fmt.Sprintf("raw_%d.mp4", i))
+		makeClip(t, r, raw, size, 15, 2)
+		norm := filepath.Join(dir, fmt.Sprintf("norm_%d.mp4", i))
+		if err := r.Normalize(ctx, raw, norm, testSpec()); err != nil {
+			t.Fatalf("归一化 %d 失败: %v", i, err)
+		}
+		p, err := r.Probe(ctx, norm)
+		if err != nil {
+			t.Fatalf("探测 %d 失败: %v", i, err)
+		}
+		inputs = append(inputs, norm)
+		durations = append(durations, p.DurationSec)
+	}
+
+	const wantTransition = 0.5
+	plan := PlanTransitions(durations, TransitionSpec{Type: TransitionFade, DurationSec: wantTransition})
+	if !plan.Enabled {
+		t.Fatalf("应当启用转场：%s", plan.Reason)
+	}
+	if math.Abs(plan.Duration-wantTransition) > 1e-9 {
+		t.Fatalf("统一转场时长 = %.3f，期望 %.3f（片段都够长，不该被压缩）", plan.Duration, wantTransition)
+	}
+
+	merged := filepath.Join(dir, "merged_xfade.mp4")
+	if err := r.ConcatWithTransition(ctx, inputs, merged, plan); err != nil {
+		t.Fatalf("转场合成失败: %v", err)
+	}
+
+	out, err := r.Probe(ctx, merged)
+	if err != nil {
+		t.Fatalf("探测成片失败: %v", err)
+	}
+
+	sum := 0.0
+	for _, d := range durations {
+		sum += d
+	}
+	wantOut := sum - float64(len(inputs)-1)*plan.Duration
+
+	// 允许 0.35s 误差：编码器对首尾帧的处理、以及容器时长的取整都会带来偏差，
+	// 但足以区分「正确交叠」与「完全没交叠」（后者会差 1.0s）或「offset 漂移」。
+	if math.Abs(out.DurationSec-wantOut) > 0.35 {
+		t.Fatalf("成片时长 %.3fs，期望约 %.3fs（Σ%.3f - %d×%.3f）—— 转场未按预期交叠",
+			out.DurationSec, wantOut, sum, len(inputs)-1, plan.Duration)
+	}
+	// 成片必须比简单相加更短，这是「交叠而非插入」的直接证据。
+	if out.DurationSec >= sum {
+		t.Fatalf("成片时长 %.3fs 未短于片段之和 %.3fs —— 转场没有真正发生",
+			out.DurationSec, sum)
+	}
+	if out.Width != 320 || out.Height != 240 {
+		t.Fatalf("成片尺寸 %dx%d，期望 320x240", out.Width, out.Height)
+	}
+	if out.ColorRange != "tv" {
+		t.Errorf("成片 color_range = %q，期望 tv", out.ColorRange)
+	}
+}
+
+// TestConcatWithTransitionRejectsDisabledPlan 守住 API 边界：
+// 方案未启用时不能悄悄走 xfade 路径。
+func TestConcatWithTransitionRejectsDisabledPlan(t *testing.T) {
+	requireFFmpeg(t)
+	r := newTestRunner(t, 1)
+	err := r.ConcatWithTransition(context.Background(),
+		[]string{"a.mp4", "b.mp4"}, t.TempDir()+"/out.mp4",
+		TransitionPlan{Enabled: false, Reason: "测试"})
+	if err == nil {
+		t.Fatal("未启用的转场方案应报错，而不是静默合成")
+	}
+}
+
+// TestNewRunnerValidatesTransitionName 验证配置错误在构造期暴露。
+func TestNewRunnerValidatesTransitionName(t *testing.T) {
+	_, err := NewRunner(config.MediaConfig{
+		FFmpegBin: "ffmpeg", FFprobeBin: "ffprobe",
+		MaxParallel: 1, Transition: "fadee", // 拼错
+		Width: 320, Height: 240, FPS: 15,
+	})
+	if err == nil {
+		t.Fatal("非法转场名应在构造 Runner 时报错，而不是静默降级为硬切")
+	}
+
+	// 默认值应当是 fade，且时长落到默认值。
+	r, err := NewRunner(config.MediaConfig{
+		FFmpegBin: "ffmpeg", FFprobeBin: "ffprobe",
+		MaxParallel: 1, Transition: "fade",
+		Width: 320, Height: 240, FPS: 15,
+	})
+	if err != nil {
+		t.Fatalf("构造失败: %v", err)
+	}
+	if r.Transition().Type != TransitionFade {
+		t.Errorf("转场类型 = %q，期望 fade", r.Transition().Type)
+	}
+	if math.Abs(r.Transition().DurationSec-defaultTransitionSec) > 1e-9 {
+		t.Errorf("未配置时长时应回落到默认 %.2f，实际 %.3f",
+			defaultTransitionSec, r.Transition().DurationSec)
+	}
+}
+
+// TestColorProfileFilterExpr 覆盖调色表达式的生成。
+//
+// 关键在「未配置的项必须省略」：eq 滤镜的默认值是 saturation/contrast/gamma = 1.0，
+// 若把未配置项写成 0，画面会直接变黑。
+func TestColorProfileFilterExpr(t *testing.T) {
+	if got := (ColorProfile{}).filterExpr(); got != "" {
+		t.Errorf("全零配置不应生成滤镜，实际 %q", got)
+	}
+
+	got := ColorProfile{Saturation: 1.1}.filterExpr()
+	if !strings.Contains(got, "saturation=1.1000") {
+		t.Errorf("应包含饱和度设置，实际 %q", got)
+	}
+	if strings.Contains(got, "contrast") || strings.Contains(got, "gamma") {
+		t.Errorf("未配置的项绝不能被写入（会变成 0 导致画面全黑），实际 %q", got)
+	}
+
+	// 亮度为 0 是「不调整」，负值才是有意义配置。
+	if got := (ColorProfile{Brightness: -0.05}).filterExpr(); !strings.Contains(got, "brightness=-0.0500") {
+		t.Errorf("负亮度应被写入，实际 %q", got)
+	}
+	if got := (ColorProfile{Saturation: 1.1, Contrast: 1.2}).filterExpr(); !strings.HasPrefix(got, "eq=") {
+		t.Errorf("应生成 eq 滤镜，实际 %q", got)
+	}
+}
+
+// TestNormalizeVideoFilterOrdering 验证滤镜链的顺序：
+// 几何 → 时间 → 调色 → format，且 format 必须在最后。
+func TestNormalizeVideoFilterOrdering(t *testing.T) {
+	spec := NormalizeSpec{Width: 640, Height: 360, FPS: 30, Color: ColorProfile{Saturation: 1.1}}
+	vf := spec.normalizeVideoFilter()
+
+	iScale := strings.Index(vf, "scale=")
+	iFps := strings.Index(vf, "fps=")
+	iEq := strings.Index(vf, "eq=")
+	iFmt := strings.Index(vf, "format=yuv420p")
+
+	if iScale < 0 || iFps < 0 || iEq < 0 || iFmt < 0 {
+		t.Fatalf("滤镜链缺少必要环节: %s", vf)
+	}
+	if !(iScale < iFps && iFps < iEq && iEq < iFmt) {
+		t.Fatalf("滤镜顺序应为 几何→时间→调色→format，实际: %s", vf)
+	}
+	if !strings.Contains(vf, "in_range=auto:out_range=limited") {
+		t.Errorf("必须显式声明色彩范围转换，否则全范围输入会显示异常: %s", vf)
+	}
+
+	// 未配置调色时不应出现 eq。
+	plain := NormalizeSpec{Width: 640, Height: 360, FPS: 30}.normalizeVideoFilter()
+	if strings.Contains(plain, "eq=") {
+		t.Errorf("未配置调色时不应生成 eq: %s", plain)
+	}
+}
+
 // TestNormalizeSkipsWhenSpecAlreadyMatches 确认「规格已匹配就不转码」的优化
 // 不会因为探测值有微小误差而失效 —— 那会导致每个片段被无谓地重编码一次。
 func TestNormalizeSkipsWhenSpecAlreadyMatches(t *testing.T) {
@@ -374,7 +648,7 @@ func TestNormalizeSkipsWhenSpecAlreadyMatches(t *testing.T) {
 	clip := filepath.Join(dir, "src.mp4")
 	makeClip(t, r, clip, "320x240", 15, 1)
 	norm := filepath.Join(dir, "norm.mp4")
-	if err := r.Normalize(context.Background(), clip, norm, 320, 240, 15); err != nil {
+	if err := r.Normalize(context.Background(), clip, norm, testSpec()); err != nil {
 		t.Fatalf("归一化失败: %v", err)
 	}
 
@@ -383,11 +657,19 @@ func TestNormalizeSkipsWhenSpecAlreadyMatches(t *testing.T) {
 		t.Fatalf("探测失败: %v", err)
 	}
 	// 这里复刻 handlers.go 的跳过判定，确保它能对上真实探测结果的取整方式。
-	matched := probe.Width == 320 && probe.Height == 240 &&
-		int(probe.FPS+0.5) == 15 && probe.PixFmt == "yuv420p"
+	spec := testSpec()
+	matched := probe.Width == spec.Width && probe.Height == spec.Height &&
+		int(probe.FPS+0.5) == spec.FPS && probe.PixFmt == "yuv420p" &&
+		probe.HasAudio
 	if !matched {
-		t.Fatalf("归一化产物未能命中「规格已匹配」判定（%dx%d @%.3f %s），"+
-			"会导致重复转码", probe.Width, probe.Height, probe.FPS, probe.PixFmt)
+		t.Fatalf("归一化产物未能命中「规格已匹配」判定"+
+			"（%dx%d @%.3f %s hasAudio=%v），会导致重复转码",
+			probe.Width, probe.Height, probe.FPS, probe.PixFmt, probe.HasAudio)
+	}
+	// 缺少音轨时**必须**重新归一化：handler 的判定要求 HasAudio，
+	// 否则无音轨片段会混进合成流程，让 concat 错位、让 acrossfade 报错。
+	if !probe.HasAudio {
+		t.Fatal("归一化产物必须带音轨")
 	}
 }
 

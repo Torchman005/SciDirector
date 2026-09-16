@@ -81,6 +81,16 @@ type MediaConfig struct {
 	FPS              int
 	Width            int
 	Height           int
+	// Transition 是跨镜头转场类型（none 表示硬切，走最快的 concat -c copy 路径）。
+	// 任何非 none 的取值都需要重编码整条成片，是明确的性能代价。
+	Transition string
+	// TransitionDurationSec 是转场时长；会被最短片段自动压住。
+	TransitionDurationSec float64
+	// 统一调色参数。零值表示不调整；见 media.ColorProfile 的说明。
+	ColorSaturation float64
+	ColorContrast   float64
+	ColorGamma      float64
+	ColorBrightness float64
 }
 
 // PipelineConfig 描述业务流水线的熔断与阈值。
@@ -136,6 +146,16 @@ func Load() (*Config, error) {
 			FPS:              getInt("SCID_RENDER_FPS", 30),
 			Width:            getInt("SCID_RENDER_WIDTH", 1920),
 			Height:           getInt("SCID_RENDER_HEIGHT", 1080),
+			// 默认 fade：科普视频里镜头之间直切会显得生硬。
+			// 代价是整条成片需要重编码 —— 追求速度可设为 none 走 copy 路径。
+			Transition:            getEnv("SCID_TRANSITION", "fade"),
+			TransitionDurationSec: getFloat("SCID_TRANSITION_DURATION_SEC", 0.4),
+			// 默认全为 0（不调整）。只统一规格与色彩范围，不做创作性调色 ——
+			// 把「技术一致性」和「艺术风格」分开，后者应当由导演智能体决定。
+			ColorSaturation: getFloat("SCID_COLOR_SATURATION", 0),
+			ColorContrast:   getFloat("SCID_COLOR_CONTRAST", 0),
+			ColorGamma:      getFloat("SCID_COLOR_GAMMA", 0),
+			ColorBrightness: getFloat("SCID_COLOR_BRIGHTNESS", 0),
 		},
 		Pipeline: PipelineConfig{
 			ShotMaxAttempts:      getInt("SCID_SHOT_MAX_ATTEMPTS", 3),

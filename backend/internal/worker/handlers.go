@@ -147,6 +147,9 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 	// 全局上限随并发任务数成倍放大。两处都已收敛。
 	pool := media.NewPool(p.cfg.Media.MaxParallel)
 	normPaths := make([]string, len(items))
+	// durations[i] 是归一化**之后**的时长，转场 offset 必须用它而不是原始时长：
+	// 归一化的 fps 变换会带来毫秒级差异，而 offset 是累积量，误差会逐段放大。
+	durations := make([]float64, len(items))
 
 	// 任一分支失败即取消其余分支：正在跑的 ffmpeg 会收到取消并退出，不白烧 CPU。
 	// pool.Run 保证返回时**所有**分支都已收敛，因此下面可以安全地读 normPaths。
@@ -155,22 +158,33 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 		if perr != nil {
 			return fmt.Errorf("分镜 %d 产物无效: %w", items[i].index, perr)
 		}
+		durations[i] = probe.DurationSec
 
 		// 已经符合目标规格就跳过转码：转码既有损又耗时，能省则省。
-		if probe.Width == p.cfg.Media.Width &&
-			probe.Height == p.cfg.Media.Height &&
-			int(probe.FPS+0.5) == p.cfg.Media.FPS &&
-			probe.PixFmt == "yuv420p" {
+		//
+		// 判定条件必须包含 HasAudio：无音轨的片段混进合成流程会让
+		// concat 错位、让 acrossfade 直接报错。宁可多转一次码，也不要放进去。
+		spec := p.media.DefaultNormalizeSpec()
+		if probe.Width == spec.Width &&
+			probe.Height == spec.Height &&
+			int(probe.FPS+0.5) == spec.FPS &&
+			probe.PixFmt == "yuv420p" &&
+			probe.HasAudio {
 			normPaths[i] = items[i].path
 			return nil
 		}
 
 		out := filepath.Join(normDir, fmt.Sprintf("norm_%03d.mp4", items[i].index))
-		if nerr := p.media.Normalize(gctx, items[i].path, out,
-			p.cfg.Media.Width, p.cfg.Media.Height, p.cfg.Media.FPS); nerr != nil {
+		if nerr := p.media.Normalize(gctx, items[i].path, out, spec); nerr != nil {
 			return fmt.Errorf("分镜 %d 归一化失败: %w", items[i].index, nerr)
 		}
 		normPaths[i] = out
+		// 归一化会改变时长（帧率对齐、补边），重新探测取准。
+		normProbe, nperr := p.media.Probe(gctx, out)
+		if nperr != nil {
+			return fmt.Errorf("分镜 %d 归一化产物无效: %w", items[i].index, nperr)
+		}
+		durations[i] = normProbe.DurationSec
 		return nil
 	})
 	if err != nil {
@@ -189,14 +203,36 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 		return fmt.Errorf("worker: %s", msg)
 	}
 
-	// 阶段二：concat。归一化后参数一致，可用 -c copy 无损拼接（速度极快）。
-	listPath := filepath.Join(workDir, "concat.txt")
-	if err := media.WriteConcatList(listPath, normPaths); err != nil {
-		return err
-	}
+	// 阶段二：把归一化后的片段接起来。
+	//
+	// 两条路径，代价差别很大，因此必须显式决策并把结论写进事件：
+	//   - 硬切：concat demuxer + -c copy，无重编码，最快；
+	//   - 转场：xfade 必须解码再编码，整条成片都要重来一遍。
+	//
+	// 是否启用由 PlanTransitions 判定（纯函数，可单测），它同时给出
+	// 「为什么没启用」的原因 —— 否则「配置了转场却没生效」只能靠读源码回答。
+	plan := media.PlanTransitions(durations, p.media.Transition())
 	mergedPath := filepath.Join(workDir, "merged.mp4")
-	if err := p.media.Concat(ctx, listPath, mergedPath); err != nil {
-		return fmt.Errorf("worker: 合并分镜失败: %w", err)
+
+	if plan.Enabled {
+		if err := p.media.ConcatWithTransition(ctx, normPaths, mergedPath, plan); err != nil {
+			return fmt.Errorf("worker: 带转场合并分镜失败: %w", err)
+		}
+		lg.Info("已使用转场合成",
+			"transition", string(plan.Type),
+			"duration_sec", plan.Duration,
+			"out_duration_sec", plan.OutDuration)
+	} else {
+		// 降级原因必须可见：静默硬切会让配置错误永远不被发现。
+		lg.Info("使用硬切合成", "reason", plan.Reason)
+
+		listPath := filepath.Join(workDir, "concat.txt")
+		if err := media.WriteConcatList(listPath, normPaths); err != nil {
+			return err
+		}
+		if err := p.media.Concat(ctx, listPath, mergedPath); err != nil {
+			return fmt.Errorf("worker: 合并分镜失败: %w", err)
+		}
 	}
 
 	// 阶段三：产出最终文件。

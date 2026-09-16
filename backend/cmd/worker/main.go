@@ -78,7 +78,10 @@ func run() error {
 
 	// ffmpeg 可用性检查：这是本进程的核心外部依赖，
 	// 在启动期发现「镜像里没装 ffmpeg」远比在合成阶段失败划算。
-	runner := media.NewRunner(cfg.Media)
+	runner, err := media.NewRunner(cfg.Media)
+	if err != nil {
+		return fmt.Errorf("worker: 媒体配置非法: %w", err)
+	}
 	verifyCtx, cancelVerify := context.WithTimeout(ctx, 30*time.Second)
 	err = runner.Verify(verifyCtx)
 	cancelVerify()
@@ -91,6 +94,8 @@ func run() error {
 	logger.Info("ffmpeg 环境检查通过",
 		"max_parallel", runner.MaxParallel(),
 		"cmd_timeout", cfg.Media.CommandTimeout.String(),
+		"transition", string(runner.Transition().Type),
+		"transition_sec", runner.Transition().DurationSec,
 		"work_dir", cfg.Media.WorkDir,
 	)
 

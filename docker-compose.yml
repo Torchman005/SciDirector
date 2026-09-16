@@ -188,7 +188,21 @@ services:
       <<: *common-env
       SCID_WORKER_CONCURRENCY: ${SCID_WORKER_CONCURRENCY:-4}
       SCID_FFMPEG_BIN: ffmpeg
+      # 全局 ffmpeg 进程数上限（整个 worker 进程共享，不是每任务一个）。
+      # 这是防 OOM 的闸门：调大之前先确认内存够 —— 单个 1080p ffmpeg
+      # 峰值可达数百 MB，4 路并发就是 GB 级。
       SCID_FFMPEG_MAX_PARALLEL: ${SCID_FFMPEG_MAX_PARALLEL:-4}
+      # 单条 ffmpeg 命令硬超时。没有它，卡死的进程会永久占住一个并发槽位，
+      # 占满之后整条流水线静默停摆且无任何错误可报。
+      SCID_FFMPEG_CMD_TIMEOUT: ${SCID_FFMPEG_CMD_TIMEOUT:-10m}
+      # 跨镜头转场。none = 硬切（走 concat -c copy，最快）；
+      # 其它取值需要重编码整条成片，是明确的性能代价。
+      SCID_TRANSITION: ${SCID_TRANSITION:-fade}
+      SCID_TRANSITION_DURATION_SEC: ${SCID_TRANSITION_DURATION_SEC:-0.4}
+      # 统一调色（0 = 不调整）。只做「全片一致」的微调，
+      # 创作性调色应由导演智能体决定，不在这里硬编码。
+      SCID_COLOR_SATURATION: ${SCID_COLOR_SATURATION:-0}
+      SCID_COLOR_CONTRAST: ${SCID_COLOR_CONTRAST:-0}
     volumes:
       - media-work:/data/work
     depends_on:
