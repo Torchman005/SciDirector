@@ -46,6 +46,10 @@ type ProbeResult struct {
 	ColorRange string
 	// ColorSpace 是色彩空间标记（如 bt709）。未标注时为空串。
 	ColorSpace string
+	// HasSubtitle 表示文件内含字幕流。
+	HasSubtitle bool
+	// SubtitleCodec 是字幕流编码（如 mov_text）。
+	SubtitleCodec string
 }
 
 // ffprobeOutput 对应 `ffprobe -print_format json -show_format -show_streams` 的结构。
@@ -329,6 +333,9 @@ func (r *Runner) Probe(ctx context.Context, path string) (*ProbeResult, error) {
 		case "audio":
 			res.HasAudio = true
 			res.AudioCodec = s.CodecName
+		case "subtitle":
+			res.HasSubtitle = true
+			res.SubtitleCodec = s.CodecName
 		}
 	}
 
@@ -428,36 +435,64 @@ func WriteConcatList(listPath string, files []string) error {
 // 参数语义：
 //   - audioPath 为空表示视频已自带音轨，直接复制；
 //   - subtitlePath 为空表示不挂字幕；否则以 mov_text 封装为软字幕（可开关，不破坏画面）。
+//
+// 输入下标必须**动态跟踪**，不能写死。字幕输入的下标取决于中间是否插了音轨：
+// 有 TTS 音轨时字幕是 2 号输入，没有时就是 1 号输入。
+// 早期实现把 `-map 2:s:0` 写死了，于是在「视频自带音轨、不额外传 audioPath」
+// 这条**最常见**的路径上，字幕下标永远指向不存在的流 ——
+// 表现为软字幕静默封不进去，而画面和音轨都正常，很难怀疑到映射上。
 func (r *Runner) MuxFinal(ctx context.Context, videoPath, audioPath, subtitlePath, out string) error {
-	args := []string{"-hide_banner", "-nostdin", "-y", "-i", videoPath}
+	var args []string
+	args = append(args, "-hide_banner", "-nostdin", "-y")
 
-	hasAudio := audioPath != ""
-	if hasAudio {
+	nextIdx := 0
+	args = append(args, "-i", videoPath)
+	videoIdx := nextIdx
+	nextIdx++
+
+	audioIdx := -1
+	if audioPath != "" {
 		args = append(args, "-i", audioPath)
-	}
-	hasSub := subtitlePath != ""
-	if hasSub {
-		args = append(args, "-i", subtitlePath)
+		audioIdx = nextIdx
+		nextIdx++
 	}
 
-	args = append(args, "-map", "0:v:0")
-	if hasAudio {
-		args = append(args, "-map", "1:a:0")
-	} else {
-		args = append(args, "-map", "0:a?")
+	subIdx := -1
+	if subtitlePath != "" {
+		args = append(args, "-i", subtitlePath)
+		subIdx = nextIdx
+		nextIdx++
 	}
-	if hasSub {
-		args = append(args, "-map", "2:s:0", "-c:s", "mov_text")
+
+	args = append(args, "-map", fmt.Sprintf("%d:v:0", videoIdx))
+	if audioIdx >= 0 {
+		args = append(args, "-map", fmt.Sprintf("%d:a:0", audioIdx))
+	} else {
+		// `?` 让缺失音轨不至于让整条命令失败。
+		args = append(args, "-map", fmt.Sprintf("%d:a?", videoIdx))
+	}
+	if subIdx >= 0 {
+		args = append(args, "-map", fmt.Sprintf("%d:s:0", subIdx), "-c:s", "mov_text")
 	}
 
 	args = append(args,
 		"-c:v", "copy",
 		"-c:a", "aac", "-b:a", "192k",
-		// shortest 保证音视频任一路先结束时整体结束，避免出现黑屏尾巴。
-		"-shortest",
-		"-movflags", "+faststart",
-		out,
 	)
+
+	// -shortest 只在**混入外部音轨**时才加，因为它要解决的问题正是
+	// 「外部音轨比画面长，导致末尾一段黑屏」。
+	//
+	// 视频自带音轨时它没有任何作用，却会造成一个极隐蔽的破坏：
+	// 当某条字幕恰好结束于视频末尾（我们的字幕对齐逻辑**总是**这样），
+	// -shortest 会把该字幕包的时长压成 0 —— 字幕流依然存在、ffprobe 也能探到，
+	// 但内容是空的，抽回 SRT 得到 0 字节文件。
+	// 这类「流在、内容没了」的失败比直接报错难发现得多。
+	if audioIdx >= 0 {
+		args = append(args, "-shortest")
+	}
+
+	args = append(args, "-movflags", "+faststart", out)
 	return r.run(ctx, args...)
 }
 

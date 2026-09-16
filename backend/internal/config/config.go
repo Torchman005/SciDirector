@@ -91,6 +91,14 @@ type MediaConfig struct {
 	ColorContrast   float64
 	ColorGamma      float64
 	ColorBrightness float64
+	// SubtitleEnabled 控制是否生成并封装软字幕。
+	// 软字幕（mov_text）可开关、不破坏画面，因此默认开启。
+	SubtitleEnabled bool
+	// SubtitleMaxCharsPerCue 是单条字幕的长度上限（按语音权重单位计）。
+	SubtitleMaxCharsPerCue int
+	// SubtitleMinCueSec / SubtitleMaxCueSec 是单条字幕的显示时长上下限。
+	SubtitleMinCueSec float64
+	SubtitleMaxCueSec float64
 }
 
 // PipelineConfig 描述业务流水线的熔断与阈值。
@@ -156,6 +164,11 @@ func Load() (*Config, error) {
 			ColorContrast:   getFloat("SCID_COLOR_CONTRAST", 0),
 			ColorGamma:      getFloat("SCID_COLOR_GAMMA", 0),
 			ColorBrightness: getFloat("SCID_COLOR_BRIGHTNESS", 0),
+			// 字幕默认开启：科普视频没有字幕几乎不可用（静音观看场景占很大比例）。
+			SubtitleEnabled:        getBool("SCID_SUBTITLE_ENABLED", true),
+			SubtitleMaxCharsPerCue: getInt("SCID_SUBTITLE_MAX_CHARS", 18),
+			SubtitleMinCueSec:      getFloat("SCID_SUBTITLE_MIN_CUE_SEC", 0.8),
+			SubtitleMaxCueSec:      getFloat("SCID_SUBTITLE_MAX_CUE_SEC", 8.0),
 		},
 		Pipeline: PipelineConfig{
 			ShotMaxAttempts:      getInt("SCID_SHOT_MAX_ATTEMPTS", 3),

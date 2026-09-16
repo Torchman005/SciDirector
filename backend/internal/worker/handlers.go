@@ -79,9 +79,16 @@ func RegisterHandlers(mux *asynq.ServeMux, p *Processor) {
 
 // shotItem 是合成阶段的一个输入片段（包级定义，便于排序与并发索引）。
 type shotItem struct {
-	index int    // 分镜序号，决定在成片中的位置
-	path  string // 视频文件路径
+	index     int    // 分镜序号，决定在成片中的位置
+	path      string // 视频文件路径
+	narration string // 画外音原文，字幕来源
 }
+
+// subtitleTailMarginSec 是字幕末尾安全边距。
+//
+// 不设这个边距时，最后一条字幕会恰好结束于视频末尾 —— 而那个组合会让
+// 封装阶段的时长裁剪把字幕包压成零长（字幕流还在、内容为空）。
+const subtitleTailMarginSec = 0.1
 
 // HandleComposeJob 把已通过审查的镜头合成为最终成片。
 //
@@ -116,7 +123,11 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 			lg.Warn("已通过的镜头缺少视频产物，跳过", "shot_id", s.ShotID)
 			continue
 		}
-		items = append(items, shotItem{index: s.Index, path: s.Artifact.VideoPath})
+		items = append(items, shotItem{
+			index:     s.Index,
+			path:      s.Artifact.VideoPath,
+			narration: s.Narration,
+		})
 	}
 	if len(items) == 0 {
 		return fmt.Errorf("worker: 任务 %s 没有可合成的镜头产物", jobID)
@@ -235,11 +246,51 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 		}
 	}
 
-	// 阶段三：产出最终文件。
-	// 当前版本各片段自带音轨；全片统一 TTS 配音与字幕烧制属于阶段三的增强项，
-	// MuxFinal 已经支持 audioPath / subtitlePath 参数，届时无需改动调用契约。
+	// 阶段三：生成字幕。
+	//
+	// 字幕窗口必须建立在**转场之后的**时间轴上：转场是交叠而非插入，
+	// 成片比片段之和短 (n-1)×T。若按原始时长累加去定位字幕，
+	// 每过一个转场就往后偏 T 秒，越往后错得越明显 ——
+	// 而片头几秒看起来完全正常，因此极容易被漏掉。
+	subtitlePath := ""
+	if p.cfg.Media.SubtitleEnabled {
+		narrations := make([]string, len(items))
+		for i := range items {
+			narrations[i] = items[i].narration
+		}
+		windows := media.PlanShotWindows(durations, plan)
+		cues := media.PlanCues(windows, narrations, p.subtitleOptions())
+
+		// 用**探测到的**成片真实时长裁剪字幕，而不是用方案预测值 ——
+		// 两者会有毫秒级差异，而越界字幕是观众能直接看到的错误。
+		// 末尾边距同时避开「字幕恰好结束于视频末尾」这个会让封装
+		// 把字幕压成零长的退化组合。
+		if merged, perr := p.media.Probe(ctx, mergedPath); perr == nil {
+			cues = media.ClampCuesToDuration(cues, merged.DurationSec, subtitleTailMarginSec)
+		} else {
+			lg.Warn("探测成片时长失败，字幕未做裁剪", "error", perr.Error())
+		}
+
+		if len(cues) > 0 {
+			subtitlePath = filepath.Join(workDir, "final.srt")
+			if err := media.WriteSRT(subtitlePath, cues); err != nil {
+				// 字幕生成失败不应让整部片子失败：画面才是主体。
+				lg.Warn("字幕生成失败，将产出无字幕成片", "error", err.Error())
+				subtitlePath = ""
+			} else {
+				lg.Info("字幕已生成", "cues", len(cues), "path", subtitlePath)
+			}
+		} else {
+			lg.Info("没有可用的画外音文本，跳过字幕")
+		}
+	}
+
+	// 阶段四：产出最终文件。
+	//
+	// audioPath 仍传空：全片统一 TTS 配音尚未接入（见 ROADMAP 阶段三待办）。
+	// 接口已经就绪，届时只需把合成的音轨路径传进来，不必改动调用契约。
 	finalPath := filepath.Join(workDir, "final.mp4")
-	if err := p.media.MuxFinal(ctx, mergedPath, "", "", finalPath); err != nil {
+	if err := p.media.MuxFinal(ctx, mergedPath, "", subtitlePath, finalPath); err != nil {
 		return fmt.Errorf("worker: 生成成片失败: %w", err)
 	}
 
@@ -255,9 +306,32 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 
 	_, _ = p.emit(ctx, &domain.Event{
 		JobID: jobID, Node: "compose", Message: "成片合成完成",
-		Progress: 1.0, Payload: map[string]any{"final_video_path": finalPath},
+		Progress: 1.0,
+		Payload: map[string]any{
+			"final_video_path": finalPath,
+			"subtitle_path":    subtitlePath,
+			"transition":       string(plan.Type),
+			"transition_used":  plan.Enabled,
+			"out_duration_sec": plan.OutDuration,
+		},
 		Timestamp: time.Now().UTC(),
 	})
-	lg.Info("合成完成", "final_path", finalPath, "shots", len(normPaths), "progress", final.Progress)
+	lg.Info("合成完成", "final_path", finalPath, "shots", len(normPaths),
+		"subtitle", subtitlePath, "progress", final.Progress)
 	return nil
+}
+
+// subtitleOptions 把配置映射成字幕参数。
+func (p *Processor) subtitleOptions() media.SubtitleOptions {
+	opt := media.DefaultSubtitleOptions()
+	if p.cfg.Media.SubtitleMaxCharsPerCue > 0 {
+		opt.MaxCharsPerCue = p.cfg.Media.SubtitleMaxCharsPerCue
+	}
+	if p.cfg.Media.SubtitleMinCueSec > 0 {
+		opt.MinCueSec = p.cfg.Media.SubtitleMinCueSec
+	}
+	if p.cfg.Media.SubtitleMaxCueSec > 0 {
+		opt.MaxCueSec = p.cfg.Media.SubtitleMaxCueSec
+	}
+	return opt
 }

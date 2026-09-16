@@ -635,6 +635,148 @@ func TestNormalizeVideoFilterOrdering(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// 字幕与软字幕封装：阶段三③的验收
+// ---------------------------------------------------------------------------
+
+// TestMuxFinalEmbedsSoftSubtitle 是软字幕封装的端到端验收。
+//
+// 「软字幕」的要点是它作为独立字幕流存在、可开关，而不是烧进画面。
+// 因此判据必须是**探测到字幕流**，光看命令没报错是不够的 ——
+// 字幕文件路径写错时 ffmpeg 可能报错，但流映射写错时它会静默产出无字幕成片。
+func TestMuxFinalEmbedsSoftSubtitle(t *testing.T) {
+	requireFFmpeg(t)
+	if testing.Short() {
+		t.Skip("短模式跳过真实媒体集成测试")
+	}
+
+	r := newTestRunner(t, 1)
+	dir := t.TempDir()
+	ctx := context.Background()
+
+	clip := filepath.Join(dir, "clip.mp4")
+	makeClip(t, r, clip, "320x240", 15, 3)
+	norm := filepath.Join(dir, "norm.mp4")
+	if err := r.Normalize(ctx, clip, norm, testSpec()); err != nil {
+		t.Fatalf("归一化失败: %v", err)
+	}
+
+	srt := filepath.Join(dir, "final.srt")
+	cues := []Cue{
+		{Start: 0, End: 1.5, Text: "第一句字幕"},
+		{Start: 1.5, End: 3.0, Text: "第二句字幕"},
+	}
+	if err := WriteSRT(srt, cues); err != nil {
+		t.Fatalf("写字幕失败: %v", err)
+	}
+
+	out := filepath.Join(dir, "final.mp4")
+	if err := r.MuxFinal(ctx, norm, "", srt, out); err != nil {
+		t.Fatalf("封装软字幕失败: %v", err)
+	}
+
+	probe, err := r.Probe(ctx, out)
+	if err != nil {
+		t.Fatalf("探测成片失败: %v", err)
+	}
+	if !probe.HasSubtitle {
+		t.Fatal("成片中没有字幕流 —— 软字幕未被封装进去")
+	}
+	if probe.SubtitleCodec != "mov_text" {
+		t.Errorf("字幕编码 = %q，期望 mov_text（MP4 容器的软字幕格式）",
+			probe.SubtitleCodec)
+	}
+	// 画面不能被破坏：尺寸与音轨都要保持。
+	if probe.Width != 320 || probe.Height != 240 {
+		t.Errorf("成片尺寸 %dx%d，期望 320x240", probe.Width, probe.Height)
+	}
+	if !probe.HasAudio {
+		t.Error("成片丢失了音轨")
+	}
+}
+
+// TestExtractSRTTextSurvivesRoundTrip 验证字幕文本经封装后仍可读回。
+//
+// 只探测到「有字幕流」还不够：编码不支持中文时，字幕流存在但内容是空白方块，
+// 而这类问题在 ffprobe 的流信息里完全看不出来。
+func TestExtractSRTTextSurvivesRoundTrip(t *testing.T) {
+	requireFFmpeg(t)
+	if testing.Short() {
+		t.Skip("短模式跳过真实媒体集成测试")
+	}
+
+	r := newTestRunner(t, 1)
+	dir := t.TempDir()
+	ctx := context.Background()
+
+	srt := filepath.Join(dir, "in.srt")
+	want := "中文软字幕可读性验证"
+	if err := WriteSRT(srt, []Cue{{Start: 0, End: 2, Text: want}}); err != nil {
+		t.Fatalf("写字幕失败: %v", err)
+	}
+
+	clip := filepath.Join(dir, "clip.mp4")
+	makeClip(t, r, clip, "320x240", 15, 2)
+	norm := filepath.Join(dir, "norm.mp4")
+	if err := r.Normalize(ctx, clip, norm, testSpec()); err != nil {
+		t.Fatalf("归一化失败: %v", err)
+	}
+	out := filepath.Join(dir, "final.mp4")
+	if err := r.MuxFinal(ctx, norm, "", srt, out); err != nil {
+		t.Fatalf("封装字幕失败: %v", err)
+	}
+
+	// 把字幕流抽回 SRT 再比对文本。
+	back := filepath.Join(dir, "back.srt")
+	if err := r.run(ctx,
+		"-hide_banner", "-nostdin", "-y",
+		"-i", out,
+		"-map", "0:s:0",
+		back,
+	); err != nil {
+		t.Fatalf("抽取字幕流失败: %v", err)
+	}
+
+	raw, err := os.ReadFile(back)
+	if err != nil {
+		t.Fatalf("读回字幕失败: %v", err)
+	}
+	if !strings.Contains(string(raw), want) {
+		t.Fatalf("字幕文本经封装后未能原样读回。\n期望包含: %s\n实际内容:\n%s", want, string(raw))
+	}
+}
+
+// TestPlanCuesAndWindowsIntegration 把时间轴与字幕串起来验收：
+// 生成的每条字幕都必须落在成片时长之内。
+//
+// 这是「转场压缩时长」与「字幕定位」两个模块之间最容易出现的接口错误：
+// 两边各自单测都过，拼起来字幕却跑到成片结束之后。
+func TestPlanCuesAndWindowsIntegration(t *testing.T) {
+	durations := []float64{4, 4, 4}
+	plan := PlanTransitions(durations, TransitionSpec{Type: TransitionFade, DurationSec: 1})
+	windows := PlanShotWindows(durations, plan)
+	narrations := []string{"第一段。", "第二段。", "第三段。"}
+
+	cues := PlanCues(windows, narrations, DefaultSubtitleOptions())
+	if len(cues) == 0 {
+		t.Fatal("应当生成字幕")
+	}
+	if !plan.Enabled {
+		t.Fatal("前提：本用例应启用转场")
+	}
+	for i, c := range cues {
+		if c.End > plan.OutDuration+1e-9 {
+			t.Fatalf("cue %d 终点 %.3f 超过了成片时长 %.3f —— "+
+				"字幕定位没有计入转场带来的时长压缩",
+				i, c.End, plan.OutDuration)
+		}
+	}
+	// 朴素累加会得到 12 秒，转场后只有 10 秒。
+	if plan.OutDuration >= 11 {
+		t.Fatalf("成片时长 %.3f 未体现出转场压缩（期望约 10s）", plan.OutDuration)
+	}
+}
+
 // TestNormalizeSkipsWhenSpecAlreadyMatches 确认「规格已匹配就不转码」的优化
 // 不会因为探测值有微小误差而失效 —— 那会导致每个片段被无谓地重编码一次。
 func TestNormalizeSkipsWhenSpecAlreadyMatches(t *testing.T) {

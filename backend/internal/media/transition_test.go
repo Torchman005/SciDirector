@@ -60,20 +60,28 @@ func TestPlanTransitionsOutDurationShrinksByTransitions(t *testing.T) {
 }
 
 // TestPlanTransitionsUsesUniformDurationClampedByShortestClip 验证转场时长
-// 被最短片段压住，且**所有连接点取同一个值** —— 长短不一的转场观感廉价。
+// 被最短片段**的一半**压住，且**所有连接点取同一个值** —— 长短不一的转场观感廉价。
+//
+// 上限取一半而非整个片段，是为了保证每个片段至少有一半时间独自出现：
+// 若上限取整个片段，时长为 T 的那个片段会从头到尾都在交叠中，
+// 等于这个镜头没有任何一帧单独出现过。
 func TestPlanTransitionsUsesUniformDurationClampedByShortestClip(t *testing.T) {
-	// 中间那个片段只有 0.8s，配置的 1.5s 必须被压到 0.8s。
+	// 中间那个片段只有 0.8s，配置的 1.5s 必须被压到 0.8/2 = 0.4s。
 	durations := []float64{4, 0.8, 4}
 	plan := PlanTransitions(durations, TransitionSpec{Type: TransitionFade, DurationSec: 1.5})
 	if !plan.Enabled {
 		t.Fatalf("应当启用：%s", plan.Reason)
 	}
-	if math.Abs(plan.Duration-0.8) > 1e-9 {
-		t.Fatalf("统一转场时长 = %.3f，期望被最短片段压到 0.800", plan.Duration)
+	if math.Abs(plan.Duration-0.4) > 1e-9 {
+		t.Fatalf("统一转场时长 = %.3f，期望被最短片段的一半压到 0.400", plan.Duration)
 	}
-	// L0=4；offset1 = 4-0.8 = 3.2；L1 = 4+0.8-0.8 = 4；offset2 = 4-0.8 = 3.2
-	if math.Abs(plan.Offsets[0]-3.2) > 1e-9 || math.Abs(plan.Offsets[1]-3.2) > 1e-9 {
-		t.Fatalf("offsets = %v，期望 [3.2 3.2]", plan.Offsets)
+	// L0=4；offset1 = 4-0.4 = 3.6；L1 = 4+0.8-0.4 = 4.4；offset2 = 4.4-0.4 = 4.0
+	if math.Abs(plan.Offsets[0]-3.6) > 1e-9 || math.Abs(plan.Offsets[1]-4.0) > 1e-9 {
+		t.Fatalf("offsets = %v，期望 [3.6 4.0]", plan.Offsets)
+	}
+	// offset 必须严格递增，否则某个片段的可见窗口长度为 0。
+	if plan.Offsets[1] <= plan.Offsets[0] {
+		t.Fatalf("offsets 未严格递增（%v）—— 存在零长可见窗口的片段", plan.Offsets)
 	}
 }
 

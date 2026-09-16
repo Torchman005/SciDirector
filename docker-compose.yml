@@ -203,6 +203,12 @@ services:
       # 创作性调色应由导演智能体决定，不在这里硬编码。
       SCID_COLOR_SATURATION: ${SCID_COLOR_SATURATION:-0}
       SCID_COLOR_CONTRAST: ${SCID_COLOR_CONTRAST:-0}
+      # 字幕（软字幕 mov_text，可开关、不破坏画面）。
+      # 全片统一 TTS 配音尚未接入，字幕时间轴目前按画外音文本长度比例估算；
+      # 接入 TTS 后应改为按真实音频时长对齐。
+      SCID_SUBTITLE_ENABLED: ${SCID_SUBTITLE_ENABLED:-true}
+      SCID_SUBTITLE_MAX_CHARS: ${SCID_SUBTITLE_MAX_CHARS:-18}
+      SCID_SUBTITLE_MIN_CUE_SEC: ${SCID_SUBTITLE_MIN_CUE_SEC:-0.8}
     volumes:
       - media-work:/data/work
     depends_on:

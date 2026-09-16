@@ -129,8 +129,15 @@ func PlanTransitions(durations []float64, spec TransitionSpec) TransitionPlan {
 	if t <= 0 {
 		return TransitionPlan{Enabled: false, Reason: "转场时长为 0"}
 	}
-	if t > minDur {
-		t = minDur
+	// 上限取**最短片段的一半**，而不是最短片段本身。
+	//
+	// 取「最短片段」看似更宽松，但会有两个后果：
+	//  1. 当某个片段的时长恰好等于转场时长时，它从头到尾都处在转场交叠中，
+	//     没有任何一帧是独自出现的 —— 这个镜头等于没拍；
+	//  2. 成片时间轴上该片段的字幕窗口长度会退化为 0。
+	// 取一半就保证每个片段至少有半个身位独自出现，窗口长度恒为正。
+	if half := minDur / 2; t > half {
+		t = half
 	}
 	if t < minTransitionSec {
 		return TransitionPlan{
