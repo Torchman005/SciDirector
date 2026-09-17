@@ -458,6 +458,7 @@ cd ..\ai; python -m pytest -q
 | [`docs/DESIGN.md`](docs/DESIGN.md) | 设计思路：为什么这么做、代价与取舍、风险与缓解 | 架构评审 / 新人 |
 | [`docs/API.md`](docs/API.md) | REST / WebSocket / gRPC 契约与错误码 | 前后端 / 集成方 |
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | 各阶段交付物与验收标准 | 项目管理 |
+| [`docs/HANDOFF.md`](docs/HANDOFF.md) | 换机 / 新会话续作的引导提示词与环境清单 | 接手的人 |
 
 ---
 
