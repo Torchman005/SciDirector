@@ -12,15 +12,16 @@
 import type {
   APIError,
   ApproveResponse,
-  DomainEvent,
+  EventsResponse,
   GenerateRequest,
   GenerateResponse,
-  Job,
+  JobResponse,
   PatchShotRequest,
   PatchShotResponse,
   RejectRequest,
   RejectResponse,
   Shot,
+  ShotsResponse,
 } from './types'
 
 /** 后端不可用时的统一异常类型。 */
@@ -91,14 +92,15 @@ export const api = {
   generate: (req: GenerateRequest) =>
     request<GenerateResponse>('/api/v1/generate', { method: 'POST', ...json(req) }),
 
-  getJob: (jobId: string) => request<Job>(`/api/v1/jobs/${encodeURIComponent(jobId)}`),
+  getJob: (jobId: string) =>
+    request<JobResponse>(`/api/v1/jobs/${encodeURIComponent(jobId)}`),
 
   listShots: (jobId: string) =>
-    request<Shot[]>(`/api/v1/jobs/${encodeURIComponent(jobId)}/shots`),
+    request<ShotsResponse>(`/api/v1/jobs/${encodeURIComponent(jobId)}/shots`),
 
   /** 拉取事件历史。afterId 为 0 表示从头拉。 */
   listEvents: (jobId: string, afterId = 0) =>
-    request<DomainEvent[]>(
+    request<EventsResponse>(
       `/api/v1/jobs/${encodeURIComponent(jobId)}/events?after_id=${afterId}`,
     ),
 

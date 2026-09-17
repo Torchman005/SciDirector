@@ -148,6 +148,33 @@ export interface GenerateResponse {
   task_id?: string
 }
 
+/**
+ * 查询类接口的负载形状。
+ *
+ * 注意成功响应有**两层**包装：
+ *   `{"ok": true, "data": { ... }}`
+ * 而 `data` 本身在查询接口里又是一层对象（不是领域对象直接平铺）。
+ * 这两层都必须显式拆开 —— 少拆一层不会报错，只会让所有字段变成 undefined，
+ * 页面静静地什么都不显示。本项目在联调时真实踩到过。
+ */
+export interface JobResponse {
+  job: Job
+  stat: JobStat
+  progress: number
+}
+
+export interface ShotsResponse {
+  job_id: string
+  total: number
+  shots: Shot[]
+}
+
+export interface EventsResponse {
+  job_id: string
+  after_id: number
+  events: DomainEvent[]
+}
+
 export interface RejectRequest {
   comment: string
 }

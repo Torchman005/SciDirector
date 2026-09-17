@@ -53,9 +53,10 @@ export function App() {
     let cancelled = false
     void (async () => {
       try {
-        const job = await api.getJob(jobId)
+        const resp = await api.getJob(jobId)
         if (cancelled) return
-        mergeJob(job)
+        // 注意 `data.job` —— 查询接口在信封之内还有一层（见 types.ts 的说明）。
+        mergeJob(resp.job)
       } catch {
         // 回源失败不影响实时流：下次重连时快照会补齐。
       }

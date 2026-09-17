@@ -378,6 +378,122 @@ func TestPatchShotWithRedoConsumesAttempt(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// 响应形状契约
+// ---------------------------------------------------------------------------
+
+// TestQueryEndpointsResponseShape 钉死查询接口的 JSON 形状。
+//
+// 这些形状是前端 `web/src/types.ts` 直接依赖的契约，而且**有两层包装**：
+//
+//	{"ok": true, "data": { "job": {...}, "stat": {...}, "progress": 0.5 }}
+//
+// 少拆一层不会报错 —— 只会让前端所有字段变成 undefined，页面静静地什么都不显示。
+// 本项目在联调时真实踩到过（前端把 data 直接当成了 Job）。
+// 这条测试的价值就在于：Go 侧一旦改了形状，它会失败，而不是等到页面上白屏才发现。
+func TestQueryEndpointsResponseShape(t *testing.T) {
+	h := newHarness(t)
+	jobID := "test-shape-" + time.Now().Format("150405.000000")
+	h.seedJob(t, jobID, domain.StatusApproved, domain.StatusAwaitingHuman)
+
+	t.Run("GET /jobs/:id", func(t *testing.T) {
+		w := h.do(t, http.MethodGet, "/api/v1/jobs/"+jobID, nil)
+		if w.Code != http.StatusOK {
+			t.Fatalf("HTTP %d", w.Code)
+		}
+		var env struct {
+			OK   bool `json:"ok"`
+			Data struct {
+				Job      map[string]any `json:"job"`
+				Stat     map[string]any `json:"stat"`
+				Progress float64        `json:"progress"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
+			t.Fatalf("解析失败: %v", err)
+		}
+		if !env.OK {
+			t.Fatal("ok 应为 true")
+		}
+		// data 之内必须有 job / stat / progress 三个键。
+		// 若哪天有人把 job 直接平铺到 data 上，这里会失败 —— 那正是要拦住的事。
+		if _, exists := env.Data.Job["job_id"]; !exists {
+			t.Fatalf("data.job 缺少 job_id；实际响应：%s", w.Body.String())
+		}
+		if _, exists := env.Data.Job["shots"]; !exists {
+			t.Fatal("data.job 缺少 shots —— 前端分镜表依赖它")
+		}
+		for _, k := range []string{"total", "approved", "failed", "awaiting_human", "in_progress"} {
+			if _, exists := env.Data.Stat[k]; !exists {
+				t.Errorf("data.stat 缺少 %s", k)
+			}
+		}
+	})
+
+	t.Run("GET /jobs/:id/shots", func(t *testing.T) {
+		var env struct {
+			Data struct {
+				JobID string           `json:"job_id"`
+				Total int              `json:"total"`
+				Shots []map[string]any `json:"shots"`
+			} `json:"data"`
+		}
+		w := h.do(t, http.MethodGet, "/api/v1/jobs/"+jobID+"/shots", nil)
+		if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
+			t.Fatalf("解析失败: %v", err)
+		}
+		if env.Data.Total != 2 || len(env.Data.Shots) != 2 {
+			t.Fatalf("shots 形状不符：total=%d len=%d", env.Data.Total, len(env.Data.Shots))
+		}
+	})
+
+	t.Run("GET /jobs/:id/events", func(t *testing.T) {
+		var env struct {
+			Data struct {
+				JobID   string           `json:"job_id"`
+				AfterID int64            `json:"after_id"`
+				Events  []map[string]any `json:"events"`
+			} `json:"data"`
+		}
+		w := h.do(t, http.MethodGet, "/api/v1/jobs/"+jobID+"/events?after_id=0", nil)
+		if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
+			t.Fatalf("解析失败: %v", err)
+		}
+		if env.Data.JobID != jobID {
+			t.Fatalf("job_id = %q", env.Data.JobID)
+		}
+		// events 必须是数组（可以是空的），不能是 null ——
+		// 前端会对它直接 .length / .map。
+		if env.Data.Events == nil {
+			t.Fatal("events 为 null；前端会对它直接遍历，必须是数组")
+		}
+	})
+}
+
+func TestRejectShotNotFound(t *testing.T) {
+	h := newHarness(t)
+	jobID := "test-reject-404-" + time.Now().Format("150405.000000")
+	h.seedJob(t, jobID, domain.StatusApproved)
+
+	w := h.do(t, http.MethodPost, "/api/v1/jobs/"+jobID+"/shots/nope/reject",
+		map[string]string{"comment": "有效的意见内容"})
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("分镜不存在应返回 404，实际 %d", w.Code)
+	}
+}
+
+func TestRejectShotRejectsEmptyComment(t *testing.T) {
+	h := newHarness(t)
+	jobID := "test-reject-empty-" + time.Now().Format("150405.000000")
+	job := h.seedJob(t, jobID, domain.StatusApproved)
+
+	// 空白意见必须被拒：「不好看」这类无信息量的意见无法转成可执行的代码修改。
+	w := h.do(t, http.MethodPost, "/api/v1/jobs/"+jobID+"/shots/"+job.Shots[0].ShotID+"/reject",
+		map[string]string{"comment": ""})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("空意见应返回 400，实际 %d：%s", w.Code, w.Body.String())
+	}
+}
 func TestPatchShotNotFound(t *testing.T) {
 	h := newHarness(t)
 	jobID := "test-patch-404-" + time.Now().Format("150405.000000")

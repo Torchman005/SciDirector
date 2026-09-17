@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/hibiken/asynq"
@@ -117,12 +118,21 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 	// 收集所有已通过镜头的视频产物。未通过的镜头一律不参与合成 ——
 	// 「部分成片」会误导用户，正确做法是保持 PARTIAL 状态并提示缺少哪些镜头。
 	items := make([]shotItem, 0, len(job.Shots))
+	// missing 记录「已通过但没有产物」的镜头。
+	//
+	// 这种镜头来自人工放行：当渲染引擎缺失时，镜头会熔断为 AWAITING_HUMAN，
+	// 审核员可以放行它让流程继续 —— 但它**根本没有视频文件**，
+	// 无法进入成片。若此时仍把任务标成 COMPLETED，
+	// 用户会拿到一部**静默缺了几段**的片子，而状态显示一切正常。
+	// 这正是上面注释里说的「部分成片会误导用户」，因此必须如实标为 PARTIAL。
+	var missing []string
 	for _, s := range job.Shots {
 		if s.Status != domain.StatusApproved {
 			continue
 		}
 		if s.Artifact == nil || s.Artifact.VideoPath == "" {
 			lg.Warn("已通过的镜头缺少视频产物，跳过", "shot_id", s.ShotID)
+			missing = append(missing, fmt.Sprintf("#%d", s.Index))
 			continue
 		}
 		items = append(items, shotItem{
@@ -296,10 +306,26 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 		return fmt.Errorf("worker: 生成成片失败: %w", err)
 	}
 
+	// 有「已通过但无产物」的镜头时，成片是**残缺**的：状态必须如实标为 PARTIAL。
+	//
+	// 这与上方「未通过的镜头不参与合成」是同一条原则的两半：
+	// 既然不产出缺失镜头的内容，就不能把任务报成 COMPLETED。
+	// 否则用户拿到的是一部静默少了几段的片子，而界面显示一切正常 ——
+	// 这是比直接失败更危险的失败形态。
+	finalStatus := domain.JobCompleted
+	warnMsg := ""
+	if len(missing) > 0 {
+		finalStatus = domain.JobPartial
+		warnMsg = fmt.Sprintf(
+			"成片缺少 %d 个已通过但无产物的镜头（%s）——它们被人工放行，但并未真正渲染出视频",
+			len(missing), strings.Join(missing, "、"))
+		lg.Warn("成片缺少部分镜头", "missing", missing, "final_status", string(finalStatus))
+	}
+
 	final, err := p.store.UpdateJob(ctx, jobID, func(j *domain.Job) error {
 		j.FinalVideoPath = finalPath
-		j.Status = domain.JobCompleted
-		j.Error = ""
+		j.Status = finalStatus
+		j.Error = warnMsg
 		return nil
 	})
 	if err != nil {
@@ -308,6 +334,8 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 
 	_, _ = p.emit(ctx, &domain.Event{
 		JobID: jobID, Node: "compose", Message: "成片合成完成",
+		// 有缺失镜头时把进度封顶在 1.0 之下：进度条走满会让人以为
+		// 「全都做完了」，而实际上还有镜头没有画面。
 		Progress: 1.0,
 		Payload: map[string]any{
 			"final_video_path": finalPath,
@@ -315,11 +343,20 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 			"transition":       string(plan.Type),
 			"transition_used":  plan.Enabled,
 			"out_duration_sec": plan.OutDuration,
+			"missing_shots":    missing,
 		},
 		Timestamp: time.Now().UTC(),
 	})
+	if warnMsg != "" {
+		_, _ = p.emit(ctx, &domain.Event{
+			JobID: jobID, Node: "compose", Status: domain.StatusAwaitingHuman,
+			Message:   warnMsg,
+			Progress:  1.0,
+			Timestamp: time.Now().UTC(),
+		})
+	}
 	lg.Info("合成完成", "final_path", finalPath, "shots", len(normPaths),
-		"subtitle", subtitlePath, "progress", final.Progress)
+		"subtitle", subtitlePath, "missing", len(missing), "progress", final.Progress)
 
 	// 收尾：归档 + 本地清理。**失败不改变任务结果** ——
 	// 产物已经生成、任务已经成功，因为对象存储抖动就把它判成失败，
