@@ -371,8 +371,20 @@ Job (一次生成请求)
 
 ### 6.4 状态机与幂等
 - 所有状态迁移经 `domain.Transition(from, to)` 校验，非法迁移报错并记录（早暴露 bug）。
-- Redis 中用 `SETNX` 做「同一 shot 同一 attempt 只处理一次」的幂等锁，防止队列重复投递导致重复渲染。
+- **幂等分两层，二者防的不是同一件事**（阶段三 B4 的完整形态，用例见 `docs/ROADMAP.md`）：
+  1. **入队侧**：`EnqueueRenderShot` 用 `asynq.TaskID = shot-<job>-<shot>-<attempt>` 去重，
+     防的是「人工连点两下」「前端自动重试」—— 这些任务根本不会重复入队。
+     刻意不只用 `asynq.Unique`：它的键由 (队列, 任务类型, **载荷**) 算出，
+     而载荷里带着 `human_comment`，同一次 attempt 换个意见就变成另一个键，去重当场失效。
+  2. **执行侧**：`HandleRenderShot` 用 `AcquireIdempotencyKey(job:shot:attempt, 30min)`
+     （Redis `SETNX`）占位，防的是 Asynq 自己**「执行成功但确认失败」后的重复投递** ——
+     此时任务早已不在队列里，入队侧的去重完全帮不上忙，而代价是真的渲两遍。
+  - 占位**只在真正失败（返回 error）时释放**，成功路径让它自然过期：
+    前者保证一次瞬时故障后该 attempt 仍能重试，后者才是拦住重复投递的那道屏障。
 - 事件写入 Redis List（`job:{id}:events`），WS 断线重连后可**从 last_event_id 重放**。
+- **恢复能力依赖持久化配置**：进程崩溃后队列不丢任务，靠的是 `deploy/redis/redis.conf`
+  的 `appendonly yes` + `appendfsync everysec`；执行中的任务则靠 Asynq 的租约过期
+  （30s）与 recoverer 轮询（60s）回收。两者都由 B5 的故障注入用例守着。
 
 ---
 

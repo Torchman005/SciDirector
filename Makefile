@@ -110,7 +110,7 @@ smoke-ws: ## 冒烟 Go 网关的 WebSocket 闭环（需先 make dev-api）
 # ===========================================================================
 # 质量
 # ===========================================================================
-.PHONY: test test-go test-python lint fmt
+.PHONY: test test-go test-python test-failover lint fmt
 test: test-go test-python ## 全量测试
 
 # 竞态检测默认开启（CI 上必须跑）。Windows 本地若缺少 race runtime DLL
@@ -122,6 +122,13 @@ test-go: ## Go 单元测试（默认含竞态检测）
 
 test-python: ## Python 单元测试
 	cd ai && $(PYTHON) -m pytest -q
+
+# B5 的「执行中被断线」用例需要 1~2 分钟：Asynq 的租约（30s）与 recoverer 轮询（60s）
+# 都是硬编码的，压不下去。因此**不放进默认目标** —— 长耗时用例混进默认目标，
+# 最后一定会被整体加 skip 或在超时后被忽略，等于没写。
+# 需要 redis-server 可执行文件；若不在 PATH 上，用 SCID_TEST_REDIS_BIN 指定。
+test-failover: ## 故障注入测试：Redis 断线后恢复（需 1~2 分钟）
+	cd backend && SCID_TEST_REDIS_FAILOVER=1 $(GO) test -timeout 10m -count=1 -run TestB5 -v ./internal/queue/
 
 lint: ## 静态检查
 	cd backend && $(GO) vet ./...

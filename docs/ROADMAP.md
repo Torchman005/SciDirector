@@ -219,10 +219,51 @@ Go 事件存储累计 22 条事件。**「引擎缺失」被正确地当作失�
 | B1 | ✅ | `TestRunnerBoundsRealFFmpegProcesses` 在真实 ffmpeg 下采样信号量占用，断言并发峰值**恰好等于**上限（只断言「不超过」会漏掉「根本没并发」的退化） |
 | B2 | ✅ | `TestNormalizeAndConcatDifferentSpecs`：尺寸/帧率不一致的片段归一化后 concat，成片规格与时长正确；`TestConcatHandlesApostropheInPath` 覆盖含单引号路径 |
 | B3 | ✅ | `TestRunnerCancelKillsFFmpegPromptly`：120 秒素材在取消后毫秒级返回，且槽位被归还 |
-| B4 | ⏳ | 幂等键已有实现（`processor` 的幂等占位），但**重复投递只渲染一次**尚无自动化验证 |
-| B5 | ⏳ | 断 Redis 后恢复继续执行，尚未手测 |
+| B4 | ✅ | 见下方「B4 / B5 的验证方式」：入队侧 2 项 + 执行侧 4 项，全部基于**真实 gRPC server + 真实 Redis**，不用接口替身 |
+| B5 | ✅ | 私有 `redis-server` + `SIGKILL` 真实故障注入 2 项：排队中的任务靠 AOF 恢复、执行中的任务靠租约过期 + recoverer 重投（后者为慢用例，`make test-failover` 显式运行） |
 
 阶段三实际交付范围见 `Agent.md` 的迭代日志 v0.3.0。
+
+### B4 / B5 的验证方式
+
+这两项都属于「不真的把并发/故障造出来就测不到」的类别，因此都用**真实依赖**验证。
+
+**B4 —— 同一 `(job, shot, attempt)` 重复投递只渲染一次**。
+实际有**两道**闸门，防的不是同一件事，缺一不可：
+
+| 闸门 | 位置 | 防的是什么 | 用例 |
+| --- | --- | --- | --- |
+| 入队侧 | `EnqueueRenderShot` 的 `asynq.TaskID` | 人工连点两下、前端重试 —— 任务根本不会重复入队 | `TestB4EnqueueRenderShotDeduplicatesSameAttempt`、`TestB4EnqueueRenderShotAllowsNewAttempt` |
+| 执行侧 | `HandleRenderShot` 的 `AcquireIdempotencyKey` | Asynq **执行成功但确认失败**后的重复投递 —— 此时入队侧完全帮不上忙 | `TestB4ConcurrentDuplicateDeliveryRendersOnce` 等 4 项 |
+
+执行侧用例不 mock 依赖：它起一个**真实的 gRPC server** 冒充 Python 大脑
+（只负责数 `ReviseShot` 被调用了几次），配真实 Redis，
+因此连 `ai.Client` 的错误分类（可重试 / 不可重试）一起覆盖。
+四个用例之间是**互相兜住**的关系：只断言「重复投递被跳过」的话，
+"永远跳过"这种退化实现也能通过 —— 必须同时断言
+「不同 attempt 要各自渲染」「失败后必须释放占位」「UNIMPLEMENTED 要释放占位且不重试」。
+
+**B5 —— 断开 Redis 后队列中的任务在恢复后继续执行**。
+用测试自己拉起的私有 `redis-server`（独立端口、独立目录）做真实故障注入，
+用 `SIGKILL` 模拟进程崩溃而**不是**优雅关闭：
+
+| 用例 | 故障形态 | 靠什么恢复 |
+| --- | --- | --- |
+| `TestB5QueuedTasksSurviveRedisRestart` | 任务**还在排队**、尚未被取走时 Redis 崩溃 | AOF 持久化原样恢复（先断言任务真的还在，再断言全部被执行） |
+| `TestB5InFlightTaskRecoveredAfterRedisRestart` | 任务**正在执行**时 Redis 崩溃 | Asynq 租约过期 → recoverer 重投 |
+
+后一项受 Asynq 硬编码的时间参数所限（租约 30s、recoverer 轮询 60s、过期余量 30s），
+需要 2~4 分钟，因此**默认跳过**，用 `make test-failover` 显式运行。
+长耗时用例留在默认目标里，最后一定会被整体 skip 掉，等于没写。
+
+> 两个坑记在这里，免得下次重复踩：
+> **① 断线必须持续够久。** 第一版用例断开不到 1 秒就把 Redis 拉回来，
+> 结果下一次心跳（15s 一次）把租约续上了，正在执行的任务根本没被打断、
+> 正常跑完 —— 测试看着"恢复了"，但 recoverer 从头到尾没参与，等于什么都没验证。
+> **② 崩溃与优雅关闭不等价。** 优雅关闭会让 Redis 主动落盘，
+> 从而掩盖 `appendfsync everysec` 这个策略到底够不够用；必须 `SIGKILL`。
+> 相应地，杀进程前要等过一个完整的 fsync 周期（1.5s），
+> 否则偶发失败的现象看起来像"持久化没生效"，会把排查方向带偏。
 
 ### 已完成部分：并发收敛 + 转场 + 统一规格
 
@@ -317,6 +358,6 @@ Go 事件存储累计 22 条事件。**「引擎缺失」被正确地当作失�
 | --- | --- | --- |
 | 一 · 环境与骨架 | ✅ 已完成 | 验收命令全部通过 |
 | 二 · 多智能体核心 | ✅ 已完成 | 368 → 377 个 Python 单测通过；5 个 RPC 全部实现并经 Go 侧 gRPC 打通 |
-| 三 · 编排与媒体 | ✅ 已完成 | FFmpeg 并发收敛为全局有界 Worker Pool、转场与统一调色、字幕与软字幕封装、局部重渲染、产物归档、队列可观测；Go 测试 media 包 68 项 / archive 包 27 项 / queue 包 6 项。**全片 TTS 配音待办**（无可用引擎）；B4/B5 尚无自动化验证 |
+| 三 · 编排与媒体 | ✅ 已完成 | FFmpeg 并发收敛为全局有界 Worker Pool、转场与统一调色、字幕与软字幕封装、局部重渲染、产物归档、队列可观测；Go 测试 media 包 68 项 / archive 包 27 项 / queue 包 6 项。B4/B5 已补自动化验证（B4 共 6 项、B5 共 2 项；其中「执行中断线」是 `make test-failover` 显式运行的慢用例）。**全片 TTS 配音待办**（无可用引擎） |
 | 四 · 反馈闭环与前端 | ✅ 已完成 | React 审核台、打回/放行/成分镜编辑、断线重连与快照重放；C4/C5 已用真实服务端到端验证，C1/C3 的浏览器人工目视验证待做 |
 | 五 · 生产加固 | ⏳ 待办 | — |
