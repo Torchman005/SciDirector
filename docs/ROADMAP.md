@@ -293,31 +293,56 @@ SCID_TEST_S3_ENDPOINT=http://127.0.0.1:9000 \
 SCID_TEST_S3_ACCESS_KEY=... SCID_TEST_S3_SECRET_KEY=... make test-s3
 ```
 
-用例只依赖 **S3 API**、不绑定具体产品，因此 MinIO / SeaweedFS / moto 都能跑。
-**必须如实说明**：本次验证跑在 **moto**（一个 S3 API 实现）上，尚未对生产将选的
-对象存储复跑；换端点重跑一条命令即可。
+用例只依赖 **S3 API**、不绑定具体产品，因此 RustFS / MinIO / SeaweedFS / moto 都能跑。
 
-> **踩坑两处**（都是用例的错，不是产品缺陷，但都会让人误判）：
+**验证结果（两轮）**：
+
+1. 第一轮跑在 **moto**（一个 S3 API 实现）上——先把代码路径跑通，此时结论只到「对 S3 API 正确」。
+2. 第二轮跑在**真实 RustFS 容器**上（`docker compose up -d rustfs`，`rustfs/rustfs:latest`），
+   全部用例通过。至此「生产将用的对象存储」这一层才算真的补上。
+
+```bash
+docker compose up -d redis postgres rustfs
+SCID_TEST_S3_ENDPOINT=http://127.0.0.1:9000 \
+SCID_TEST_S3_ACCESS_KEY=scidirector SCID_TEST_S3_SECRET_KEY=scidirector-secret make test-s3
+```
+
+> **踩坑三处**（前两处是用例自身的错，第三处是配置缺陷，但都会让人误判）：
 > **① `minio-go` 的 `ListObjects` 默认不递归**，按 `/` 返回**公共前缀**
 > （拿到的是 `jobs/etc/` 这样的目录条目）。用它断言「对象键有没有落在前缀下」，
 > 断言的是空气 —— 必须显式 `Recursive: true`。
 > **② 模拟器（moto）不校验凭据**，所以「用错误密钥必须失败」这种断言会**在模拟器上不成立**。
 > 想钉住「错误不能被吞掉」，应该用**端点不可达**来构造失败 —— 那是任何实现下都必须失败的情形。
+> **③ 环境变量名曾经是断的**：`.env.example` 与 compose 的公共块写的是 `SCID_S3_*`，
+> 而 Go 侧实际只读 `SCID_MINIO_*` —— **没有任何代码读 `SCID_S3_*`**。
+> 照着模板配 S3 的人会设一堆完全不起作用的变量，而「端点是空串」与「压根没配置」
+> 在归档路径上无法区分。现已统一为 `SCID_S3_*`，`SCID_MINIO_*` 保留为兼容回退
+> （新名优先），并补了 `backend/internal/config/config_test.go` 钉住迁移语义 ——
+> 该包此前**一个测试都没有**。
 
-#### 顺便发现：MinIO 开源版已归档停更
+#### 对象存储选型：MinIO → RustFS
 
 原来的计划是「用 MinIO 验证」，但 `dl.min.io` 现在直接返回 **410 Gone**，页面原文写明：
 MinIO Server / Client / KES 的开源版本**已归档、不再维护**，不再提供安全更新，
 且不再从该站分发。`minio/minio` 在 GitHub 上最后一个 release（`RELEASE.2025-10-15`）
-**没有任何可下载产物**。
+**没有任何可下载产物**。一个不再有安全更新的组件不适合作为产线依赖。
 
-这对本项目有两个影响：
+**已改动**（经用户确认选型）：
 
-1. `docker-compose.yml` 里钉的 `minio/minio:latest` 与 `minio/mc:latest`
-   **可用性需要重新确认**（能否拉到、是否还是可维护的版本）。
-2. 一个**不再有安全更新**的对象存储，不适合作为产线依赖。
-   仍在活跃维护、且提供 S3 API 的候选：**RustFS**（定位为 MinIO 的替代品）、
-   **SeaweedFS**、**Garage**。选型属于部署决策，**未擅自改动 compose**，待定。
+- compose 的 `minio` 服务换成 **`rustfs/rustfs:latest`**（同为 S3 兼容、仍在活跃维护，
+  端口布局一致：9000 = S3 API、9001 = 控制台）。
+- **删掉 `minio-init` 容器**。它用 `minio/mc`（同样已归档）建桶并设匿名读；
+  而建桶本来就由代码负责 —— `S3Archiver.ensureBucket` 在首次上传时按需创建，
+  这条路径正是 `s3_e2e_test.go` 覆盖的内容。少一个容器、少一个已归档镜像依赖，
+  也少一处「init 跑失败但没人看」的隐患。
+- 卷名 `minio-data` → `rustfs-data`（旧的本地卷不再被挂载，需要时自行迁移）。
+
+> 顺带修掉两个只有真起容器才会暴露的问题：RustFS 镜像**没有 bash**
+> （有 sh/curl/wget/nc），所以健康检查不能用 `</dev/tcp/...` 那种 bash 写法 ——
+> 那会让容器永远停在 `starting`；改用 RustFS 提供的 MinIO 同名健康端点
+> `/minio/health/live`。另外 compose 默认把 Postgres 发布到宿主 5432，
+> 而本机 5432 已被宿主自带的 Postgres 占用（`address already in use`），
+> 用 `SCID_PG_PORT` 让开即可。
 
 ### 已完成部分：并发收敛 + 转场 + 统一规格
 

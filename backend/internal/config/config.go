@@ -200,12 +200,23 @@ func Load() (*Config, error) {
 			LocalDir:       getEnv("SCID_ARCHIVE_LOCAL_DIR", "./.data/archive"),
 			KeepAll:        getBool("SCID_ARCHIVE_KEEP_ALL", false),
 			KeepNormalized: getBool("SCID_ARCHIVE_KEEP_NORMALIZED", false),
-			MinioEndpoint:  getEnv("SCID_MINIO_ENDPOINT", ""),
-			MinioAccessKey: getEnv("SCID_MINIO_ACCESS_KEY", ""),
-			MinioSecretKey: getEnv("SCID_MINIO_SECRET_KEY", ""),
-			MinioBucket:    getEnv("SCID_MINIO_BUCKET", "scidirector"),
-			MinioUseSSL:    getBool("SCID_MINIO_USE_SSL", false),
-			MinioRegion:    getEnv("SCID_MINIO_REGION", ""),
+
+			// 对象存储的连接参数。
+			//
+			// 环境变量名统一为 `SCID_S3_*`，因为后端已不再限定为 MinIO：
+			// 原先默认的 MinIO 开源版**已归档停更**（不再提供安全更新），
+			// compose 改用同为 S3 兼容、且在活跃维护的 RustFS。
+			// 名字里带 MINIO 而实际连的是别家，是排查时最费时间的那种误导。
+			//
+			// `SCID_MINIO_*` 保留为**兼容回退**：老部署的 .env 里写的是它，
+			// 直接改名会让那些机器上的归档配置一夜之间全部失效
+			// （而且是静默失效 —— 端点是空串时归档直接报错或被跳过）。
+			MinioEndpoint:  getEnvFirst([]string{"SCID_S3_ENDPOINT", "SCID_MINIO_ENDPOINT"}, ""),
+			MinioAccessKey: getEnvFirst([]string{"SCID_S3_ACCESS_KEY", "SCID_MINIO_ACCESS_KEY"}, ""),
+			MinioSecretKey: getEnvFirst([]string{"SCID_S3_SECRET_KEY", "SCID_MINIO_SECRET_KEY"}, ""),
+			MinioBucket:    getEnvFirst([]string{"SCID_S3_BUCKET", "SCID_MINIO_BUCKET"}, "scidirector"),
+			MinioUseSSL:    getBoolFirst([]string{"SCID_S3_USE_SSL", "SCID_MINIO_USE_SSL"}, false),
+			MinioRegion:    getEnvFirst([]string{"SCID_S3_REGION", "SCID_MINIO_REGION"}, ""),
 		},
 	}
 
@@ -276,6 +287,36 @@ func getInt(key string, def int) int {
 		return def
 	}
 	return n
+}
+
+// getEnvFirst 按顺序取第一个「有值」的环境变量。
+//
+// 用于同一个配置项存在新旧两个变量名时的**平滑迁移**：新名优先，
+// 旧名保留为回退。之所以不能直接改名，是因为失效方式是静默的 ——
+// 老机器上的 .env 里写的是旧名，改名后那些值一律读不到，
+// 而空端点在归档路径上的表现（跳过 / 报错）与「没配置」无法区分。
+func getEnvFirst(keys []string, def string) string {
+	for _, k := range keys {
+		if v, ok := os.LookupEnv(k); ok && strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return def
+}
+
+// getBoolFirst 与 getEnvFirst 同理，用于布尔项。
+func getBoolFirst(keys []string, def bool) bool {
+	for _, k := range keys {
+		if v, ok := os.LookupEnv(k); ok && strings.TrimSpace(v) != "" {
+			switch strings.ToLower(strings.TrimSpace(v)) {
+			case "1", "true", "yes", "on":
+				return true
+			case "0", "false", "no", "off":
+				return false
+			}
+		}
+	}
+	return def
 }
 
 func getBool(key string, def bool) bool {

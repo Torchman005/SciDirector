@@ -3,12 +3,24 @@
 # -----------------------------------------------------------------------------
 # 责任划分：
 #   · infra 层：redis（任务队列 + 状态）、postgres（LangGraph checkpoint）、
-#               minio（分镜片段/成片等大文件对象存储）
+#               rustfs（分镜片段/成片等大文件对象存储，S3 兼容）
 #   · svc   层：ai（Python 多智能体大脑）、api（Go 网关）、worker（Go 编排/媒体）、
 #               web（React 分镜审核台）
 #
 # 启动：docker compose up -d --build
-# 仅起依赖：docker compose up -d redis postgres minio
+# 仅起依赖：docker compose up -d redis postgres rustfs
+#
+# 关于对象存储的选型：原先用 MinIO，但 MinIO 开源版**已归档停更**
+# （dl.min.io 返回 410，官方声明不再提供安全更新，GitHub 最后 release 无可下载产物），
+# 故换成同为 S3 兼容、仍在活跃维护的 RustFS。归档代码只依赖 S3 API，
+# 不绑定具体产品（见 backend/internal/archive/s3.go）。
+#
+# 拉不到镜像时（Docker Hub 在部分网络下不可达，daemon 里的加速器也未必生效）：
+#   docker pull <mirror>/library/redis:7.4-alpine   && docker tag ... redis:7.4-alpine
+#   docker pull <mirror>/library/postgres:17-alpine && docker tag ... postgres:17-alpine
+#   docker pull <mirror>/rustfs/rustfs:latest       && docker tag ... rustfs/rustfs:latest
+# 先用显式镜像站主机名拉下来、再打成本文件引用的名字，
+# 这样不必改 daemon.json（改它要重启 Docker）。
 # =============================================================================
 
 name: scidirector
@@ -26,7 +38,7 @@ x-common-env: &common-env
   SCID_REDIS_ADDR: redis:6379
   SCID_POSTGRES_DSN: postgres://scidirector:scidirector@postgres:5432/scidirector?sslmode=disable
   SCID_AI_GRPC_ADDR: ai:50051
-  SCID_S3_ENDPOINT: http://minio:9000
+  SCID_S3_ENDPOINT: http://rustfs:9000
   SCID_S3_ACCESS_KEY: ${SCID_S3_ACCESS_KEY:-scidirector}
   SCID_S3_SECRET_KEY: ${SCID_S3_SECRET_KEY:-scidirector-secret}
   SCID_S3_BUCKET: ${SCID_S3_BUCKET:-scidirector-artifacts}
@@ -77,41 +89,45 @@ services:
       retries: 10
 
   # ---------------------------------------------------------------------------
-  # MinIO：S3 兼容对象存储，存放分镜 MP4 / 抽帧 PNG / 最终成片
-  # ---------------------------------------------------------------------------
-  minio:
-    image: minio/minio:latest
-    container_name: scid-minio
+  # RustFS：S3 兼容对象存储，存放分镜 MP4 / 抽帧 PNG / 最终成片
+  #
+  # 为什么不是 MinIO：MinIO 开源版已归档停更（不再提供安全更新、
+  # 官方站点不再分发），不适合作为产线依赖。RustFS 同为 S3 兼容、
+  # 仍在活跃维护，且端口布局一致（9000 S3 / 9001 控制台），替换成本很低。
+  #
+  # 这里**不再有** bucket 初始化容器：原来那个用 `minio/mc`（同样已归档）跑
+  # `mc mb` + `mc anonymous set download`。现在建桶由代码负责 ——
+  # `S3Archiver.ensureBucket` 在首次上传时按需创建，且这条路径由
+  # `archive/s3_e2e_test.go` 的端到端用例覆盖（`make test-s3`）。
+  # 少一个容器、少一个已归档的镜像依赖，也少一处「init 跑失败但没人看」的隐患。
+  rustfs:
+    image: rustfs/rustfs:latest
+    container_name: scid-rustfs
     <<: *restart
-    command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: ${SCID_S3_ACCESS_KEY:-scidirector}
-      MINIO_ROOT_PASSWORD: ${SCID_S3_SECRET_KEY:-scidirector-secret}
+      # 单机模式：直接用 /data 这一个目录（分布式模式才需要多卷表达式）。
+      RUSTFS_VOLUMES: /data
+      RUSTFS_ADDRESS: 0.0.0.0:9000
+      RUSTFS_CONSOLE_ADDRESS: 0.0.0.0:9001
+      RUSTFS_CONSOLE_ENABLE: "true"
+      # 凭据沿用 SCID_S3_*：与 Go 侧读的变量名保持一致，
+      # 免得出现「compose 设了一个名字、代码读另一个名字」的静默错配。
+      RUSTFS_ACCESS_KEY: ${SCID_S3_ACCESS_KEY:-scidirector}
+      RUSTFS_SECRET_KEY: ${SCID_S3_SECRET_KEY:-scidirector-secret}
     ports:
-      - "${SCID_MINIO_PORT:-9000}:9000"
-      - "${SCID_MINIO_CONSOLE_PORT:-9001}:9001"
+      - "${SCID_S3_PORT:-9000}:9000"
+      - "${SCID_S3_CONSOLE_PORT:-9001}:9001"
     volumes:
-      - minio-data:/data
+      - rustfs-data:/data
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      # 镜像里没有 bash（有 sh / curl / wget / nc），所以不能用 `</dev/tcp/...`
+      # 这种 bash 专用写法 —— 那会让健康检查永远失败、容器一直停在 starting。
+      # RustFS 提供了与 MinIO 同名同义的存活/就绪端点，直接用 curl 探最可靠。
+      test: ["CMD-SHELL", "curl -fsS -o /dev/null http://127.0.0.1:9000/minio/health/live || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
-
-  # 创建默认 bucket，随后退出
-  minio-init:
-    image: minio/mc:latest
-    container_name: scid-minio-init
-    depends_on:
-      minio:
-        condition: service_healthy
-    entrypoint: >
-      /bin/sh -c "
-      mc alias set scid http://minio:9000 ${SCID_S3_ACCESS_KEY:-scidirector} ${SCID_S3_SECRET_KEY:-scidirector-secret} &&
-      mc mb --ignore-existing scid/${SCID_S3_BUCKET:-scidirector-artifacts} &&
-      mc anonymous set download scid/${SCID_S3_BUCKET:-scidirector-artifacts} &&
-      echo '[minio-init] bucket ready'
-      "
+      start_period: 10s
 
   # ---------------------------------------------------------------------------
   # Python AI 大脑：FastAPI(HTTP) + gRPC server + LangGraph worker pool
@@ -210,15 +226,15 @@ services:
       SCID_SUBTITLE_MAX_CHARS: ${SCID_SUBTITLE_MAX_CHARS:-18}
       SCID_SUBTITLE_MIN_CUE_SEC: ${SCID_SUBTITLE_MIN_CUE_SEC:-0.8}
       # 产物归档。默认 none —— 单机开发与 CI 没有对象存储，
-      # 缺省必须是一条能跑通的路径。compose 里显式指向内置 MinIO。
+      # 缺省必须是一条能跑通的路径。compose 里显式指向内置 RustFS。
+      #
+      # 连接参数（端点/密钥/bucket/SSL）统一在 x-common-env 里给，
+      # 变量名是 SCID_S3_*，与 Go 侧读取的名字一致。
+      # 原先这里额外设了一套 SCID_MINIO_*，而公共块里又设了 SCID_S3_* ——
+      # 代码只读前者，于是公共块那两个值从来没生效过，属于静默错配。
       SCID_ARCHIVE_BACKEND: ${SCID_ARCHIVE_BACKEND:-s3}
       SCID_ARCHIVE_KEEP_ALL: ${SCID_ARCHIVE_KEEP_ALL:-false}
       SCID_ARCHIVE_KEEP_NORMALIZED: ${SCID_ARCHIVE_KEEP_NORMALIZED:-false}
-      SCID_MINIO_ENDPOINT: ${SCID_MINIO_ENDPOINT:-minio:9000}
-      SCID_MINIO_ACCESS_KEY: ${SCID_MINIO_ACCESS_KEY:-minioadmin}
-      SCID_MINIO_SECRET_KEY: ${SCID_MINIO_SECRET_KEY:-minioadmin}
-      SCID_MINIO_BUCKET: ${SCID_MINIO_BUCKET:-scidirector}
-      SCID_MINIO_USE_SSL: ${SCID_MINIO_USE_SSL:-false}
     volumes:
       - media-work:/data/work
     depends_on:
@@ -247,5 +263,8 @@ services:
 volumes:
   redis-data:
   pg-data:
-  minio-data:
+  # 卷名随对象存储一起改（minio-data → rustfs-data）。
+  # 这会让旧的本地卷不再被挂载 —— 单机开发卷里只是可重建的产物缓存，
+  # 但如果你手上有想保留的旧数据，改名后需要自己 migrate。
+  rustfs-data:
   media-work:
