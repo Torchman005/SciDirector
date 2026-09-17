@@ -20,9 +20,9 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { applyEvents, applyEventsWithJob, applySnapshot, initialState } from './stream'
-import type { StreamState } from './stream'
-import type { ConnectionState, DomainEvent, Job, ServerMessage } from './types'
+import { applyEvents, applyEventsWithDetail, applySnapshot, initialState } from './stream'
+import type { JobDetail, StreamState } from './stream'
+import type { ConnectionState, DomainEvent, ServerMessage } from './types'
 
 interface Options {
   jobId: string | null
@@ -38,17 +38,21 @@ interface Result {
   /** 手动触发一次重连（界面上的「重试」按钮）。 */
   reconnect: () => void
   /**
-   * 合并一份**回源**得到的任务明细。
+   * 合并一份**回源**得到的任务明细（任务 + 统计 + 进度）。
    *
-   * 存在的理由：实时事件里**不含分镜状态**，人工打回/放行之后
-   * 必须回源 `GET /jobs/:id` 才能看到状态变化。
-   * 不做这件事的话，用户点完按钮会觉得没反应，直到下一条事件到达。
+   * 存在的理由：实时事件里**不含分镜状态**，人工打回/放行之后，
+   * 以及流水线推进时，都必须回源 `GET /jobs/:id` 才能看到变化。
+   * 不做这件事的话，用户点完按钮会觉得没反应，分镜表也不会推进。
+   *
+   * 必须带上 stat 与 progress：只换任务会让统计与进度条停留在
+   * 连接建立那一刻的值（那时通常还没拆解出分镜），
+   * 界面就会出现「表格有 4 行、统计写着共 0 个分镜」的自相矛盾。
    *
    * 之所以由 hook 提供而不是让 App 自己 setState：
    * 状态归约的规则（去重、排序、lastSeq）只能有一份实现，
    * 两处各写一套迟早会不一致。
    */
-  mergeJob: (job: Job) => void
+  mergeDetail: (detail: JobDetail) => void
 }
 
 /** 重连退避参数。 */
@@ -73,6 +77,8 @@ export function useJobStream({ jobId, onNeedJobRefresh }: Options): Result {
   const timerRef = useRef<number | null>(null)
   /** 手动重连时用来打断当前的退避等待。 */
   const manualRef = useRef(0)
+  /** 回源节流用的定时器。 */
+  const refreshTimerRef = useRef<number | null>(null)
 
   const clearTimer = () => {
     if (timerRef.current !== null) {
@@ -80,6 +86,30 @@ export function useJobStream({ jobId, onNeedJobRefresh }: Options): Result {
       timerRef.current = null
     }
   }
+
+  /**
+   * 请求一次任务明细回源（带节流）。
+   *
+   * 为什么必须由**实时事件**来触发，而不能只在断线时回源：
+   * 实时推送里不含分镜明细（见 Options.onNeedJobRefresh 的说明），
+   * 而连接建立时的快照是在「刚提交、导演还没拆解」那一刻生成的 ——
+   * 那时的任务只有 0 个分镜。如果此后不再回源，分镜表就会**永远空着**，
+   * 而连接指示器一路显示「实时」、事件也在持续到达。
+   *
+   * 这个缺陷曾经长时间没被发现，原因很讽刺：WebSocket 因来源校验配置而
+   * 全部 403 时，`onclose` 会反复触发回源，界面反而**看起来是好的**。
+   * 也就是说「实时通道坏掉」掩盖了「实时通道没被正确消费」。
+   *
+   * 事件是成串到达的（一次流水线会有几十条），逐条回源会把接口打爆，
+   * 因此这里做节流而非防抖：首次事件立即回源，之后在窗口内合并。
+   */
+  const requestRefresh = useCallback(() => {
+    if (refreshTimerRef.current !== null) return
+    refreshTimerRef.current = window.setTimeout(() => {
+      refreshTimerRef.current = null
+      refreshRef.current?.()
+    }, 300)
+  }, [])
 
   const connect = useCallback(() => {
     const id = jobRef.current
@@ -129,6 +159,7 @@ export function useJobStream({ jobId, onNeedJobRefresh }: Options): Result {
           // resync 的回应：只补事件，任务明细不动。
           const events = (msg.data as DomainEvent[]) ?? []
           setState((prev) => applyEvents(prev, events))
+          if (events.length > 0) requestRefresh()
           break
         }
 
@@ -142,6 +173,8 @@ export function useJobStream({ jobId, onNeedJobRefresh }: Options): Result {
             requestResync(ws)
           }
           setState((prev) => applyEvents(prev, [evt]))
+          // 事件本身不含分镜明细，必须回源才能看到状态推进与新出现的分镜。
+          requestRefresh()
           break
         }
 
@@ -189,7 +222,7 @@ export function useJobStream({ jobId, onNeedJobRefresh }: Options): Result {
         connect()
       }, backoff + jitter)
     }
-  }, [])
+  }, [requestRefresh])
 
   /** 请求补发缺失的事件（只补事件，不动任务明细）。 */
   function requestResync(ws: WebSocket) {
@@ -225,6 +258,10 @@ export function useJobStream({ jobId, onNeedJobRefresh }: Options): Result {
 
     return () => {
       clearTimer()
+      if (refreshTimerRef.current !== null) {
+        window.clearTimeout(refreshTimerRef.current)
+        refreshTimerRef.current = null
+      }
       const ws = wsRef.current
       wsRef.current = null
       if (ws) {
@@ -234,10 +271,10 @@ export function useJobStream({ jobId, onNeedJobRefresh }: Options): Result {
     }
   }, [jobId, connect])
 
-  const mergeJob = useCallback((job: Job) => {
-    // 不带新事件，只替换任务明细 —— 状态归约规则复用同一份实现。
-    setState((prev) => applyEventsWithJob(prev, [], job))
+  const mergeDetail = useCallback((detail: JobDetail) => {
+    // 不带新事件，只替换任务明细与统计 —— 状态归约规则复用同一份实现。
+    setState((prev) => applyEventsWithDetail(prev, [], detail))
   }, [])
 
-  return { state, connection, lastError, reconnect, mergeJob }
+  return { state, connection, lastError, reconnect, mergeDetail }
 }

@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -81,10 +82,21 @@ type Hub struct {
 }
 
 // NewHub 创建 Hub。allowedOrigins 为空表示允许所有来源（仅限 dev）。
+//
+// 列表里的 `*` 同样表示「允许所有来源」，必须显式识别：此前的实现只把
+// **空列表**当作放开，而把 `*` 当成一个普通的字面来源去比对 —— 于是
+// `SCID_CORS_ALLOWED_ORIGINS=*`（最自然的「全放开」写法）会让**每一次**
+// WebSocket 升级都拿到 403：浏览器永远停在「重连中…」，
+// 而 REST 轮询仍在更新页面，看起来只是「有点卡」，极难怀疑到实时通道上。
 func NewHub(allowedOrigins []string, logger *slog.Logger) *Hub {
 	allowAll := len(allowedOrigins) == 0
 	allowed := make(map[string]struct{}, len(allowedOrigins))
 	for _, o := range allowedOrigins {
+		o = strings.TrimSpace(o)
+		if o == "*" {
+			allowAll = true
+			continue
+		}
 		allowed[o] = struct{}{}
 	}
 

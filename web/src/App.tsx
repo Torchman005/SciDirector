@@ -36,15 +36,16 @@ export function App() {
   const [submitting, setSubmitting] = useState(false)
   const [refreshTick, setRefreshTick] = useState(0)
 
-  const { state, connection, lastError, reconnect, mergeJob } = useJobStream({
+  const { state, connection, lastError, reconnect, mergeDetail } = useJobStream({
     jobId,
     onNeedJobRefresh: () => setRefreshTick((n) => n + 1),
   })
 
   // 回源任务明细。
   //
-  // 触发时机有两类：
-  //   - 人工操作之后（事件里不含分镜状态，不回源就会「点了没反应」）；
+  // 触发时机有三类：
+  //   - 实时事件到达时（事件里不含分镜明细，不回源就看不到推进）；
+  //   - 人工操作之后（同上）；
   //   - WS 断线重连之后（断线期间分镜表可能已经变了）。
   // 用 tick 而不是把 setState 暴露出去：让「什么时候该回源」集中在 App 这一层，
   // hook 只负责连接本身与状态归约。
@@ -55,8 +56,9 @@ export function App() {
       try {
         const resp = await api.getJob(jobId)
         if (cancelled) return
-        // 注意 `data.job` —— 查询接口在信封之内还有一层（见 types.ts 的说明）。
-        mergeJob(resp.job)
+        // 注意 `data` 这一层 —— 查询接口在信封之内还有一层（见 types.ts 的说明）。
+        // 三样一起合并：只换 job 会让统计与进度条停在旧值上。
+        mergeDetail({ job: resp.job, stat: resp.stat, progress: resp.progress })
       } catch {
         // 回源失败不影响实时流：下次重连时快照会补齐。
       }
@@ -64,7 +66,7 @@ export function App() {
     return () => {
       cancelled = true
     }
-  }, [jobId, refreshTick, mergeJob])
+  }, [jobId, refreshTick, mergeDetail])
 
   const stat = deriveStat(state)
   const shots = shotsOf(state.job)

@@ -86,7 +86,39 @@ export function applyEventsWithJob(
   incoming: DomainEvent[],
   job: Job | null,
 ): StreamState {
-  return applyEventsInternal(state, incoming, job ?? state.job)
+  return applyEventsWithDetail(state, incoming, { job })
+}
+
+/**
+ * 查询接口 `data` 的完整明细：任务 + 统计 + 进度。
+ *
+ * 三者必须一起合并。曾经只合并 `job`，后果是一处很隐蔽的自相矛盾：
+ * `deriveStat` 优先返回服务端的 `stat`，而 `stat` 只在**连接建立时的快照**里
+ * 到达过 —— 那一刻任务刚提交、导演还没拆解，于是 `total = 0`。
+ * 此后事件会不断更新分镜表，却没有人再更新 `stat` 与 `progress`，
+ * 界面就长期显示「分镜表里 4 行，统计写着共 0 个分镜、进度 0%」。
+ * `stream.ts` 里那句注释警告过这种界面（用户会彻底不信任这个页面），
+ * 而它恰好由「只合并一半」制造了出来。
+ */
+export interface JobDetail {
+  job?: Job | null
+  stat?: JobStat | null
+  progress?: number
+}
+
+/** 合并一份回源得到的完整明细（不含新事件）。 */
+export function applyEventsWithDetail(
+  state: StreamState,
+  incoming: DomainEvent[],
+  detail: JobDetail,
+): StreamState {
+  const next = applyEventsInternal(state, incoming, detail.job ?? state.job)
+  return {
+    ...next,
+    stat: detail.stat ?? next.stat,
+    progress: detail.progress ?? next.progress,
+    loaded: true,
+  }
 }
 
 function applyEventsInternal(

@@ -79,8 +79,8 @@ build-web: ## 构建前端产物
 # 本地开发
 # ===========================================================================
 .PHONY: dev-infra dev-api dev-worker dev-ai dev-web
-dev-infra: ## 仅启动依赖中间件（redis / postgres / minio）
-	docker compose up -d redis postgres minio minio-init
+dev-infra: ## 仅启动依赖中间件（redis / postgres / rustfs）
+	docker compose up -d redis postgres rustfs
 
 dev-api: ## 本地运行 Go API
 	cd backend && $(GO) run ./cmd/api
@@ -98,7 +98,7 @@ dev-web: ## 本地运行前端
 # 冒烟测试（手动联调）
 # ===========================================================================
 # 这两个脚本需要对应的服务已经在跑（dev-ai / dev-api）。
-.PHONY: smoke smoke-grpc smoke-ws
+.PHONY: smoke smoke-grpc smoke-ws smoke-web
 smoke: smoke-grpc smoke-ws ## 依次冒烟 gRPC 与 WebSocket
 
 smoke-grpc: ## 冒烟 Python 大脑的 gRPC 契约（需先 make dev-ai）
@@ -106,6 +106,16 @@ smoke-grpc: ## 冒烟 Python 大脑的 gRPC 契约（需先 make dev-ai）
 
 smoke-ws: ## 冒烟 Go 网关的 WebSocket 闭环（需先 make dev-api）
 	cd $(ROOT) && $(PYTHON) scripts/smoke-ws.py
+
+# C1/C3 的浏览器验证：真实 Chromium 驱动真实全栈，产出截图供人工目视。
+# 需要 playwright（`pip install playwright`）与一个可用的 Chromium
+# （用 SCID_CHROME 指定；脚本也会自动在常见路径里找）。
+# 断网演练默认用 set_offline，但它**不会**断开已建立的 WebSocket，
+# 因此要真正切断实时通道请传 API_RESTART_CMD：
+#   make smoke-web API_RESTART_CMD=./scripts/api-ctl.sh
+smoke-web: ## 冒烟审核台（C1 实时推进 + C3 断网重连；需全栈在跑）
+	cd $(ROOT) && $(PYTHON) scripts/smoke-web.py --shots .tmp/shots \
+		$(if $(API_RESTART_CMD),--api-restart-cmd "$(API_RESTART_CMD)",)
 
 # ===========================================================================
 # 质量

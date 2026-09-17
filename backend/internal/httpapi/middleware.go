@@ -85,12 +85,22 @@ func AccessLogMiddleware() gin.HandlerFunc {
 	}
 }
 
-// CORSMiddleware 处理跨域。允许列表为空表示放开（仅 dev）。
+// CORSMiddleware 处理跨域。允许列表为空、或列表中含 `*`，都表示放开（仅 dev）。
+//
+// `*` 必须显式识别 —— 与 WebSocket 的 CheckOrigin 是同一个坑：
+// 把 `*` 当普通字面来源比对，「想全放开」的部署反而一个 CORS 头都拿不到。
+// 这里**回显实际 Origin** 而不是写死 `*`：只有响应不是字面 `*` 时，
+// 才能与 `Access-Control-Allow-Credentials: true` 共存。
 func CORSMiddleware(allowedOrigins []string) gin.HandlerFunc {
 	allowAll := len(allowedOrigins) == 0
 	allowed := make(map[string]struct{}, len(allowedOrigins))
 	for _, o := range allowedOrigins {
-		allowed[strings.TrimSpace(o)] = struct{}{}
+		o = strings.TrimSpace(o)
+		if o == "*" {
+			allowAll = true
+			continue
+		}
+		allowed[o] = struct{}{}
 	}
 
 	return func(c *gin.Context) {
