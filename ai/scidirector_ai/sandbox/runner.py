@@ -8,9 +8,16 @@
 
 | 平台 | 机制 | 谁在执行 |
 | --- | --- | --- |
-| Linux / macOS | ``setrlimit(RLIMIT_AS)`` | 内核（子进程继承，覆盖整棵树） |
+| Linux / macOS | ``setrlimit(RLIMIT_DATA)`` | 内核（子进程继承，覆盖整棵树） |
 | Windows | **Job Object** ``JOB_OBJECT_LIMIT_JOB_MEMORY`` | 内核（覆盖加入 Job 的全部进程） |
 | 任意平台兜底 | 监控线程采样 + 主动 kill | 本模块 |
+
+> **不用 RLIMIT_AS**：它限制的是*虚拟地址空间*，而非常驻内存 ——
+> 映射进来的共享库、每个线程的栈、编解码器预留的缓冲都算在里面，
+> 通常比实际内存用量大一个数量级（实测 ffmpeg 抽一帧：RSS 56MB、地址空间约 2GB）。
+> 把内存上限直接当 AS 上限，正常进程会在远未触及内存上限时被杀，
+> 而 ffmpeg 那种情况**退出码仍是 0、产物为空**，一路静默降级到「审查不可用」。
+> RLIMIT_AS 现仅作为防跑飞的兜底，留有余量（见 ``_AS_HEADROOM_FACTOR``）。
 
 只做监控线程是不够的：采样总有间隔，一段"在两次采样之间瞬间吃满内存"的代码
 可以在此之前把机器打爆。反过来只做内核限制也不够：Windows 上 Job Object 赋值
@@ -49,6 +56,53 @@ MAX_OUTPUT_BYTES = 256 * 1024
 #: 若这段时间内进程仍未退出，说明它卡在不可中断状态（例如磁盘 IO）。
 KILL_GRACE_SEC = 5.0
 
+#: 「CPU 时间预算耗尽」的终止信号。
+#:
+#: 用 getattr 而不是直接引用：``signal.SIGXCPU`` 在 Windows 上不存在，
+#: 写成模块级常量会让整个模块在 Windows 上导入失败。
+_RESOURCE_KILL_SIGNALS = frozenset(
+    sig for sig in (getattr(signal, "SIGXCPU", None),) if sig is not None
+)
+
+
+def _classify_resource_exit(returncode: int | None) -> str:
+    """把「进程被资源限制杀死」归一化成 ``killed_reason``。
+
+    POSIX 上有**两套**资源限制可能在同一个瞬间开火：
+
+    * ``RLIMIT_CPU``（来自 ``max_cpu_sec``）：到点发 SIGXCPU；
+    * 墙钟兜底：截止时间是「超时 + 宽限期」。
+
+    manim 侧把 CPU 上限设为超时的 2 倍，而宽限期恰好也是 5 秒 ——
+    两者在小超时下会精确撞在一起（实测 ``timeout_sec=5`` 时：CPU 上限 10s、
+    墙钟截止 10s），谁先到取决于调度。**走 CPU 这条路径时监控线程不会设置
+    ``kill_flag``**，于是 ``killed_reason`` 是空串，上层把「超时」读成了
+    「未知失败」：可复现的现象是 ``test_dead_loop_is_killed_and_reported``
+    拿到 ``killed_reason=''``（进程实际是 ``returncode=-24`` 即 SIGXCPU）。
+
+    对上层而言这两条路是同一件事 —— 「资源预算耗尽、这次尝试没跑完」，
+    因此归一化成同一个可观测结果（``Agent.md`` §9 的同一条原则：
+    跨平台/跨机制差异必须收敛在沙盒边界内）。
+
+    只认 SIGXCPU，不认 SIGKILL：后者来源太多（OOM killer、外部 kill），
+    凭它推断原因会掩盖真正的问题。SIGXCPU 只可能来自我们自己设的 RLIMIT_CPU，
+    因此不存在误判。
+    """
+    if returncode is None or returncode >= 0:
+        return ""
+    if -returncode not in _RESOURCE_KILL_SIGNALS:
+        return ""
+    return "timeout"
+
+#: RLIMIT_AS 相对内存上限的余量系数，以及它的**下限**（字节）。
+#:
+#: RLIMIT_AS 限制的是虚拟地址空间，通常比常驻内存大一个数量级
+#: （实测 ffmpeg 抽一帧：RSS 56MB / 地址空间约 2GB），因此不能把它当内存上限用。
+#: 下限取 2GB 是因为实测低于这个值正常 ffmpeg 就会失败；它只是防跑飞的兜底，
+#: 真正生效的内存限制是 RLIMIT_DATA（见 ``_rlimit_hook``）。
+_AS_HEADROOM_FACTOR = 4
+_AS_FLOOR_BYTES = 2 * 1024**3
+
 
 # ===========================================================================
 # 资源约束
@@ -61,7 +115,7 @@ class ResourceLimits:
 
     #: 墙钟超时。到点即杀整棵进程树。
     timeout_sec: float = 30.0
-    #: 内存硬上限（MB）。由内核机制执行（RLIMIT_AS / Job Object）。
+    #: 内存硬上限（MB）。由内核机制执行（POSIX 走 RLIMIT_DATA，Windows 走 Job Object）。
     max_memory_mb: int = 2048
     #: CPU 时间上限（秒，仅 POSIX 生效）。防止"不吃内存但吃满 CPU"的活锁。
     max_cpu_sec: int | None = None
@@ -498,7 +552,7 @@ class SandboxRunner:
         monitor.join(timeout=2.0)
 
         peak = probe.peak_mb()
-        reason = kill_flag.get()
+        reason = kill_flag.get() or _classify_resource_exit(proc.returncode)
 
         result = ExecResult(
             command=argv,
@@ -600,10 +654,32 @@ class SandboxRunner:
         def _apply() -> None:
             import resource
 
+            # 内存上限交给 RLIMIT_DATA，**不是** RLIMIT_AS。
+            #
+            # RLIMIT_AS 限制的是虚拟地址空间：映射进来的共享库、每个线程的栈、
+            # 编解码器预留的缓冲全算在里面，与「进程实际用了多少内存」差着数量级。
+            # 实测本机 ffmpeg 抽一帧：RSS 只有 56MB，却需要约 2GB 地址空间
+            # （1.75GB 时建不起 swscale 图，2GB 正常）。
+            #
+            # 把 max_memory_mb 直接当 AS 上限，后果不是「限制得比较严」，而是
+            # **正常进程在远未触及内存上限时就被杀掉**；而 ffmpeg 在这种情况下的
+            # 退出码仍然是 0、产物却是空的 —— 表现成「抽帧全部失败」，
+            # 一路静默降级到「VLM 审查不可用」，没有任何一处会报错。
+            #
+            # RLIMIT_DATA（Linux 4.7+ 覆盖 brk 与私有匿名映射）的语义与 Windows
+            # Job Object 的「提交内存」一致，这才是这个配置项想表达的东西。
             try:
-                resource.setrlimit(resource.RLIMIT_AS, (mem_bytes, mem_bytes))
+                resource.setrlimit(resource.RLIMIT_DATA, (mem_bytes, mem_bytes))
             except (ValueError, OSError):
                 # 某些容器/内核不允许设置；不阻断执行，由监控线程兜底。
+                pass
+
+            # RLIMIT_AS 降级为**兜底**，且必须留出地址空间余量：
+            # 它拦住的是「疯狂预留地址空间」的进程，而不是内存用量本身。
+            as_bytes = max(mem_bytes * _AS_HEADROOM_FACTOR, _AS_FLOOR_BYTES)
+            try:
+                resource.setrlimit(resource.RLIMIT_AS, (as_bytes, as_bytes))
+            except (ValueError, OSError):
                 pass
             if cpu_sec:
                 try:

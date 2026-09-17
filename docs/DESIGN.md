@@ -205,12 +205,24 @@ POSIX 侧用 `os.setsid` 建独立进程组后 `killpg`；Windows 侧没有进�
 把所有后代纳入同一个作业对象统一终止。
 
 **② 内存限制在两个平台上是**两套完全不同**的机制，但必须归一化成一个结果。**
-POSIX 用 `resource.setrlimit(RLIMIT_AS)`，超限时子进程自己抛 `MemoryError`；
+POSIX 用 `resource.setrlimit(RLIMIT_DATA)`，超限时子进程自己抛 `MemoryError`；
 Windows 的 Job Object 直接在分配时失败，进程被内核杀掉，看不到 Python 异常。
 上层熔断逻辑若分别处理这两类信号，就等于每个平台写一份。
 因此统一归一化为 `killed_reason == "memory"`：
 `_MEMORY_ERROR_MARKERS` 负责把 POSIX 侧的 `MemoryError` / `Unable to allocate` 文本
 映射到同一个取值。**跨平台差异必须收敛在沙盒边界内，不能泄漏到编排层。**
+
+> **为什么不用 `RLIMIT_AS`**（v0.4.2 修正）：`RLIMIT_AS` 限制的是*虚拟地址空间*，
+> 与「这个进程用了多少内存」差着一个数量级 —— 实测 ffmpeg 抽一帧 RSS 只有 56MB，
+> 却需要约 2GB 地址空间（1.75GB 建不起 swscale 图；低于 1GB 时连不做缩放的抽帧也失败）。
+> 把内存上限直接当 AS 上限，正常进程会在远未触及上限时被杀，而 ffmpeg 那种情况
+> **退出码仍是 0、产物却是空的** —— 于是抽帧「全部失败」、Critic 对每个镜头都降级转人工，
+> 核心闭环静默失效且没有任何错误日志。`RLIMIT_DATA`（Linux 4.7+ 覆盖 brk 与私有匿名映射）
+> 的语义才与 Job Object 的「提交内存」一致。`RLIMIT_AS` 现已降级为留有余量的兜底。
+>
+> 同理，**同一平台内的多条限制路径也要归一化**：`RLIMIT_CPU` 到点发 SIGXCPU，
+> 而墙钟兜底的截止是「超时 + 宽限期」，两者可能在同一瞬间开火，走哪条路取决于调度。
+> 只有把它们映射到同一个 `killed_reason`，上层才不必关心「是谁先到的」。
 
 **③ 30 秒是**故意**紧的。**
 LaTeX 首次编译（无预热缓存）单次就可能吃掉 20~30 秒，正常动画很容易撞线。

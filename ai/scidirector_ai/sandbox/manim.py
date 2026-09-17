@@ -336,9 +336,13 @@ class ManimSandbox:
         * 代码报错 —— 把 stderr 回灌给编码智能体重写。
         """
         if result.killed_reason == "timeout":
+            # 可能是墙钟超时，也可能是 CPU 时间预算先耗尽（RLIMIT_CPU = 超时×2，
+            # 见下面的 limits 构造）。两者对上层是同一件事，但**该调哪个参数不一样**，
+            # 所以提示里把两个开关都写出来：只提超时会让人反复调大超时而毫无效果。
             raise ManimSandboxError(
-                f"Manim 渲染超时（>{self.timeout_sec:g}s）已被强制终止"
-                f"；若场景本身合法但偏慢，请调大 SCID_MANIM_TIMEOUT_SEC",
+                f"Manim 渲染超时（>{self.timeout_sec:g}s）或 CPU 时间耗尽，已被强制终止"
+                f"；若场景本身合法但偏慢，请调大 SCID_MANIM_TIMEOUT_SEC"
+                f"（CPU 上限随之按 2 倍放大）或 SCID_SANDBOX_MAX_CPU_SEC",
                 retryable=True,
                 detail=result.tail(1200),
                 killed_reason="timeout",

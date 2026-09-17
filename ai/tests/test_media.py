@@ -23,6 +23,7 @@ from scidirector_ai.media import (
     _build_filtergraph,
     _escape_drawtext,
     _escape_fontfile,
+    extract_frames,
     find_font,
     render_ambient,
     reset_drawtext_cache,
@@ -255,3 +256,50 @@ class TestRenderAmbient:
             render_ambient(tmp_path / "x.mp4", SandboxRunner(), duration_sec=1.0,
                            width=320, height=240, fps=10)
         assert "ffmpeg" in str(exc_info.value)
+
+
+# ===========================================================================
+# 抽帧 —— VLM 审查的唯一输入
+# ===========================================================================
+
+
+@requires_ffmpeg
+class TestExtractFrames:
+    """抽帧是 Critic 的眼睛，而这条链路失败时**不会报错**。
+
+    它只会让审查降级为「转人工」，现象是「每个镜头都需要人工确认」——
+    看起来像模型能力问题，实际是媒体层在静默失败。
+    所以这里的断言必须是「真的抽出了帧」，而不是某个中间量。
+    """
+
+    def test_extracts_frames_under_sandbox_memory_limit(self, tmp_path: Path) -> None:
+        """**回归**：沙盒默认内存上限下，抽帧必须真的产出帧。
+
+        抽帧命令带 ``-vf scale``，ffmpeg 为此要预留大量**虚拟地址空间**
+        （本机实测：RSS 仅 56MB，地址空间却要约 2GB）。把 ``max_memory_mb``
+        直接当成 RLIMIT_AS 用时，正常进程会在远未触及内存上限时被杀，
+        而 ffmpeg 的**退出码仍然是 0、产物却是空的** ——
+        于是抽帧「全部失败」，Critic 对每一个镜头都降级，
+        整条链路里没有任何一处会报错。
+        """
+        video = render_ambient(
+            tmp_path / "clip.mp4",
+            SandboxRunner(),
+            duration_sec=1.0,
+            width=320,
+            height=240,
+            fps=10,
+        )
+        frames = extract_frames(video, tmp_path / "frames", SandboxRunner(), count=3)
+
+        # count=3 会取 3 个等间隔中点 + 首帧 + 末帧 = 5 帧。
+        # 断言 >= 4 而不是 == 5：个别取样点上 ffmpeg 可能取不到帧，
+        # 但只要还能拿到足够多的帧，审查就不该降级。
+        assert len(frames) >= 4, (
+            f"只抽出 {len(frames)} 帧，Critic 会因缺帧降级 —— "
+            f"先确认沙盒的 RLIMIT 有没有把正常 ffmpeg 误杀"
+        )
+        for frame in frames:
+            path = Path(frame)
+            assert path.is_file(), f"返回了不存在的帧路径: {frame}"
+            assert path.stat().st_size > 0, f"抽出了空帧: {frame}"

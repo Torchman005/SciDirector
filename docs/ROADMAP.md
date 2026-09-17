@@ -144,7 +144,7 @@ GET  /readyz -> {"sandbox_ready":true,
 | A3 | ✅ | `tests/test_critic_agent.py` 构造「字号过小 / 信息密度过高」用例，判定不合格且给出可执行建议 |
 | A4 | ✅ | 真实运行中 MATH / DATA 镜头在第 3 次尝试后熔断，事件流出现 `AWAITING_HUMAN`，任务状态置 `PARTIAL` |
 | A5 | ✅ | `tests/test_sandbox_policy.py`（`import os` / `eval` / `__subclasses__` 等逃逸手法全部拦截） |
-| A6 | ✅ | `tests/test_sandbox_runner.py` 死循环用例超时后进程树被杀，无孤儿进程；Windows 走 Job Object，POSIX 走 `RLIMIT_AS`+`killpg` |
+| A6 | ✅ | `tests/test_sandbox_runner.py` 死循环用例超时后进程树被杀，无孤儿进程；Windows 走 Job Object，POSIX 走 `RLIMIT_DATA`（Linux 4.7+ 覆盖 brk 与私有匿名映射）+ `killpg`。**v0.4.2 修正**：此前 POSIX 侧用 `RLIMIT_AS`，它限制的是虚拟地址空间而非内存，会误杀需要大量地址空间的正常进程（实测 ffmpeg 抽一帧 RSS 56MB / 地址空间约 2GB），且失败形态是「退出码 0、产物为空」；同时补上 CPU 预算耗尽与墙钟超时相撞时的归一化 |
 | A7 | ✅ | 渲染失败的错误信息回灌给编码智能体，`revise` 节点重写后重试 |
 | A8 | ⚠️ 部分 | `build_checkpointer()` 在无 Postgres 时显式降级到 `MemorySaver` 并打印警告；断点续跑仅在 Postgres 可用时成立，本机未验证 |
 
@@ -264,6 +264,17 @@ Go 事件存储累计 22 条事件。**「引擎缺失」被正确地当作失�
 > 从而掩盖 `appendfsync everysec` 这个策略到底够不够用；必须 `SIGKILL`。
 > 相应地，杀进程前要等过一个完整的 fsync 周期（1.5s），
 > 否则偶发失败的现象看起来像"持久化没生效"，会把排查方向带偏。
+>
+> **本机怎么跑 B5**：用例需要一个 `redis-server` 可执行文件，默认从 `PATH` 查找；
+> 若 Redis 是解压出来的、不在 `PATH` 上，用环境变量显式指定：
+>
+> ```bash
+> SCID_TEST_REDIS_BIN=/path/to/redis-server make test-failover
+> ```
+>
+> 找不到时用例会 **SKIP 而不是失败**——这与 B4 的跳过一样，构成「看起来全绿但其实没跑到」
+> 的坑。所以判断 B5 到底跑没跑，要看 `go test -v` 里的 `--- SKIP` 或 SKIP 计数，
+> 不能只看 `ok` 那一行。
 
 ### 已完成部分：并发收敛 + 转场 + 统一规格
 

@@ -21,6 +21,7 @@ from pathlib import Path
 import pytest
 
 from scidirector_ai.sandbox.runner import (
+    POSIX,
     ExecResult,
     NullMemoryProbe,
     ResourceLimits,
@@ -108,6 +109,38 @@ class TestTimeoutKill:
         # 上限给 10s 是为了容忍 Windows 上进程回收较慢的情况。
         assert elapsed < 10, f"超时后 {elapsed:.1f}s 才返回，说明没有及时终止"
         assert "超时" in result.summary()
+
+    @pytest.mark.skipif(not POSIX, reason="RLIMIT_CPU 只在 POSIX 上生效")
+    def test_cpu_budget_exhaustion_is_reported_as_timeout(
+        self, runner: SandboxRunner, tmp_path: Path
+    ) -> None:
+        """CPU 时间预算耗尽必须报成 timeout，而不是"没有原因的失败"。
+
+        回归：``max_cpu_sec`` 到点发 SIGXCPU，而墙钟兜底的截止时间是
+        「超时 + 宽限期（5s）」。manim 侧把 CPU 上限设成超时的 2 倍，
+        小超时下两者会精确撞在一起（实测 timeout=5 时 CPU 10s、墙钟 10s），
+        谁先开火取决于调度 —— 走 CPU 这条路时监控线程**不会**设置 kill_flag，
+        于是 ``killed_reason`` 是空串，上层把「资源耗尽」读成了「未知失败」，
+        连"该调哪个参数"都无从判断。
+
+        这里刻意让墙钟超时远大于 CPU 上限（60s vs 2s），使 CPU 限制必然先到，
+        从而**确定性地**覆盖这条归一化路径，不依赖两个定时器谁先开火。
+        """
+        script = _write(tmp_path, "burn.py", "while True:\n    pass\n")
+        result = runner.run_python(
+            script,
+            cwd=tmp_path,
+            limits=ResourceLimits(timeout_sec=60, max_cpu_sec=2, max_memory_mb=1024),
+        )
+
+        assert result.killed_reason == "timeout", (
+            f"CPU 时间耗尽被报成了未知失败：killed={result.killed_reason!r} "
+            f"rc={result.returncode} —— 归一化路径没生效"
+        )
+        assert result.timed_out
+        assert not result.ok
+        # 必须在 CPU 上限附近就返回，而不是等到墙钟截止（60s + 宽限期）。
+        assert result.duration_sec < 30, "CPU 上限没有先于墙钟超时生效，这条用例就失去意义了"
 
     def test_kills_whole_process_tree(self, runner: SandboxRunner, tmp_path: Path) -> None:
         """**关键**：必须杀掉孙进程。
