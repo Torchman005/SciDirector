@@ -110,7 +110,7 @@ smoke-ws: ## 冒烟 Go 网关的 WebSocket 闭环（需先 make dev-api）
 # ===========================================================================
 # 质量
 # ===========================================================================
-.PHONY: test test-go test-python test-failover lint fmt
+.PHONY: test test-go test-python test-failover test-s3 lint fmt
 test: test-go test-python ## 全量测试
 
 # 竞态检测默认开启（CI 上必须跑）。Windows 本地若缺少 race runtime DLL
@@ -129,6 +129,13 @@ test-python: ## Python 单元测试
 # 需要 redis-server 可执行文件；若不在 PATH 上，用 SCID_TEST_REDIS_BIN 指定。
 test-failover: ## 故障注入测试：Redis 断线后恢复（需 1~2 分钟）
 	cd backend && SCID_TEST_REDIS_FAILOVER=1 $(GO) test -timeout 10m -count=1 -run TestB5 -v ./internal/queue/
+
+# s3 归档的端到端验证需要**真实的 S3 端点**：MinIO / SeaweedFS / moto 等任意
+# S3 兼容实现都行（用例只依赖 S3 API，不绑定具体产品）。未配置时自动跳过。
+# 同时覆盖 archive 包（归档器本身）与 worker 包（真实归档器接进 finalizeArtifacts）——
+# 两半各自通过不等于接起来通过，本地路径能否被归档器真正读到只有合起来才知道。
+test-s3: ## s3 归档端到端验证（需 SCID_TEST_S3_ENDPOINT / ACCESS_KEY / SECRET_KEY）
+	cd backend && $(GO) test -count=1 -v -run 'TestS3|TestFinalizeArtifactsUploadsToRealS3' ./internal/archive/ ./internal/worker/
 
 lint: ## 静态检查
 	cd backend && $(GO) vet ./...

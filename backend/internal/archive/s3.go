@@ -24,11 +24,21 @@ type S3Options struct {
 //
 // # 关于本实现的验证状态
 //
-// 本机没有可用的 MinIO 实例（Docker 未运行），因此**这条路径未经端到端验证**，
-// 只覆盖了键构造与客户端构造的单元测试。启用前请在真实 MinIO 上跑一遍
-// `make smoke` 与应用层的归档流程。
-// 默认后端是 local，因此未验证的代码不会在缺省配置下被执行 ——
-// 「默认路径必须是被验证过的那条」是这里刻意的取舍。
+// **已对真实 S3 API 完成端到端验证**（`s3_e2e_test.go`，用 `make test-s3` 运行）：
+// 按需建桶、上传、用**独立客户端**读回并逐字节比对、Content-Type、敌意文件名的
+// 键清洗在真实存储里的落点、端点不可达时如实报错；另有
+// `worker/archive_test.go::TestFinalizeArtifactsUploadsToRealS3` 把真实归档器
+// 接进真实的 `finalizeArtifacts`，验证「本地路径确实能被归档器读到」
+// 以及「归档成功后本地清理照常发生」。
+//
+// 需要如实说明的边界：上述验证跑在 **moto**（一个 S3 API 实现）上，
+// 尚未对生产将使用的具体对象存储复跑。用例只依赖 S3 API、不绑定产品，
+// 因此换端点重跑即可：
+//
+//	SCID_TEST_S3_ENDPOINT=... make test-s3
+//
+// 另外，原先计划使用的 MinIO 开源版**已归档停更**（dl.min.io 已返回 410），
+// 生产选型需另定 —— 见 docs/ROADMAP.md 的说明。
 type S3Archiver struct {
 	client *minio.Client
 	bucket string
