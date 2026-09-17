@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"path/filepath"
+	"strings"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
@@ -50,8 +52,9 @@ type S3Archiver struct {
 // 构造期只建立客户端，不做网络探测：进程启动不应被对象存储的可用性绑架。
 // bucket 的存在性在首次 Put 时按需创建。
 func NewS3(opt S3Options, logger *slog.Logger) (*S3Archiver, error) {
-	if opt.Endpoint == "" {
-		return nil, fmt.Errorf("archive: S3 endpoint 不能为空")
+	host, secureFromScheme, err := splitEndpoint(opt.Endpoint)
+	if err != nil {
+		return nil, err
 	}
 	if opt.Bucket == "" {
 		return nil, fmt.Errorf("archive: S3 bucket 不能为空")
@@ -60,15 +63,47 @@ func NewS3(opt S3Options, logger *slog.Logger) (*S3Archiver, error) {
 		logger = slog.Default()
 	}
 
-	client, err := minio.New(opt.Endpoint, &minio.Options{
+	client, err := minio.New(host, &minio.Options{
 		Creds:  credentials.NewStaticV4(opt.AccessKey, opt.SecretKey, ""),
-		Secure: opt.UseSSL,
+		Secure: opt.UseSSL || secureFromScheme,
 		Region: opt.Region,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("archive: 构造 S3 客户端失败: %w", err)
 	}
 	return &S3Archiver{client: client, bucket: opt.Bucket, logger: logger}, nil
+}
+
+// splitEndpoint 把端点归一化成 minio-go 需要的「主机[:端口]」形式。
+//
+// 为什么需要这一步：minio-go 的 Endpoint **不接受带 scheme 的 URL**
+// （会报 `Endpoint url cannot have fully qualified paths`，协议改由 `Secure` 字段决定），
+// 而 `.env.example`、compose 以及各家对象存储的官方文档里，端点几乎都写成
+// `http://host:9000` 这种带 scheme 的形式。
+//
+// 后果不是「配置被忽略」而是**进程起不来**：worker 启动时构造归档器失败，
+// 直接以「归档配置非法」退出。也就是说**照着文档配置 = 服务无法启动**。
+// 这属于「文档与实现约定不一致，且只在真正启动的那一刻才暴露」的问题，
+// 在这里多写十行兼容代码远比重现一次这种故障便宜。
+//
+// 规则：带 scheme 就按 scheme 决定是否 TLS；不带 scheme 则沿用 UseSSL 字段。
+func splitEndpoint(raw string) (host string, secure bool, err error) {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return "", false, fmt.Errorf("archive: S3 endpoint 不能为空")
+	}
+	if strings.Contains(s, "://") {
+		u, perr := url.Parse(s)
+		if perr != nil {
+			return "", false, fmt.Errorf("archive: 解析 S3 endpoint 失败 %q: %w", raw, perr)
+		}
+		if u.Host == "" {
+			return "", false, fmt.Errorf("archive: S3 endpoint %q 缺少主机名", raw)
+		}
+		return u.Host, strings.EqualFold(u.Scheme, "https"), nil
+	}
+	// 不带 scheme：顺手去掉结尾的斜杠，避免又踩到同一个报错。
+	return strings.TrimRight(s, "/"), false, nil
 }
 
 func (a *S3Archiver) Enabled() bool { return true }

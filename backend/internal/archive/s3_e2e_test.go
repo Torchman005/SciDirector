@@ -70,6 +70,60 @@ func uniqueBucket(t *testing.T) string {
 	return fmt.Sprintf("scid-e2e-%d-%s", time.Now().Unix()%100000, hex.EncodeToString(buf))
 }
 
+// TestSplitEndpointAcceptsDocumentedForms 覆盖端点写法归一化。
+//
+// 回归：`.env.example` 与 compose 里写的是 `http://host:9000`，
+// 而 minio-go 的 Endpoint **不接受带 scheme 的 URL** —— 原样传进去会得到
+// `Endpoint url cannot have fully qualified paths`，worker 直接以
+// 「归档配置非法」启动失败。即**照着文档配置就无法启动服务**。
+// 这里把两种写法钉死，避免以后又有人「顺手统一成 URL」。
+func TestSplitEndpointAcceptsDocumentedForms(t *testing.T) {
+	cases := []struct {
+		in         string
+		wantHost   string
+		wantSecure bool
+		wantErr    bool
+	}{
+		{in: "http://127.0.0.1:9000", wantHost: "127.0.0.1:9000", wantSecure: false},
+		{in: "https://s3.example.com", wantHost: "s3.example.com", wantSecure: true},
+		{in: "127.0.0.1:9000", wantHost: "127.0.0.1:9000", wantSecure: false},
+		{in: "minio:9000/", wantHost: "minio:9000", wantSecure: false},
+		{in: "  http://rustfs:9000  ", wantHost: "rustfs:9000", wantSecure: false},
+		{in: "", wantErr: true},
+		{in: "http://", wantErr: true},
+	}
+	for _, c := range cases {
+		host, secure, err := splitEndpoint(c.in)
+		if c.wantErr {
+			if err == nil {
+				t.Errorf("splitEndpoint(%q) 期望报错，实际得到 %q", c.in, host)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("splitEndpoint(%q) 意外报错: %v", c.in, err)
+			continue
+		}
+		if host != c.wantHost {
+			t.Errorf("splitEndpoint(%q) 主机期望 %q，实际 %q", c.in, c.wantHost, host)
+		}
+		if secure != c.wantSecure {
+			t.Errorf("splitEndpoint(%q) secure 期望 %v，实际 %v", c.in, c.wantSecure, secure)
+		}
+	}
+}
+
+// TestNewS3AcceptsURLStyleEndpoint 走一遍真正的构造路径：
+// 带 scheme 的端点必须能构造成功，否则 worker 起不来。
+func TestNewS3AcceptsURLStyleEndpoint(t *testing.T) {
+	if _, err := NewS3(S3Options{
+		Endpoint: "http://127.0.0.1:9000",
+		Bucket:   "b",
+	}, nil); err != nil {
+		t.Fatalf("带 scheme 的端点应当可构造（这是 .env.example 里的写法）: %v", err)
+	}
+}
+
 // clientFor 用与生产同样的凭据建一个直连客户端，供测试侧独立校验。
 //
 // 刻意**不**复用 S3Archiver 内部的 client：验证要用一条独立路径去读回来，
