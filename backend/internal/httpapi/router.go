@@ -59,6 +59,9 @@ func NewRouter(s *Server, deps Deps) *gin.Engine {
 			jobs.GET("/events", s.HandleListEvents)
 			jobs.POST("/shots/:shotID/reject", s.HandleRejectShot)
 			jobs.POST("/shots/:shotID/approve", s.HandleApproveShot)
+			// PATCH 而不是 PUT：只改给出的字段，
+			// 「未给出」与「给出空串」是两种不同意图（见 PatchShotRequest 的说明）。
+			jobs.PATCH("/shots/:shotID", s.HandlePatchShot)
 		}
 	}
 

@@ -1,0 +1,417 @@
+/**
+ * 审核台样式。
+ *
+ * 刻意不引入 UI 框架：这个页面的形态很固定（表格 + 时间线 + 几个按钮），
+ * 引框架带来的依赖体积与升级成本，远大于它省下的这点 CSS。
+ *
+ * 配色沿用项目的深色基调（与 App 内的画布背景一致），
+ * 因为它预览的是视频内容 —— 浅色底会把画面的明暗判断带偏。
+ */
+
+:root {
+  --bg: #0b1020;
+  --panel: #0f1730;
+  --panel-quiet: #0d1428;
+  --border: #1e2740;
+  --text: #e6ecff;
+  --muted: #8a94a6;
+  --accent: #4f8cff;
+  --ok: #2ecc71;
+  --warn: #ff9f43;
+  --danger: #e74c3c;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, 'Noto Sans CJK SC', 'Microsoft YaHei', sans-serif;
+  line-height: 1.65;
+}
+
+.app {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 32px 24px 64px;
+}
+
+.app-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.app-header h1 {
+  margin: 0;
+  font-size: 26px;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.conn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.card {
+  margin-top: 20px;
+  padding: 18px 20px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel);
+}
+
+.card-quiet {
+  background: var(--panel-quiet);
+}
+
+.card h2 {
+  margin: 0 0 12px;
+  font-size: 17px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.row-between {
+  justify-content: space-between;
+}
+
+.row-stat {
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--muted);
+  gap: 16px;
+}
+
+.row-stat .ok {
+  color: var(--ok);
+}
+.row-stat .warn {
+  color: var(--warn);
+}
+.row-stat .danger {
+  color: var(--danger);
+}
+
+.script-input,
+.editor textarea,
+.editor input {
+  width: 100%;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font: inherit;
+  resize: vertical;
+}
+
+.editor input {
+  resize: none;
+}
+
+.script-input {
+  margin-bottom: 12px;
+}
+
+label {
+  font-size: 13px;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+input[type='number'] {
+  width: 90px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font: inherit;
+}
+
+.btn {
+  background: #16203c;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 14px;
+  font: inherit;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.btn:hover:not(:disabled) {
+  background: #1c294a;
+  border-color: #2b3a63;
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #06122b;
+  font-weight: 600;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: #6ba0ff;
+  border-color: #6ba0ff;
+}
+
+.btn-sm {
+  padding: 4px 10px;
+  font-size: 13px;
+}
+
+.banner {
+  margin-top: 16px;
+  padding: 12px 16px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  font-size: 14px;
+}
+
+.banner-warn {
+  background: #2a2412;
+  border-color: #5a4a1c;
+  color: #f1d38a;
+}
+
+.banner-error {
+  background: #2a1414;
+  border-color: #5c2626;
+  color: #ffb3b3;
+}
+
+.banner-action {
+  background: #2a1f12;
+  border-color: #6b4a1c;
+  color: #ffd9a3;
+}
+
+.progress {
+  height: 8px;
+  background: #101a33;
+  border-radius: 999px;
+  overflow: hidden;
+  margin-top: 14px;
+}
+
+.progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #4f8cff, #9b8cff);
+  transition: width 0.35s ease;
+}
+
+/* --- 分镜表 --- */
+
+.shot-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.shot-row {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  background: var(--panel-quiet);
+}
+
+.shot-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.shot-index {
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.chip {
+  font-size: 12px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: #1a2440;
+  border: 1px solid var(--border);
+}
+
+.chip-quiet {
+  color: var(--muted);
+}
+
+.pill {
+  font-size: 12px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  color: #06122b;
+  font-weight: 600;
+}
+
+.pill-sm {
+  font-size: 11px;
+  padding: 1px 7px;
+}
+
+.shot-attempt {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.hint {
+  font-size: 12px;
+  color: var(--warn);
+}
+
+.shot-narration,
+.shot-brief {
+  margin: 8px 0 0;
+  font-size: 14px;
+}
+
+.label {
+  display: inline-block;
+  min-width: 56px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.shot-artifact {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+  word-break: break-all;
+}
+
+.shot-artifact code {
+  color: #9fb3d9;
+}
+
+.shot-error {
+  margin: 8px 0 0;
+  color: #ffb3b3;
+  font-size: 13px;
+}
+
+.shot-notice {
+  margin: 8px 0 0;
+  color: var(--ok);
+  font-size: 13px;
+}
+
+.shot-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+.editor {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+}
+
+.editor-label {
+  display: block;
+  margin: 8px 0 4px;
+}
+
+.editor-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+/* --- 时间线 --- */
+
+.timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 380px;
+  overflow-y: auto;
+  font-size: 13px;
+}
+
+.timeline-item {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 5px 0;
+  border-bottom: 1px solid #131c33;
+}
+
+.timeline-item.has-error {
+  color: #ffb3b3;
+}
+
+.timeline-seq,
+.timeline-clock,
+.timeline-node,
+.timeline-shot,
+.timeline-progress {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.timeline-seq {
+  min-width: 46px;
+}
+
+.timeline-clock {
+  min-width: 68px;
+}
+
+.timeline-node {
+  min-width: 64px;
+  color: #9fb3d9;
+}
+
+.timeline-msg {
+  flex: 1;
+}
+
+.script-view {
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--bg);
+  border-radius: 8px;
+  padding: 12px;
+  color: #9fb3d9;
+  font-size: 13px;
+}

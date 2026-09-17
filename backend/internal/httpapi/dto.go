@@ -71,6 +71,35 @@ type ApproveResponse struct {
 	JobID  string            `json:"job_id"`
 	ShotID string            `json:"shot_id"`
 	Status domain.ShotStatus `json:"status"`
+	// ComposeEnqueued 表示本次放行让所有镜头都通过了，并且合成任务已入队。
+	// 前端据此给出「成片即将开始合成」的提示，而不是让用户对着 100% 干等。
+	ComposeEnqueued bool `json:"compose_enqueued"`
+}
+
+// PatchShotRequest 是分镜编辑请求体（阶段四：成分镜编辑）。
+//
+// 两个字段都是**可选**的指针：nil 表示「不改这一项」，
+// 这与「改成空字符串」是两件不同的事 —— 后者是「清空画外音」的合法意图。
+// 用值类型 + 零值判断会把「清空」误判成「不改」，这是 PATCH 语义最常见的坑。
+type PatchShotRequest struct {
+	Narration   *string `json:"narration,omitempty" binding:"omitempty,max=2000"`
+	VisualBrief *string `json:"visual_brief,omitempty" binding:"omitempty,max=2000"`
+	// Redo 为 true 时，改完后立即把该镜头重新渲染一遍。
+	// 分开是刻意的：审核员可能只想先修正文案、稍后再统一重渲。
+	Redo bool `json:"redo"`
+	// Comment 是随重做一起回灌给编码智能体的意见（可选）。
+	Comment string `json:"comment,omitempty" binding:"max=2000"`
+}
+
+// PatchShotResponse 返回编辑与重做受理结果。
+type PatchShotResponse struct {
+	JobID   string            `json:"job_id"`
+	ShotID  string            `json:"shot_id"`
+	Status  domain.ShotStatus `json:"status"`
+	Attempt int               `json:"attempt,omitempty"`
+	TaskID  string            `json:"task_id,omitempty"`
+	// Changed 列出真正被修改的字段，便于前端提示与审计。
+	Changed []string `json:"changed"`
 }
 
 // HealthResponse 是 /healthz 与 /readyz 的响应体。

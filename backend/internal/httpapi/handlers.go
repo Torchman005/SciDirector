@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -383,7 +384,161 @@ func (s *Server) HandleApproveShot(c *gin.Context) {
 		logging.FromContext(ctx).Warn("写入通过事件失败", "shot_id", shotID, "error", err.Error())
 	}
 
-	respondOK(c, ApproveResponse{JobID: jobID, ShotID: shotID, Status: domain.StatusApproved})
+	// 放行之后必须**主动把合成任务入队**。
+	//
+	// 只把 Job.Status 改成 COMPOSING 是不够的：状态本身不会驱动任何东西，
+	// 必须有人把任务放进队列。worker 只在「处理单镜头重做」的收尾处会
+	// 顺带入队合成，而人工放行是走 API 的 —— 没有这一步，最后一个熔断镜头
+	// 被放行后任务会**永远停在 COMPOSING**，前端看着进度 100% 却永远等不到成片。
+	// 这是熔断出口（C5）能真正闭环的最后一环。
+	if job.Status == domain.JobComposing {
+		taskID, qerr := s.deps.Queue.EnqueueComposeJob(ctx, &queue.ComposeJobPayload{
+			JobID: jobID, EnqueuedAt: time.Now().UTC(),
+		})
+		if qerr != nil {
+			mapError(c, qerr)
+			return
+		}
+		logging.FromContext(ctx).Info("所有镜头已通过，合成任务已入队",
+			"job_id", jobID, "task_id", taskID)
+		if _, err := s.deps.Store.AppendEvent(ctx, &domain.Event{
+			JobID: jobID, Node: "compose",
+			Message:   "所有镜头均已通过，开始合成成片",
+			Progress:  job.ProgressRatio(),
+			Timestamp: time.Now().UTC(),
+		}); err != nil {
+			logging.FromContext(ctx).Warn("写入合成事件失败", "error", err.Error())
+		}
+	}
+
+	respondOK(c, ApproveResponse{
+		JobID: jobID, ShotID: shotID, Status: domain.StatusApproved,
+		ComposeEnqueued: job.Status == domain.JobComposing,
+	})
+}
+
+// HandlePatchShot 修改分镜的文案字段，并可选择立即重做。
+//
+// 为什么需要它：审核员打回时常常发现**问题出在文案而不是画面** ——
+// 「画外音说'三种情况'但画面只画了两种」。此时重写整个镜头是浪费：
+// 改掉 narration 再重渲就够了，而导演智能体的原始意图得以保留。
+//
+// 与打回接口的分工：
+//   - 打回（reject）：画面不对，把意见回灌给编码智能体重写代码；
+//   - 编辑（patch）：**文案不对**，直接改掉分镜字段再重渲。
+//
+// 两者都会消耗一次 attempt 额度（当 Redo=true 时），口径一致。
+func (s *Server) HandlePatchShot(c *gin.Context) {
+	var req PatchShotRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		abortWith(c, http.StatusBadRequest, ErrCodeBadRequest,
+			"分镜编辑请求非法（字段长度上限 2000 字）", err)
+		return
+	}
+	if req.Narration == nil && req.VisualBrief == nil && !req.Redo {
+		abortWith(c, http.StatusBadRequest, ErrCodeBadRequest,
+			"没有需要变更的内容：请至少修改一个字段或指定 redo", nil)
+		return
+	}
+
+	jobID, shotID := c.Param("jobID"), c.Param("shotID")
+	ctx := c.Request.Context()
+
+	var (
+		changed    []string
+		newAttempt int
+		newStatus  domain.ShotStatus
+	)
+	job, err := s.deps.Store.UpdateJob(ctx, jobID, func(j *domain.Job) error {
+		shot := j.FindShot(shotID)
+		if shot == nil {
+			return errShotNotFound
+		}
+
+		// 文案字段：只有显式给出（非 nil）才改，因此「清空」也是一个合法操作。
+		if req.Narration != nil {
+			shot.Narration = strings.TrimSpace(*req.Narration)
+			changed = append(changed, "narration")
+		}
+		if req.VisualBrief != nil {
+			shot.VisualBrief = strings.TrimSpace(*req.VisualBrief)
+			changed = append(changed, "visual_brief")
+		}
+
+		if req.Redo {
+			next, terr := domain.Transition(shot.Status, domain.StatusRetrying)
+			if terr != nil {
+				return terr
+			}
+			shot.Status = next
+			shot.Attempt++ // 与打回一致：编辑后重做同样消耗一次额度
+			if req.Comment != "" {
+				shot.Feedbacks = append(shot.Feedbacks, domain.Feedback{
+					Passed:      false,
+					Source:      domain.FeedbackHuman,
+					Attempt:     shot.Attempt,
+					Issues:      []string{req.Comment},
+					Suggestions: []string{req.Comment},
+					CreatedAt:   time.Now().UTC(),
+				})
+			}
+			newAttempt = shot.Attempt
+			newStatus = shot.Status
+			j.Status = domain.JobRendering
+		}
+
+		shot.UpdatedAt = time.Now().UTC()
+		return nil
+	})
+	if err != nil {
+		if errors.Is(err, errShotNotFound) {
+			abortWith(c, http.StatusNotFound, ErrCodeNotFound, "分镜不存在", err)
+			return
+		}
+		mapError(c, err)
+		return
+	}
+
+	msg := "审核员修改了分镜文案"
+	if len(changed) > 0 {
+		msg += "（" + strings.Join(changed, "、") + "）"
+	}
+	if _, err := s.deps.Store.AppendEvent(ctx, &domain.Event{
+		JobID: jobID, ShotID: shotID, Node: "hitl",
+		Status:    newStatus,
+		Attempt:   newAttempt,
+		Message:   msg,
+		Progress:  job.ProgressRatio(),
+		Timestamp: time.Now().UTC(),
+	}); err != nil {
+		logging.FromContext(ctx).Warn("写入分镜编辑事件失败", "error", err.Error())
+	}
+
+	resp := PatchShotResponse{
+		JobID: jobID, ShotID: shotID, Status: domain.StatusApproved,
+		Attempt: newAttempt, Changed: changed,
+	}
+	if s2 := job.FindShot(shotID); s2 != nil {
+		resp.Status = s2.Status
+	}
+
+	if req.Redo {
+		taskID, qerr := s.deps.Queue.EnqueueRenderShot(ctx, &queue.RenderShotPayload{
+			JobID:        jobID,
+			ShotID:       shotID,
+			Attempt:      newAttempt,
+			HumanComment: req.Comment,
+			TriggeredBy:  "api",
+			EnqueuedAt:   time.Now().UTC(),
+		})
+		if qerr != nil {
+			mapError(c, qerr)
+			return
+		}
+		resp.TaskID = taskID
+	}
+
+	respondOK(c, resp)
 }
 
 // errShotNotFound 是 handler 内部哨兵，用于把「分镜不存在」与仓储错误区分开，
