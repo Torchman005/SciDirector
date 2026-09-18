@@ -65,6 +65,106 @@ def log(msg: str) -> None:
     print(f"[smoke-web] {msg}", flush=True)
 
 
+def layout_problems(page) -> list[str]:
+    """程序化地检查**布局**是否自洽。
+
+    为什么需要它：C1/C3 的核心断言（进度、统计、补齐）都只看**数据**，
+    而「页面看起来在工作」的故障里有一大半是纯布局问题 ——
+    元素越出视口、文本被裁掉、进度条与统计对不上、行与行重叠。
+    这些既不会报错、也不会让数据断言失败，却能让人根本用不了这个页面。
+
+    它**不能**替代人看画面（好不好看、信息密度是否合适仍然要人判断），
+    只是把「机器能判定的那部分丑陋」先挡掉。
+    """
+    return page.evaluate(
+        """() => {
+          const problems = [];
+          const vw = window.innerWidth;
+          const de = document.documentElement;
+
+          // 1) 整页不该横向溢出：出现横向滚动条通常意味着有元素没约束住宽度
+          if (de.scrollWidth > vw + 2) {
+            problems.push(`页面横向溢出：scrollWidth=${de.scrollWidth} > 视口 ${vw}`);
+          }
+
+          // 2) 关键元素必须存在、有可见尺寸、且在视口内
+          const required = [['.row-stat', '统计行'], ['.progress', '进度条'], ['.conn', '连接状态']];
+          for (const [sel, name] of required) {
+            const el = document.querySelector(sel);
+            if (!el) { problems.push(`缺少关键元素 ${sel}（${name}）`); continue; }
+            const r = el.getBoundingClientRect();
+            if (r.width < 10 || r.height < 4) {
+              problems.push(`${name} 尺寸异常：${Math.round(r.width)}x${Math.round(r.height)}`);
+            }
+            if (r.right > vw + 2) {
+              problems.push(`${name} 右边越出视口：right=${Math.round(r.right)} > ${vw}`);
+            }
+          }
+
+          // 3) 进度条宽度必须与统计文字里的百分比自洽 ——
+          //    它们是同一份状态的两种呈现，对不上就是「界面自相矛盾」。
+          const bar = document.querySelector('.progress-bar');
+          const stat = document.querySelector('.row-stat');
+          if (bar && stat && bar.parentElement) {
+            const m = stat.innerText.match(/进度\s*(\d+)%/);
+            const track = bar.parentElement.getBoundingClientRect().width;
+            if (m && track > 0) {
+              const want = parseInt(m[1], 10);
+              const got = Math.round(bar.getBoundingClientRect().width / track * 100);
+              if (Math.abs(got - want) > 3) {
+                problems.push(`进度条宽度 ${got}% 与统计文字 ${want}% 不一致`);
+              }
+            }
+          }
+
+          // 4) 分镜行：有可见高度、不越界、彼此不重叠
+          const rows = [...document.querySelectorAll('.shot-row')];
+
+          // 4a) 自校验：统计说有 N 个分镜、表格里却一行都没有 —— 这既是真缺陷
+          //     （用户能看到统计却看不到明细），也顺带证明这一组检查**确实选到了元素**。
+          //     一个「什么都没检查到」的布局检查比没有检查更糟。
+          if (stat) {
+            const totalMatch = stat.innerText.match(/共\s*(\d+)\s*个分镜/);
+            if (totalMatch) {
+              const total = parseInt(totalMatch[1], 10);
+              if (total > 0 && rows.length === 0) {
+                problems.push(`统计显示共 ${total} 个分镜，但表格里一行都没有（选择器选不到内容，或明细没渲染）`);
+              }
+              if (total > 0 && rows.length !== total) {
+                problems.push(`统计显示 ${total} 个分镜，表格里却有 ${rows.length} 行 —— 两者必须一致`);
+              }
+            }
+          }
+          let prevBottom = -1;
+          rows.forEach((el, i) => {
+            const r = el.getBoundingClientRect();
+            if (r.height < 20) {
+              problems.push(`分镜行 #${i} 高度仅 ${Math.round(r.height)}px，内容可能没渲染出来`);
+            }
+            if (r.right > vw + 2) {
+              problems.push(`分镜行 #${i} 右边越出视口`);
+            }
+            if (r.top < prevBottom - 1) {
+              problems.push(`分镜行 #${i} 与上一行重叠（top=${Math.round(r.top)} < 上一行 bottom=${Math.round(prevBottom)}）`);
+            }
+            prevBottom = Math.max(prevBottom, r.bottom);
+          });
+
+          // 5) 长文本被裁切（只在 overflow:hidden 时才算问题，省略号是有意设计）
+          for (const [sel, name] of [['.shot-narration', '画外音'], ['.shot-brief', '画面说明']]) {
+            document.querySelectorAll(sel).forEach((el, i) => {
+              const cs = getComputedStyle(el);
+              if (cs.overflow === 'hidden' && el.scrollHeight > el.clientHeight + 2) {
+                problems.push(`${name} #${i} 文本被裁切（scrollHeight=${el.scrollHeight} > clientHeight=${el.clientHeight}）`);
+              }
+            });
+          }
+
+          return problems;
+        }"""
+    )
+
+
 def ui_state(page) -> dict:
     """把页面上「用户能看到的」东西抓成一个结构，用于断言。"""
     return page.evaluate(
@@ -189,6 +289,41 @@ def main() -> int:
 
         page.screenshot(path=str(shots_dir / "c1-99-final.png"), full_page=True)
 
+        # 布局自洽性：数据断言全绿但页面错位，是很容易漏掉的一类失败
+        for prob in layout_problems(page):
+            failures.append(f"C1 布局：{prob}")
+
+        # 负向对照：**故意注入一个坏元素**，确认检查器真的会报。
+        # 一个永远返回「没问题」的检查器比没有检查更糟 —— 它会让人以为
+        # 「布局已经验证过了」。这与本项目在别处踩过的「探测谎报可用」是同一类问题。
+        page.evaluate(
+            """() => {
+              const row = document.createElement('div');
+              row.className = 'shot-row';
+              row.id = '__probe_degenerate_row';
+              row.style.height = '2px';
+              document.body.appendChild(row);
+            }"""
+        )
+        injected = layout_problems(page)
+        page.evaluate(
+            """() => {
+              const el = document.getElementById('__probe_degenerate_row');
+              if (el) el.remove();
+            }"""
+        )
+        if not injected:
+            failures.append(
+                "布局检查器的负向对照失败：注入一个 2px 高的分镜行之后仍然报「无问题」，"
+                "说明这组检查是空转的（选择器没选到东西，或条件恒为假）"
+            )
+        else:
+            log(f"C1 布局检查器负向对照通过：注入坏元素后识别出 {len(injected)} 个问题")
+
+        # 清理后必须回到「无问题」，否则说明检查器受污染、后续判断不可信。
+        if layout_problems(page):
+            failures.append("布局检查器在移除注入元素后仍报问题，状态被污染")
+
         if not shot_count_trace:
             failures.append("C1：始终没读到进度条，页面可能没进入任务视图")
         else:
@@ -249,6 +384,8 @@ def main() -> int:
         page.screenshot(path=str(shots_dir / "c3-01-offline.png"), full_page=True)
         offline = ui_state(page)
         log(f"C3 断网中：progress={offline['progress']} conn={offline['connText']!r}")
+        for prob in layout_problems(page):
+            failures.append(f"C3-断网 布局：{prob}")
 
         if args.api_restart_cmd:
             subprocess.Popen(["bash", "-c", args.api_restart_cmd + " up"], start_new_session=True).wait()
