@@ -102,6 +102,24 @@ class TTSProvider(Protocol):
         ...
 
 
+def write_audio(out_path: str | Path, data: bytes) -> Path:
+    """把音频写到磁盘，返回**绝对路径**。
+
+    为什么必须 resolve：这个路径要跨进程交给 Go worker，而两个进程的 CWD 不同
+    （ai 服务跑在 `ai/`，worker 跑在 `backend/`）。相对路径在生产者这边看着没问题，
+    到了消费者那边就变成「文件不存在」—— 实测踩到过一次，
+    表现是 worker 日志里 `配音文件不存在 ... no such file or directory`，
+    而且它**只降级不报错**（成片照出，只是没有声音），极易被当成「TTS 没配好」。
+
+    本项目 §9 早就记过同源的坑（「传给子进程的路径必须 .resolve()」），
+    这里是它在**跨进程**场景下的变体。修在写入方，四个适配器就都受保护了。
+    """
+    path = Path(out_path).resolve()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    return path
+
+
 # ---------------------------------------------------------------------------
 # 时间戳 sidecar
 # ---------------------------------------------------------------------------

@@ -365,3 +365,38 @@ class TestEdgeRealSynthesis:
         with pytest.raises(TTSError) as exc:
             EdgeTTSProvider().synthesize("   ", out_path=tmp_path / "x.mp3")
         assert exc.value.retryable is False
+
+
+class TestOutputPathIsAbsolute:
+    """回归：产出的音频路径必须是**绝对路径**。
+
+    踩过的坑：ai 服务跑在 `ai/`、Go worker 跑在 `backend/`，
+    生产者给出的相对路径到了消费者那边就是「文件不存在」——
+    而 worker 只降级不报错（成片照出、只是没有声音），极难归因。
+    本项目 §9 记过同源的坑（子进程路径必须 resolve），这里是跨进程的变体。
+    """
+
+    def test_relative_out_path_becomes_absolute(self, tmp_path: Path, monkeypatch) -> None:
+        monkeypatch.chdir(tmp_path)
+        provider = FishAudioTTSProvider(api_key="k")
+        monkeypatch.setattr(
+            "scidirector_ai.tts.fish.httpx.post",
+            lambda *a, **k: _FakeResponse(200, None, content=b"ID3-audio"),
+        )
+
+        res = provider.synthesize("你好", out_path=Path("relative/shot0.mp3"))
+
+        assert res.audio_path.is_absolute(), f"音频路径必须是绝对路径，实际 {res.audio_path}"
+        assert res.audio_path.is_file()
+
+    def test_sidecar_path_is_absolute_too(self, tmp_path: Path, monkeypatch) -> None:
+        """sidecar 跟着音频走：音频绝对了，sidecar 也必须绝对，否则 Go 同样读不到。"""
+        monkeypatch.chdir(tmp_path)
+        provider = FishAudioTTSProvider(api_key="k")
+        monkeypatch.setattr(
+            "scidirector_ai.tts.fish.httpx.post",
+            lambda *a, **k: _FakeResponse(200, None, content=b"ID3-audio"),
+        )
+        res = provider.synthesize("你好", out_path=Path("rel/x.mp3"))
+        side = write_marks_sidecar(res.audio_path, res)
+        assert side.is_absolute() and side.is_file()

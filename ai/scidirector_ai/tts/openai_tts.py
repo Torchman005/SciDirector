@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .base import SynthesisResult, TTSError
+from .base import SynthesisResult, TTSError, write_audio
 
 DEFAULT_MODEL = "gpt-4o-mini-tts"
 DEFAULT_VOICE = "alloy"
@@ -129,11 +129,12 @@ class OpenAITTSProvider:
         if not audio:
             raise TTSError("OpenAI TTS 返回了空音频", retryable=True, provider=self.name)
 
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_bytes(audio)
+        # 统一走 write_audio：它会 resolve 并返回绝对路径，
+        # 跨进程交给 Go worker 时相对路径必然失效。
+        written = write_audio(out_path, audio)
 
         # duration 由调用方用 ffprobe 探测：这里不猜时长。
         # 猜错的后果是字幕与音频错位，而 ffprobe 就在手边。
         return SynthesisResult(
-            audio_path=out_path, duration_sec=0.0, marks=(), provider=self.name
+            audio_path=written, duration_sec=0.0, marks=(), provider=self.name
         )

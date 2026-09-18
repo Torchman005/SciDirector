@@ -31,7 +31,7 @@ from pathlib import Path
 
 import httpx
 
-from .base import SynthesisResult, TTSError
+from .base import SynthesisResult, TTSError, write_audio
 
 DEFAULT_ENDPOINT = "https://openspeech.bytedance.com/api/v1/tts"
 DEFAULT_CLUSTER = "volcano_tts"
@@ -180,8 +180,9 @@ class DoubaoTTSProvider:
         if not audio:
             raise TTSError("豆包 TTS 解码出空音频", retryable=True, provider=self.name)
 
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_bytes(audio)
+        # 统一走 write_audio：它会 resolve 并返回绝对路径，
+        # 跨进程交给 Go worker 时相对路径必然失效。
+        written = write_audio(out_path, audio)
         return SynthesisResult(
-            audio_path=out_path, duration_sec=0.0, marks=(), provider=self.name
+            audio_path=written, duration_sec=0.0, marks=(), provider=self.name
         )

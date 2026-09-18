@@ -36,6 +36,7 @@ from ..media import MediaToolError, extract_frames
 from ..pbconv import shots_payload_json
 from ..renderer import Renderer, RendererError, RenderRequest, build_renderer
 from ..sandbox.runner import SandboxRunner
+from ..tts.base import write_marks_sidecar
 from ..schemas import CriticFeedback, RenderArtifact, ShotSpec, StyleGuide
 from .state import (
     NODE_ADVANCE,
@@ -86,6 +87,9 @@ class PipelineDeps:
     coder: CoderAgent
     critic: CriticAgent
     runner: SandboxRunner
+    #: TTS 服务商。为 None 表示不合成配音 —— 缺省必须是一条能跑通的路径，
+    #: 没配 TTS 不该让流水线失败，也不该产出任何额外文件。
+    tts: object | None = None
     _renderers: dict[str, Renderer] = field(default_factory=dict, repr=False)
 
     def renderer(self, engine: str) -> Renderer:
@@ -375,6 +379,14 @@ class PipelineNodes:
             render_cost_sec=round(result.render_cost_sec, 3),
         )
 
+        # 配音：与抽帧同样的降级姿势 —— 失败只降级，不让镜头失败。
+        #
+        # 为什么不让它失败：画面才是主体。一个没有旁白的镜头仍是可用产物，
+        # 而「因为 TTS 抖动就丢掉整个镜头」是把外部依赖的问题升级成内容事故。
+        # 但**必须留痕**：不配音是可见的质量差异（成片没声音），
+        # 静默降级会让人以为「TTS 接好了但没生效」，方向完全错。
+        artifact.audio_path = self._synthesize_narration(shot, out_dir)
+
         artifacts = dict(state.get("artifacts") or {})
         artifacts[shot.shot_id] = artifact
         elapsed = time.monotonic() - started
@@ -406,6 +418,62 @@ class PipelineNodes:
     # ==================================================================
     # critique：VLM 审查
     # ==================================================================
+
+
+    def _synthesize_narration(self, shot: "ShotSpec", out_dir: Path) -> str:
+        """为该镜头合成配音，返回音频路径；未启用或失败时返回空串。
+
+        失败**只降级不抛出**：画面才是主体，没有旁白的镜头仍是可用产物，
+        而「因为 TTS 抖动就丢掉整个镜头」是把外部依赖的问题升级成内容事故。
+        但一定留痕 —— 成片没声音是可见的质量差异，静默降级会让人误以为
+        「TTS 接好了却没生效」，排查方向会完全跑偏。
+        """
+        provider = self.deps.tts
+        if provider is None:
+            return ""
+
+        narration = (shot.narration or "").strip()
+        if not narration:
+            return ""
+
+        # resolve：这个路径要跨进程交给 Go worker，两边的 CWD 不同，
+        # 相对路径在生产端看着没问题、到消费端就是「文件不存在」。
+        out_path = out_dir.resolve() / "narration.mp3"
+        try:
+            result = provider.synthesize(narration, out_path=out_path)
+        except Exception as exc:  # noqa: BLE001 - TTSError 或适配器未预期的异常
+            logger.warning(
+                "配音合成失败，该镜头将没有配音",
+                extra={
+                    "shot_id": shot.shot_id,
+                    "provider": getattr(provider, "name", "?"),
+                    "retryable": getattr(exc, "retryable", None),
+                    "error": str(exc)[:300],
+                },
+            )
+            return ""
+
+        # 时间戳 sidecar：Go 侧据此把字幕对到真实句子起止。
+        # 不给时间戳的服务商也写一份（marks 为空），这样 Go 能区分
+        # 「这家本来就不给时间戳」与「文件丢了」—— 两者的排查方向完全不同。
+        try:
+            write_marks_sidecar(out_path, result)
+        except OSError as exc:
+            logger.warning(
+                "时间戳 sidecar 写入失败，字幕将回退到按镜头时长对齐",
+                extra={"shot_id": shot.shot_id, "error": str(exc)[:200]},
+            )
+
+        logger.info(
+            "配音已合成",
+            extra={
+                "shot_id": shot.shot_id,
+                "provider": result.provider,
+                "duration_sec": round(result.duration_sec, 2),
+                "marks": len(result.marks),
+            },
+        )
+        return str(result.audio_path)
 
     def critique(self, state: PipelineState) -> dict[str, Any]:
         """用 VLM 审查抽帧，决定通过、重做还是转人工。"""

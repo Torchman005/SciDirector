@@ -33,7 +33,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from .base import SentenceMark, SynthesisResult, TTSError
+from .base import SentenceMark, SynthesisResult, TTSError, write_audio
 
 #: Edge TTS 的 offset/duration 单位是 100 纳秒。
 _TICKS_PER_SEC = 10_000_000
@@ -113,12 +113,13 @@ class EdgeTTSProvider:
             # 拿到 0 字节却「成功」是最危险的结果：后续会把空音频当成成片音轨。
             raise TTSError("Edge TTS 返回了空音频", retryable=True, provider=self.name)
 
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_bytes(audio)
+        # 统一走 write_audio：它会 resolve 并返回绝对路径，
+        # 跨进程交给 Go worker 时相对路径必然失效。
+        written = write_audio(out_path, audio)
 
         duration = max((m.end_sec for m in marks), default=0.0)
         return SynthesisResult(
-            audio_path=out_path,
+            audio_path=written,
             duration_sec=duration,
             marks=tuple(marks),
             provider=self.name,

@@ -28,6 +28,7 @@ from ..config import Settings
 from ..llm import LLMClient
 from ..logging import get_logger
 from ..sandbox.runner import SandboxRunner
+from ..tts.factory import build_tts_provider
 from .checkpoint import CheckpointHandle, build_checkpointer
 from .nodes import (
     PipelineDeps,
@@ -154,6 +155,10 @@ class PipelineRunner:
             # 注意：SandboxRunner 是无状态的（资源上限由每次调用的
             # ResourceLimits 决定），因此不接收 settings。
             runner=SandboxRunner(),
+            # TTS：缺省关闭（SCID_TTS_PROVIDER 为空），此时为 None，
+            # 渲染节点不会合成任何音频、也不会产生额外文件 ——
+            # 与既有行为逐字节一致。
+            tts=build_tts_provider(settings),
         )
         self._checkpoint: CheckpointHandle | None = None
         self._app: Any = None
