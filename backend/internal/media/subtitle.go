@@ -241,12 +241,46 @@ func splitLongSegment(seg string, maxChars int) []string {
 // 分配规则：同一镜头内按 speechWeight 比例切分窗口时长。
 // 长句多分时间、短句少分，从而让字幕与语速大致同步。
 //
+// **这是「该镜头还没有真实配音」时的估算路径**：它假设画外音正好铺满整个窗口。
+// 一旦拿到了配音时长，就应当改用 PlanCuesWithNarration。
+//
 // 两个必须处理的边界：
 //  1. **窗口太短**：当窗口时长不足以让每条字幕都达到 MinCueSec 时，
 //     继续拆分只会得到一堆一闪而过的碎片，因此合并成更少的条数；
 //  2. **单条太长**：超过 MaxCueSec 的条数会被继续拆，
 //     否则会出现「一句话在屏幕上挂了 10 秒」。
 func PlanCues(windows []Window, narrations []string, opt SubtitleOptions) []Cue {
+	return planCues(windows, narrations, nil, opt)
+}
+
+// PlanCuesWithNarration 与 PlanCues 相同，但字幕按**真实配音时长**排布。
+//
+// narrationSec[i] 是第 i 个镜头配音的实际时长（用 ffprobe 探测，见 Runner.Probe）。
+// `<= 0` 表示该镜头没有配音，回退成「铺满整个窗口」—— 也就是 PlanCues 的行为，
+// 因此「部分镜头有配音、部分没有」也能正常工作。
+//
+// **为什么必须按真实时长而不是按文本长度估算**：画面时长与配音时长不相等。
+// 一个 8 秒的镜头可能只有 5 秒旁白，剩下 3 秒是留白。按窗口铺满会把最后一句字幕
+// **拉伸着挂在屏幕上 3 秒** —— 声音早就停了、观众也早就读完了，字幕却还在。
+// 这是「字幕与语音不同步」最典型的形态，而它在只看文本的单测里永远暴露不出来。
+//
+// 反过来，配音比画面长时字幕会被夹到窗口末尾（字幕不能侵占下一个镜头），
+// 这同时是一个信号：**该镜头的画面需要加长**。
+func PlanCuesWithNarration(
+	windows []Window,
+	narrations []string,
+	narrationSec []float64,
+	opt SubtitleOptions,
+) []Cue {
+	return planCues(windows, narrations, narrationSec, opt)
+}
+
+func planCues(
+	windows []Window,
+	narrations []string,
+	narrationSec []float64,
+	opt SubtitleOptions,
+) []Cue {
 	if opt.MaxCharsPerCue <= 0 || opt.MinCueSec <= 0 || opt.MaxCueSec <= 0 {
 		opt = DefaultSubtitleOptions()
 	}
@@ -264,6 +298,18 @@ func PlanCues(windows []Window, narrations []string, opt SubtitleOptions) []Cue 
 			continue
 		}
 
+		// 字幕真正排布的区间：有配音就只覆盖配音那一段，末尾留白。
+		span := w
+		if i < len(narrationSec) && narrationSec[i] > 0 {
+			end := w.Start + narrationSec[i]
+			if end > w.End {
+				end = w.End // 配音超出画面：夹到窗口末尾，不侵占下一个镜头
+			}
+			if end > span.Start {
+				span.End = end
+			}
+		}
+
 		var segs []string
 		for _, s := range splitSentences(text) {
 			segs = append(segs, splitLongSegment(s, opt.MaxCharsPerCue)...)
@@ -272,15 +318,15 @@ func PlanCues(windows []Window, narrations []string, opt SubtitleOptions) []Cue 
 			continue
 		}
 
-		// 条数上限：窗口能容纳的字幕条数（受最短显示时长约束）。
+		// 条数上限：这段时间能容纳的字幕条数（受最短显示时长约束）。
 		// 例如 2 秒的窗口、最短 0.8 秒，最多放 2 条。
-		maxCues := int(w.Duration() / opt.MinCueSec)
+		maxCues := int(span.Duration() / opt.MinCueSec)
 		if maxCues < 1 {
 			maxCues = 1
 		}
 		segs = mergeToAtMost(segs, maxCues)
 
-		cues = append(cues, allocate(w, segs)...)
+		cues = append(cues, allocate(span, segs)...)
 	}
 
 	return cues

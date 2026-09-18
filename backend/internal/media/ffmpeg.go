@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/itJinYu/SciDirector/backend/internal/config"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,8 +22,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/itJinYu/SciDirector/backend/internal/config"
 )
 
 // ErrFFmpegNotFound 表示可执行文件不存在，属于部署配置错误，应当快速失败。
@@ -725,4 +724,164 @@ func (s *Semaphore) Acquire(ctx context.Context) (func(), error) {
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+}
+
+// ---------------------------------------------------------------------------
+// 整片配音轨
+// ---------------------------------------------------------------------------
+
+// NarrationPart 是一个镜头在配音轨里的输入。
+type NarrationPart struct {
+	// AudioPath 是该镜头的配音文件（TTS 产出）。为空表示该镜头没有配音。
+	AudioPath string
+	// TargetSec 是该镜头在成片时间轴上的时长。音频会被**补齐或截断**到它，
+	// 这样拼出来的整轨与画面严格等长。
+	TargetSec float64
+}
+
+// narrationSampleRate / narrationChannels 是整轨的统一音频规格。
+//
+// 必须统一：concat 与 acrossfade 都要求各段的采样率与声道数一致，
+// 不一致时 ffmpeg 往往不报错、只是产出错位或爆音的成片。
+const (
+	narrationSampleRate = 48000
+	narrationChannels   = 2
+)
+
+// BuildNarrationTrack 把逐镜头配音拼成**一条与成片等长的整轨**。
+//
+// 为什么是「逐镜头合成 → 各自对齐到镜头时长 → concat」，而不是把全片文本
+// 一次性丢给 TTS：
+//  1. 字幕需要**每个镜头的真实配音时长**才能排准（见 PlanCuesWithNarration）；
+//     逐镜头合成天然产出这个信息，整段合成则拿不到；
+//  2. 镜头被人工打回重做时，只需重做它那一段音频，不必整片重合成 ——
+//     与局部重渲染是同一个降本思路。
+//
+// 没有配音的镜头补**等长静音**，而不是跳过：
+// 跳过会让整轨比画面短，其后每一个镜头的声音都会整体前移 ——
+// 「某段没声音」只是小瑕疵，「全片音画错位」是废片。
+func (r *Runner) BuildNarrationTrack(ctx context.Context, parts []NarrationPart, out string) error {
+	if len(parts) == 0 {
+		return fmt.Errorf("media: 配音轨至少需要一个片段")
+	}
+
+	workDir := filepath.Dir(out)
+	if err := os.MkdirAll(workDir, 0o755); err != nil {
+		return fmt.Errorf("media: 创建配音轨目录失败: %w", err)
+	}
+
+	segPaths := make([]string, 0, len(parts))
+	for i, part := range parts {
+		if part.TargetSec <= 0 {
+			return fmt.Errorf("media: 第 %d 段配音的目标时长必须为正，实际 %.3f", i, part.TargetSec)
+		}
+		seg := filepath.Join(workDir, fmt.Sprintf("narration_%03d.m4a", i))
+
+		var err error
+		if strings.TrimSpace(part.AudioPath) == "" {
+			err = r.buildSilentSegment(ctx, part.TargetSec, seg)
+		} else {
+			err = r.buildNarrationSegment(ctx, part.AudioPath, part.TargetSec, seg)
+		}
+		if err != nil {
+			return fmt.Errorf("media: 生成第 %d 段配音失败: %w", i, err)
+		}
+		segPaths = append(segPaths, seg)
+	}
+
+	listPath := filepath.Join(workDir, "narration.txt")
+	if err := WriteConcatList(listPath, segPaths); err != nil {
+		return err
+	}
+	// 音频 concat 用 -c copy 风险高（各段编码器延迟可能不同），统一重编码，
+	// 代价是几秒钟的 CPU，换来的是「不会莫名其妙少几十毫秒」。
+	if err := r.run(ctx,
+		"-hide_banner", "-nostdin", "-y",
+		"-f", "concat", "-safe", "0",
+		"-i", listPath,
+		"-c:a", "aac", "-ar", fmt.Sprintf("%d", narrationSampleRate),
+		"-ac", fmt.Sprintf("%d", narrationChannels),
+		out,
+	); err != nil {
+		return fmt.Errorf("media: 拼接配音轨失败: %w", err)
+	}
+	return nil
+}
+
+// buildNarrationSegment 把一段配音归一化到目标时长。
+//
+// `apad` 先把音频无限补静音，再由 `-t` 截到目标时长：
+// 音频偏短 → 补静音；音频偏长 → 截断。两者都让这一段与画面严格等长。
+func (r *Runner) buildNarrationSegment(ctx context.Context, in string, targetSec float64, out string) error {
+	if err := r.run(ctx,
+		"-hide_banner", "-nostdin", "-y",
+		"-i", in,
+		"-af", "apad",
+		"-t", fmt.Sprintf("%.3f", targetSec),
+		"-ar", fmt.Sprintf("%d", narrationSampleRate),
+		"-ac", fmt.Sprintf("%d", narrationChannels),
+		"-c:a", "aac",
+		out,
+	); err != nil {
+		return fmt.Errorf("media: 归一化配音段失败 %s: %w", in, err)
+	}
+	return nil
+}
+
+// buildSilentSegment 生成一段等长静音，用于没有配音的镜头。
+func (r *Runner) buildSilentSegment(ctx context.Context, targetSec float64, out string) error {
+	if err := r.run(ctx,
+		"-hide_banner", "-nostdin", "-y",
+		"-f", "lavfi",
+		"-i", fmt.Sprintf("anullsrc=r=%d:cl=stereo", narrationSampleRate),
+		"-t", fmt.Sprintf("%.3f", targetSec),
+		"-c:a", "aac",
+		out,
+	); err != nil {
+		return fmt.Errorf("media: 生成静音段失败: %w", err)
+	}
+	return nil
+}
+
+// ProbeAudio 探测一个**纯音频**文件的时长（配音轨用），单位秒。
+//
+// 为什么不复用 Probe：Probe 是「渲染产物校验器」，它**要求存在视频流** ——
+// 一个只有音频的文件在它眼里就是无效产物。这条校验对镜头片段是对的，
+// 但对配音文件不适用，也不该为了配音去放宽它。
+// 因此配音时长走这条独立的、只读 format.duration 的路径。
+func (r *Runner) ProbeAudio(ctx context.Context, path string) (float64, error) {
+	if _, err := os.Stat(path); err != nil {
+		return 0, fmt.Errorf("media: 配音文件不存在 %s: %w", path, err)
+	}
+
+	release, err := r.acquire(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer release()
+
+	cmd, cancel := r.newCmd(ctx, r.ffprobeBin,
+		"-v", "error",
+		"-show_entries", "format=duration",
+		"-of", "default=nw=1:nk=1",
+		path,
+	)
+	defer cancel()
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return 0, fmt.Errorf("media: ffprobe 被取消: %w", ctx.Err())
+		}
+		return 0, fmt.Errorf("media: 探测配音时长失败 %s: %w\nstderr: %s",
+			path, err, tail(stderr.String(), 500))
+	}
+
+	sec, perr := strconv.ParseFloat(strings.TrimSpace(stdout.String()), 64)
+	if perr != nil || sec <= 0 {
+		return 0, fmt.Errorf("media: 配音时长非法 %s: %q", path, strings.TrimSpace(stdout.String()))
+	}
+	return sec, nil
 }

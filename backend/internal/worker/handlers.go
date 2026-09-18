@@ -85,6 +85,10 @@ type shotItem struct {
 	index     int    // 分镜序号，决定在成片中的位置
 	path      string // 视频文件路径
 	narration string // 画外音原文，字幕来源
+	// audioPath 是该镜头的配音文件（TTS 产出），为空表示没有。
+	// 它来自渲染产物自带的 audio_path —— 那条链路早就通了，
+	// 只是此前没有任何东西往里写（全片配音未接入）。
+	audioPath string
 }
 
 // subtitleTailMarginSec 是字幕末尾安全边距。
@@ -139,6 +143,7 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 			index:     s.Index,
 			path:      s.Artifact.VideoPath,
 			narration: s.Narration,
+			audioPath: s.Artifact.AudioPath,
 		})
 	}
 	if len(items) == 0 {
@@ -258,6 +263,49 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 		}
 	}
 
+	// 阶段三之前：构建整片配音轨。
+	//
+	// 触发条件是「至少有一个镜头带了配音」。没有配音时**什么都不做**，
+	// 缺省路径与 TTS 接入前完全一致（无配音、字幕按文本估算）。
+	//
+	// 逐镜头对齐到各自的画面时长后拼成整轨，而不是把全片文本一次合成：
+	// 这样字幕能拿到每个镜头的真实配音时长（见 PlanCuesWithNarration），
+	// 且某个镜头被打回重做时只需重做它那一段音频。
+	narrationSec := make([]float64, len(items))
+	narrationTrack := ""
+	{
+		anyNarration := false
+		for i := range items {
+			if strings.TrimSpace(items[i].audioPath) == "" {
+				continue
+			}
+			anyNarration = true
+			sec, aerr := p.media.ProbeAudio(ctx, items[i].audioPath)
+			if aerr != nil {
+				lg.Warn("探测配音时长失败，该镜头回退到按文本估算",
+					"shot", items[i].index, "path", items[i].audioPath, "error", aerr.Error())
+				continue
+			}
+			narrationSec[i] = sec
+		}
+
+		if anyNarration {
+			parts := make([]media.NarrationPart, len(items))
+			for i := range items {
+				parts[i] = media.NarrationPart{AudioPath: items[i].audioPath, TargetSec: durations[i]}
+			}
+			track := filepath.Join(workDir, "narration.m4a")
+			if berr := p.media.BuildNarrationTrack(ctx, parts, track); berr != nil {
+				// 配音轨失败不应让整部片子失败：画面与字幕才是主体，
+				// 观众看不到「配音轨构建失败」，但会立刻看到成片失败。
+				lg.Error("配音轨构建失败，将产出无配音成片", "error", berr.Error())
+			} else {
+				narrationTrack = track
+				lg.Info("配音轨已生成", "parts", len(parts), "path", track)
+			}
+		}
+	}
+
 	// 阶段三：生成字幕。
 	//
 	// 字幕窗口必须建立在**转场之后的**时间轴上：转场是交叠而非插入，
@@ -271,7 +319,10 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 			narrations[i] = items[i].narration
 		}
 		windows := media.PlanShotWindows(durations, plan)
-		cues := media.PlanCues(windows, narrations, p.subtitleOptions())
+		// 有配音时按**真实配音时长**排布字幕：画面 8 秒而旁白只有 5 秒时，
+		// 最后一句不该被拉伸着挂满那多出来的 3 秒。
+		// 没有配音的镜头填 0，PlanCuesWithNarration 会按窗口铺满（原行为）。
+		cues := media.PlanCuesWithNarration(windows, narrations, narrationSec, p.subtitleOptions())
 
 		// 用**探测到的**成片真实时长裁剪字幕，而不是用方案预测值 ——
 		// 两者会有毫秒级差异，而越界字幕是观众能直接看到的错误。
@@ -299,10 +350,10 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 
 	// 阶段四：产出最终文件。
 	//
-	// audioPath 仍传空：全片统一 TTS 配音尚未接入（见 ROADMAP 阶段三待办）。
-	// 接口已经就绪，届时只需把合成的音轨路径传进来，不必改动调用契约。
+	// narrationTrack 为空表示该任务没有配音（尚未接入 TTS 时的缺省情形），
+	// 此时 MuxFinal 按「视频自带音轨」处理 —— 调用契约不变。
 	finalPath := filepath.Join(workDir, "final.mp4")
-	if err := p.media.MuxFinal(ctx, mergedPath, "", subtitlePath, finalPath); err != nil {
+	if err := p.media.MuxFinal(ctx, mergedPath, narrationTrack, subtitlePath, finalPath); err != nil {
 		return fmt.Errorf("worker: 生成成片失败: %w", err)
 	}
 

@@ -441,3 +441,106 @@ func TestWriteSRT(t *testing.T) {
 		t.Errorf("文件内容不符：%q", string(b))
 	}
 }
+
+// ---------------------------------------------------------------------------
+// 按真实配音时长排布（TTS 接入后的路径）
+// ---------------------------------------------------------------------------
+
+// TestPlanCuesWithNarrationLeavesTailSilent 是本组最核心的一条。
+//
+// 画面 8 秒、配音只有 5 秒时，最后一句字幕**必须**在 5 秒处结束，
+// 而不是被拉伸着挂到 8 秒 —— 声音早就停了、观众也早就读完了，
+// 字幕却还在屏幕上，这是「字幕与语音不同步」最典型的形态。
+func TestPlanCuesWithNarrationLeavesTailSilent(t *testing.T) {
+	windows := []Window{{Start: 0, End: 8}}
+	narrations := []string{"第一句话。第二句话。"}
+	opt := SubtitleOptions{MaxCharsPerCue: 50, MinCueSec: 0.1, MaxCueSec: 100}
+
+	cues := PlanCuesWithNarration(windows, narrations, []float64{5.0}, opt)
+	if len(cues) == 0 {
+		t.Fatal("应当生成字幕")
+	}
+
+	last := cues[len(cues)-1]
+	if diff := last.End - 5.0; diff > 1e-6 || diff < -1e-6 {
+		t.Errorf("最后一条字幕应当结束于配音结束处 5.000s，实际 %.3f s"+
+			"（按窗口铺满会把末尾 3 秒的留白也算进字幕时长）", last.End)
+	}
+
+	// 反向对照：不传配音时长时，行为应与原先一致（铺满窗口）。
+	fallback := PlanCuesWithNarration(windows, narrations, []float64{0}, opt)
+	if got := fallback[len(fallback)-1].End; got != 8.0 {
+		t.Errorf("没有配音信息时应回退成铺满窗口（8.000），实际 %.3f", got)
+	}
+}
+
+// TestPlanCuesWithNarrationClampsToWindow 覆盖配音**比画面长**的情况。
+//
+// 字幕不能侵占下一个镜头的地盘 —— 那会让观众在两个镜头之间看到错位的文字。
+// 这种情况同时是一个信号：该镜头的画面需要加长。
+func TestPlanCuesWithNarrationClampsToWindow(t *testing.T) {
+	windows := []Window{{Start: 0, End: 4}, {Start: 4, End: 10}}
+	narrations := []string{"这句话的配音比画面长。", "第二个镜头。"}
+
+	cues := PlanCuesWithNarration(windows, narrations, []float64{9.0, 0}, DefaultSubtitleOptions())
+	for i, c := range cues {
+		if c.End > 4.0+1e-9 && c.Start < 4.0 {
+			t.Fatalf("cue %d [%.3f,%.3f] 跨越了镜头边界", i, c.Start, c.End)
+		}
+		if c.Start < -1e-9 {
+			t.Fatalf("cue %d 起点为负：%.3f", i, c.Start)
+		}
+	}
+	for _, c := range cues {
+		if c.Start >= 0 && c.End <= 4.0+1e-9 && c.Start < 4.0 {
+			if c.End > 4.0+1e-9 {
+				t.Errorf("第一个镜头的字幕越界到了 %.3f", c.End)
+			}
+		}
+	}
+}
+
+// TestPlanCuesWithNarrationPartial 覆盖「只有部分镜头有配音」。
+//
+// 现实中很容易出现：某些镜头是纯画面/环境音，本就没有旁白。
+// 不能因为缺一个值就整体退化成估算路径。
+func TestPlanCuesWithNarrationPartial(t *testing.T) {
+	windows := []Window{{Start: 0, End: 6}, {Start: 6, End: 12}}
+	narrations := []string{"有配音的镜头。", "没有配音的镜头。"}
+	opt := SubtitleOptions{MaxCharsPerCue: 50, MinCueSec: 0.1, MaxCueSec: 100}
+
+	cues := PlanCuesWithNarration(windows, narrations, []float64{2.0, 0}, opt)
+	if len(cues) < 2 {
+		t.Fatalf("两个镜头都应有字幕，实际 %d 条", len(cues))
+	}
+	// 第一个镜头：结束于配音结束处
+	if cues[0].End > 2.0+1e-6 {
+		t.Errorf("第一个镜头有配音（2.0s），字幕不应超过它，实际 %.3f", cues[0].End)
+	}
+	// 第二个镜头：无配音 → 铺满窗口
+	last := cues[len(cues)-1]
+	if last.End != 12.0 {
+		t.Errorf("第二个镜头没有配音，应当铺满到窗口末尾 12.000，实际 %.3f", last.End)
+	}
+}
+
+// TestPlanCuesWithNarrationShortNarrationMerges 覆盖「配音极短」。
+//
+// 配音只够放 1 条字幕时，内容必须合并而不是丢字。
+func TestPlanCuesWithNarrationShortNarrationMerges(t *testing.T) {
+	windows := []Window{{Start: 0, End: 10}}
+	narrations := []string{"第一句。第二句。第三句。"}
+
+	cues := PlanCuesWithNarration(windows, narrations, []float64{1.2}, DefaultSubtitleOptions())
+	if len(cues) != 1 {
+		t.Fatalf("1.2 秒只够一条字幕，实际 %d 条：%+v", len(cues), cues)
+	}
+	for _, want := range []string{"第一句", "第二句", "第三句"} {
+		if !strings.Contains(cues[0].Text, want) {
+			t.Errorf("合并后丢内容了：缺 %q，实际 %q", want, cues[0].Text)
+		}
+	}
+	if cues[0].End > 1.2+1e-6 {
+		t.Errorf("字幕不应超过配音结束处，实际 %.3f", cues[0].End)
+	}
+}

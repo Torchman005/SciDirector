@@ -4,15 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/itJinYu/SciDirector/backend/internal/config"
 	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/itJinYu/SciDirector/backend/internal/config"
 )
 
 // ---------------------------------------------------------------------------
@@ -902,4 +903,150 @@ func waitFor(t *testing.T, timeout time.Duration, cond func() bool, msg string) 
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatal(msg)
+}
+
+// ---------------------------------------------------------------------------
+// 配音轨（TTS 接入后走这条路径；这里用**合成音频**验证，不依赖任何 TTS 服务商）
+// ---------------------------------------------------------------------------
+
+// makeTone 生成一段已知时长的正弦音。
+//
+// 用真实 ffmpeg 生成而不是伪造文件：这条路径的价值就在于「真的把音频拼对了」，
+// 用假文件测等于什么都没测。
+func makeTone(t *testing.T, path string, seconds float64, freq int) {
+	t.Helper()
+	cmd := exec.Command("ffmpeg", "-hide_banner", "-nostdin", "-y",
+		"-f", "lavfi", "-i", fmt.Sprintf("sine=frequency=%d:duration=%.3f", freq, seconds),
+		"-ar", "48000", "-ac", "2", path)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("生成测试音频失败: %v\n%s", err, tail(string(out), 400))
+	}
+}
+
+// meanVolumeDB 用 volumedetect 量一段音频的平均音量（dB）。
+// 静音约 -91dB，有声音则明显更高 —— 用它来证明确实有音频被拼进去了。
+func meanVolumeDB(t *testing.T, path string) float64 {
+	t.Helper()
+	cmd := exec.Command("ffmpeg", "-hide_banner", "-nostdin", "-i", path,
+		"-af", "volumedetect", "-f", "null", "-")
+	out, _ := cmd.CombinedOutput()
+	m := regexp.MustCompile(`mean_volume:\s*(-?[\d.]+) dB`).FindStringSubmatch(string(out))
+	if m == nil {
+		t.Fatalf("无法从 volumedetect 输出里解析 mean_volume:\n%s", tail(string(out), 400))
+	}
+	v, err := strconv.ParseFloat(m[1], 64)
+	if err != nil {
+		t.Fatalf("解析 mean_volume 失败: %v", err)
+	}
+	return v
+}
+
+// probeAudioSec 用 ffprobe 读一个**纯音频**文件的时长。
+//
+// 不能复用 Runner.Probe：它用于校验渲染产物，会要求存在视频流
+// （`未找到有效的视频流`）—— 对纯音频轨不适用，也不该为它放宽那条校验。
+func probeAudioSec(t *testing.T, path string) float64 {
+	t.Helper()
+	cmd := exec.Command("ffprobe", "-v", "error",
+		"-show_entries", "format=duration", "-of", "default=nw=1:nk=1", path)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("ffprobe 失败: %v\n%s", err, tail(string(out), 300))
+	}
+	v, perr := strconv.ParseFloat(strings.TrimSpace(string(out)), 64)
+	if perr != nil {
+		t.Fatalf("解析音频时长失败 %q: %v", strings.TrimSpace(string(out)), perr)
+	}
+	return v
+}
+
+// TestBuildNarrationTrackPadsAndAligns 覆盖核心语义：
+// 每段配音都被**对齐到该镜头的画面时长**，整轨与画面严格等长。
+func TestBuildNarrationTrackPadsAndAligns(t *testing.T) {
+	requireFFmpeg(t)
+	r := newTestRunner(t, 2)
+	dir := t.TempDir()
+
+	tone := filepath.Join(dir, "shot0.wav")
+	makeTone(t, tone, 1.0, 440) // 配音只有 1 秒，但镜头有 2.5 秒
+
+	parts := []NarrationPart{
+		{AudioPath: tone, TargetSec: 2.5}, // 偏短 → 补静音
+		{AudioPath: "", TargetSec: 1.5},   // 无配音 → 等长静音
+	}
+	out := filepath.Join(dir, "narration.m4a")
+	if err := r.BuildNarrationTrack(context.Background(), parts, out); err != nil {
+		t.Fatalf("拼接配音轨失败: %v", err)
+	}
+
+	dur := probeAudioSec(t, out)
+	if diff := dur - 4.0; diff > 0.15 || diff < -0.15 {
+		t.Errorf("配音轨时长期望约 4.0s（2.5+1.5），实际 %.3f —— "+
+			"轨道与画面不等长会让其后每个镜头都音画错位", dur)
+	}
+
+	// 证明确实有音频被拼进来，而不是整轨都是静音。
+	if v := meanVolumeDB(t, out); v < -60 {
+		t.Errorf("整轨平均音量 %.1f dB，接近静音 —— 配音段没有被拼进去", v)
+	}
+}
+
+// TestBuildNarrationTrackTruncatesLongerAudio 覆盖配音**比画面长**的情况。
+//
+// 必须截断而不是任由它变长：一段偏长会让其后所有镜头的声音整体后移。
+func TestBuildNarrationTrackTruncatesLongerAudio(t *testing.T) {
+	requireFFmpeg(t)
+	r := newTestRunner(t, 2)
+	dir := t.TempDir()
+
+	loooong := filepath.Join(dir, "long.wav")
+	makeTone(t, loooong, 5.0, 660)
+
+	parts := []NarrationPart{
+		{AudioPath: loooong, TargetSec: 1.0}, // 5 秒配音塞进 1 秒画面
+		{AudioPath: "", TargetSec: 1.0},
+	}
+	out := filepath.Join(dir, "truncated.m4a")
+	if err := r.BuildNarrationTrack(context.Background(), parts, out); err != nil {
+		t.Fatalf("拼接配音轨失败: %v", err)
+	}
+
+	dur := probeAudioSec(t, out)
+	if diff := dur - 2.0; diff > 0.2 || diff < -0.2 {
+		t.Errorf("配音轨时长期望约 2.0s（超长音频被截断），实际 %.3f —— "+
+			"不截断会让其后所有镜头的声音整体后移", dur)
+	}
+}
+
+// TestBuildNarrationTrackAllSilentIsSilent 反向对照：
+// 全是没有配音的镜头时，整轨应当确实是静音 —— 否则说明「静音段」其实是噪声。
+func TestBuildNarrationTrackAllSilentIsSilent(t *testing.T) {
+	requireFFmpeg(t)
+	r := newTestRunner(t, 2)
+	dir := t.TempDir()
+
+	parts := []NarrationPart{{AudioPath: "", TargetSec: 1.0}, {AudioPath: "", TargetSec: 1.0}}
+	out := filepath.Join(dir, "silent.m4a")
+	if err := r.BuildNarrationTrack(context.Background(), parts, out); err != nil {
+		t.Fatalf("拼接配音轨失败: %v", err)
+	}
+	if v := meanVolumeDB(t, out); v > -60 {
+		t.Errorf("全静音轨的平均音量 %.1f dB，偏高 —— 静音段不干净", v)
+	}
+}
+
+// TestBuildNarrationTrackRejectsBadInput 覆盖输入校验：
+// 目标时长非正时必须报错，不能产出一条悄悄变短的轨道。
+func TestBuildNarrationTrackRejectsBadInput(t *testing.T) {
+	requireFFmpeg(t)
+	r := newTestRunner(t, 1)
+	dir := t.TempDir()
+
+	if err := r.BuildNarrationTrack(context.Background(), nil, filepath.Join(dir, "x.m4a")); err == nil {
+		t.Error("空片段列表应当报错")
+	}
+	parts := []NarrationPart{{AudioPath: "", TargetSec: 0}}
+	if err := r.BuildNarrationTrack(context.Background(), parts, filepath.Join(dir, "y.m4a")); err == nil {
+		t.Error("目标时长为 0 应当报错")
+	}
 }
