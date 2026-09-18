@@ -14,7 +14,9 @@ mock 掉之后测试只能证明参数拼对了，证明不了产物有效。
 from __future__ import annotations
 
 import shutil
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -34,6 +36,13 @@ from scidirector_ai.renderer import (
     build_renderer,
     check_html_contract,
     renderer_availability,
+)
+# 探测的实现在 config 里（唯一一份）：健康检查与渲染自检共用同一份结论。
+from scidirector_ai import config as config_module  # noqa: E402
+from scidirector_ai.config import (  # noqa: E402
+    _probe_browser_with,
+    browser_ready,
+    reset_browser_probe_cache,
 )
 
 HAS_FFMPEG = shutil.which("ffmpeg") is not None
@@ -334,6 +343,81 @@ class TestHtmlContract:
 # ===========================================================================
 # HTML 渲染器：环境不可用时的行为
 # ===========================================================================
+
+
+class TestBrowserProbe:
+    """浏览器就绪探测必须**真的**去看二进制，而不是只 import 一下。
+
+    回归背景：`pip install playwright` 成功、但没跑 `playwright install chromium`
+    时，探测原先返回「可用」，于是编排层把 DATA/CODE 镜头派给 d3，
+    渲染时才失败 —— 白烧满 attempt 才熔断。一个会说谎的就绪探测
+    把「环境没准备好」伪装成「内容反复不达标」，两者该做的处置完全不同。
+    """
+
+    def setup_method(self) -> None:
+        reset_browser_probe_cache()
+
+    def teardown_method(self) -> None:
+        reset_browser_probe_cache()
+
+    @staticmethod
+    def _fake_pw(executable_path: str):
+        """伪造一个 playwright 上下文管理器。"""
+
+        class _Fake:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_exc) -> bool:
+                return False
+
+        _Fake.chromium = SimpleNamespace(executable_path=executable_path)
+        return lambda: _Fake()
+
+    def test_reports_missing_browser_binary(self) -> None:
+        ok, reason = _probe_browser_with(self._fake_pw("/nonexistent/chrome-for-testing"))
+        assert ok is False
+        assert "chromium" in reason.lower()
+        # 提示里必须给出**下一步动作**，否则拿到这条信息的人仍然不知道要做什么
+        assert "playwright install" in reason.lower()
+
+    def test_reports_ready_when_binary_exists(self) -> None:
+        ok, reason = _probe_browser_with(self._fake_pw(sys.executable))
+        assert ok is True, reason
+
+    def test_reports_uninitializable_playwright(self) -> None:
+        def _boom():
+            raise RuntimeError("driver 起不来")
+
+        ok, reason = _probe_browser_with(_boom)
+        assert ok is False
+        assert "driver 起不来" in reason
+
+    def test_result_is_cached(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """缓存必须生效：健康检查按引擎各调一次，每次都起子进程太贵。
+
+        缓存住在 `browser_ready()`（不是纯探测函数 `_probe_browser_with`），
+        因此这里替换的是前者真正会调用的那一步。
+        """
+        pytest.importorskip("playwright.sync_api", reason="本用例要穿过 browser_ready 的真实分支")
+
+        calls = {"n": 0}
+
+        def fake_probe(_factory) -> tuple[bool, str]:
+            calls["n"] += 1
+            return True, ""
+
+        monkeypatch.setattr(config_module, "_probe_browser_with", fake_probe)
+        reset_browser_probe_cache()
+
+        assert browser_ready() == (True, "")
+        assert browser_ready() == (True, "")
+        assert calls["n"] == 1, "第二次调用应当直接吃缓存，而不是再起一次 driver"
+
+        # 清缓存后应重新探测 —— 这是「装完浏览器不必重启」的出口
+        reset_browser_probe_cache()
+        browser_ready()
+        assert calls["n"] == 2
 
 
 class TestHtmlRendererAvailability:

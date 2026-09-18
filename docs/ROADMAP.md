@@ -442,23 +442,39 @@ C2/C3 的全部逻辑都在前端归约（`stream.ts`）里，出问题的表现
 > **② 截图只证明观感，断言只证明通路，两者不可互相替代。**
 > 脚本产出截图供人工目视；自动化断言通过 ≠ 画面好看、布局正确。
 
-#### 顺带发现（尚未修复，已记录）：引擎就绪探测会「谎报可用」
+#### 引擎就绪探测曾「谎报可用」（已修复）
 
 联调时装上 `playwright`（只有 Python 包、没装浏览器二进制）之后，
 `/healthz` 的 `engine:d3=ok`、`engine:echarts=ok`、`engine:code_anim=ok` 全部变成可用，
-但实际渲染仍然失败 —— 于是编排层把 DATA 镜头派给 d3，**白烧满 3 次 attempt 才熔断转人工**
-（实测该任务 `#2 DATA attempt=3 → AWAITING_HUMAN`）。
+但实际渲染仍然失败。
 
-根因：`renderer.py` 的 `HtmlRenderer.available()` 只检查
-`import playwright` 与 `ffmpeg` 是否存在，**不检查浏览器二进制**。
-错误提示里其实已经写了 `playwright install chromium`，说明是清楚这一步的，
-只是探测本身没覆盖它。
+根因在**两个地方**，且健康检查走的是后者：
 
+| 位置 | 原判定依据 | 问题 |
+| --- | --- | --- |
+| `config.toolchain_report()` | `__import__("playwright")` 成功即算可用 | **健康检查读的是这个**，于是 `engine_availability` 认为三个 HTML 引擎都就绪 |
+| `renderer.HtmlRenderer.available()` | 同上，只 import 不检查二进制 | 渲染前的自检也会放行 |
+
+Python 包与浏览器二进制是**两步**安装（`pip install playwright` +
+`playwright install chromium`），只做完第一步就会谎报可用。
 这与阶段二「`Health.engines` 让编排层提前知道哪些标签不可渲染」的设计意图直接冲突：
-一个会说谎的探测比没有探测更糟 —— 它把「环境没准备好」变成了「内容反复失败」。
-**待办**：让 `available()` 真正解析一次浏览器可执行文件（如 `pw.chromium.executable_path`）
-并确认其存在。本次未改，是因为它属于独立缺陷，需要单独验证后再提交。
+一个会说谎的探测比没有探测更糟 —— 它把「环境没准备好」伪装成「内容不达标」。
 
+**已修复**：新增唯一一份探测 `config.browser_ready()`（真正解析
+`pw.chromium.executable_path` 并确认其存在，带缓存避免健康检查反复起子进程），
+`toolchain_report()` 与 `HtmlRenderer.available()` **共用**它 ——
+两边各写一份迟早会各说各话。修复后本机 `/healthz` 如实报告
+`d3/echarts/code_anim = False, stock = True`（本就只装了 ffmpeg）。
+
+> **一处需要更正的说法。** 上面这版文字最初把「DATA 镜头烧满 3 次 attempt」
+> 也算在这个探测头上（`#2 DATA attempt=3 → AWAITING_HUMAN`）。**这是错的。**
+> 复核后：那 3 次来自**编码智能体的契约修复循环** —— `check_html_contract`
+> 是在 `agents/coder.py` 生成代码时调用（第 301 行）的，而不是在渲染时；
+> mock LLM 产不出带 `window.__seek` 的 HTML，于是按设计重写 3 次后熔断（阶段二 A7 的行为）。
+> 也就是说：**探测说谎确实存在且已修，但「它导致 3 次 attempt」是我把两个现象
+> 归因到一起了。** 修复后重跑同一个任务，`#2 DATA` 仍然是 `attempt=3` ——
+> 因为那条路径与引擎可用性无关。把它记在这里，是因为**错误的归因比没有归因更危险**：
+> 它会让人以为「修好探测就不会浪费 attempt」。
 
 
 ---

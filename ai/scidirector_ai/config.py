@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 from functools import lru_cache
 from pathlib import Path
@@ -164,13 +165,17 @@ class Settings(BaseSettings):
             "ffprobe": shutil.which("ffprobe") is not None,
             "latex": any(shutil.which(b) for b in ("latex", "xelatex", "pdflatex")),
         }
-        # manim / playwright 是 Python 包而非可执行文件，用导入探测。
-        for module in ("manim", "playwright"):
-            try:
-                __import__(module)
-                report[module] = True
-            except Exception:  # noqa: BLE001 - 环境相关，任何异常都视为不可用
-                report[module] = False
+        # manim 是纯 Python 包，导入探测就够。
+        try:
+            __import__("manim")
+            report["manim"] = True
+        except Exception:  # noqa: BLE001 - 环境相关，任何异常都视为不可用
+            report["manim"] = False
+
+        # playwright **不能**只看导入：浏览器二进制要另外装。
+        # 只装第一步时报「可用」会让编排层把 d3/echarts/code_anim 镜头派出去，
+        # 渲染时才失败 —— 白烧满 attempt 才熔断。详见 browser_ready() 的说明。
+        report["playwright"], _ = browser_ready()
         return report
 
     def public_summary(self) -> dict[str, object]:
@@ -206,6 +211,67 @@ def get_settings() -> Settings:
 # ---------------------------------------------------------------------------
 # 渲染引擎可用性
 # ---------------------------------------------------------------------------
+
+#: Playwright 就绪探测的结果缓存。
+#:
+#: 健康检查会**按引擎各调一次**（d3 / echarts / code_anim），而每次探测都要启动
+#: 一次 Playwright 的 driver 子进程（几十到几百毫秒），因此结果必须缓存 ——
+#: 否则 `/healthz` 会被这些子进程拖慢，而它恰恰是最该轻快的接口。
+#:
+#: 代价：运行期**新装**浏览器后需要重启进程（或显式清缓存）才会被识别。
+#: 这与字体探测的取舍一致，且远比「每次健康检查都起子进程」划算。
+_browser_probe_cache: tuple[bool, str] | None = None
+
+
+def _probe_browser_with(sync_playwright_factory) -> tuple[bool, str]:
+    """给定 Playwright 工厂，判断 Chromium **二进制**是否真的可用。
+
+    拆出可注入的工厂只是为了可测：真实调用方用 `browser_ready()`。
+    """
+    try:
+        with sync_playwright_factory() as pw:
+            exe = pw.chromium.executable_path
+    except Exception as err:  # noqa: BLE001 - 环境相关，任何异常都视为不可用
+        return False, f"playwright 无法初始化：{err}"
+    if not exe or not os.path.exists(exe):
+        return (
+            False,
+            "已装 playwright 但缺少 Chromium 二进制（请执行 playwright install chromium）",
+        )
+    return True, ""
+
+
+def browser_ready() -> tuple[bool, str]:
+    """Playwright 是否**真能**渲染（带缓存）。返回 (是否可用, 原因)。
+
+    为什么不能只看 `import playwright`：Python 包与浏览器二进制是**两步**安装
+    （`pip install playwright` + `playwright install chromium`）。只做完第一步时
+    「导入探测」会报可用，于是 `engine_availability` 认为 d3/echarts/code_anim 都能渲染，
+    编排层便放心地把这类镜头派出去 —— 到渲染时才失败，**白烧满 attempt 才熔断转人工**
+    （实测 `#2 DATA attempt=3 → AWAITING_HUMAN`）。
+
+    一个会说谎的就绪探测比没有探测更糟：它把「环境没准备好」伪装成
+    「内容反复不达标」，而这两种情况的正确处置完全不同。
+    """
+    global _browser_probe_cache
+    if _browser_probe_cache is None:
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError:
+            _browser_probe_cache = (
+                False,
+                "未安装 playwright（pip install playwright && playwright install chromium）",
+            )
+        else:
+            _browser_probe_cache = _probe_browser_with(sync_playwright)
+    return _browser_probe_cache
+
+
+def reset_browser_probe_cache() -> None:
+    """清除浏览器探测缓存：测试用；装完浏览器后也可主动重探而不重启。"""
+    global _browser_probe_cache
+    _browser_probe_cache = None
+
 
 #: 渲染引擎 -> 它所需的工具链。改这里就等于改了「引擎可用性」的判定依据。
 #:

@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
-from .config import Settings, get_settings
+from .config import Settings, browser_ready, get_settings
 from .logging import get_logger
 from .sandbox.manim import ManimRenderRequest, ManimSandbox, ManimSandboxError
 from .sandbox.policy import PolicyReport, PolicyViolation
@@ -238,6 +238,15 @@ class ManimRenderer:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# 浏览器就绪探测
+# ---------------------------------------------------------------------------
+
+# 探测的**唯一实现**在 config.browser_ready()：健康检查（toolchain_report）
+# 与渲染前的自检必须取同一份结论，否则又会出现「健康说可用、渲染说不可用」
+# 这种两边各说各话的情况。这里只做转发，不再复制一份逻辑。
+
+
 class HtmlRenderer:
     """基于 headless 浏览器的渲染器（D3 / ECharts / 代码动画共用）。
 
@@ -251,10 +260,10 @@ class HtmlRenderer:
         self.engine = engine
 
     def available(self) -> tuple[bool, str]:
-        try:
-            from playwright.sync_api import sync_playwright  # noqa: F401
-        except ImportError:
-            return False, "未安装 playwright（pip install playwright && playwright install chromium）"
+        # 用 config 的统一探测：健康检查与渲染自检必须看同一份结论。
+        ok, reason = browser_ready()
+        if not ok:
+            return False, reason
         if not shutil.which("ffmpeg"):
             return False, "缺少 ffmpeg，无法把帧序列编码为视频"
         return True, ""
