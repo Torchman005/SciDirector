@@ -69,6 +69,39 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------
     # LLM / VLM
     # ------------------------------------------------------------------
+    # ---------- 语音合成（TTS） ----------
+    #
+    # 默认**不合成**：缺省必须是一条能跑通的路径，没配 TTS 不该让流水线失败。
+    # 只要配了 provider 且该服务商 available()，镜头就会多出一个配音文件，
+    # 字幕随之切到按真实音频时长（有句级时间戳时按句）对齐。
+    #
+    # 各服务商的关键差别在**能不能拿到时间戳**：
+    #   edge   —— 免费、无需密钥、给**句级**时间戳（本机唯一可真实验证的）
+    #   doubao —— 需 appid + token（本机未验证）
+    #   openai —— 需密钥，**不给时间戳**
+    #   fish   —— 需密钥，另有带时间戳的 SSE 端点（负载结构未知，暂未实现）
+    tts_provider: Literal["", "none", "edge", "doubao", "openai", "fish"] = ""
+    #: 音色。留空则用各服务商的默认音色。
+    tts_voice: str = ""
+    #: 语速倍率，1.0 表示不变。
+    tts_speed: float = Field(default=1.0, gt=0.0, le=3.0)
+    tts_timeout_sec: int = Field(default=60, ge=5, le=600)
+
+    # 豆包（火山引擎）。cluster 与 voice_type 依账号开通情况而定。
+    doubao_appid: str = ""
+    doubao_access_token: str = ""
+    doubao_cluster: str = "volcano_tts"
+    doubao_endpoint: str = ""
+
+    # Fish Audio。
+    fish_api_key: str = ""
+    fish_model: str = "s1"
+    fish_reference_id: str = ""
+    fish_endpoint: str = ""
+
+    # OpenAI TTS（复用 openai_api_key / openai_base_url）。
+    openai_tts_model: str = "gpt-4o-mini-tts"
+
     llm_provider: Literal["openai", "azure", "mock"] = "openai"
     llm_model: str = "gpt-4o"
     vlm_model: str = "gpt-4o"
@@ -188,6 +221,11 @@ class Settings(BaseSettings):
             "llm_provider": self.llm_provider,
             "llm_model": self.llm_model,
             "vlm_model": self.vlm_model,
+            "tts_provider": self.tts_provider or "(未启用)",
+            "tts_voice": self.tts_voice or "(默认)",
+            "doubao_appid": self.doubao_appid or "(未配置)",
+            "doubao_access_token": "***" if self.doubao_access_token else "(未配置)",
+            "fish_api_key": "***" if self.fish_api_key else "(未配置)",
             "openai_api_key": "***" if self.openai_api_key else "(未配置)",
             "openai_base_url": self.openai_base_url or "(默认)",
             "sandbox_timeout_sec": self.sandbox_timeout_sec,
