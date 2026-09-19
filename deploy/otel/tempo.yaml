@@ -1,0 +1,47 @@
+# Tempo：追踪存储（阶段五·可观测性）
+#
+# 用本地文件系统存储并**刻意关掉保留期**：本轮的目标是「跑一次真实任务，
+# 能在 Grafana 里看到完整 span 树」，这是单机开发场景。
+# 生产要接对象存储（S3/GCS）并把 retention 设为有限值 ——
+# 追踪数据的增长非常快，本地盘迟早会被填满。
+
+server:
+  http_listen_port: 3200
+  log_level: warn
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
+
+ingester:
+  # 单实例本地模式：不配置复制因子与 ring，避免为了跑通而引入一致性组件的复杂度。
+  trace_idle_period: 10s
+  max_block_bytes: 1_000_000
+  max_block_duration: 5m
+  lifecycler:
+    ring:
+      kvstore:
+        store: inmemory
+      replication_factor: 1
+
+compactor:
+  compaction:
+    block_retention: 24h
+
+storage:
+  trace:
+    backend: local
+    local:
+      path: /var/tempo/blocks
+    wal:
+      path: /var/tempo/wal
+
+# 让 Tempo 把自身的指标也暴露出来，便于「追踪后端自己健康吗」这个问题。
+metrics_generator:
+  storage:
+    path: /var/tempo/generator/wal

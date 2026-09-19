@@ -1,0 +1,106 @@
+{
+  "uid": "scidirector-overview",
+  "title": "SciDirector · 生成链路",
+  "tags": ["scidirector"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "refresh": "10s",
+  "time": { "from": "now-30m", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "service",
+        "label": "服务",
+        "type": "query",
+        "datasource": { "type": "tempo", "uid": "tempo" },
+        "query": { "type": "serviceName" },
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "text",
+      "title": "怎么用这块看板",
+      "gridPos": { "h": 5, "w": 24, "x": 0, "y": 0 },
+      "options": {
+        "mode": "markdown",
+        "content": "**验收对象**：跑一次生成请求，然后在下面的表格里按 `service` 筛出一棵树。\n\n- 一次请求应当同时出现 **三个服务**的 span：`scid-api`（HTTP 入口）→ `scid-worker`（消费任务）→ `scidirector-ai`（图节点）。\n- 只有一段说明**链路在中间断了**：去 `worker/tracing.go` 看 `traceparent` 是否随队列载荷传过去。\n- 点任一行的 Trace ID 可以在 Tempo 的 Trace 视图里看瀑布图与各段耗时。"
+      }
+    },
+    {
+      "id": 2,
+      "type": "table",
+      "title": "最近的链路（跨服务）",
+      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 5 },
+      "datasource": { "type": "tempo", "uid": "tempo" },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "traceql",
+          "query": "{ resource.service.name =~ \"$service\" }",
+          "limit": 40,
+          "tableType": "traces"
+        }
+      ],
+      "options": { "showHeader": true }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "HTTP 请求量（按路径）",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 17 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (http_route) (rate(http_server_request_duration_seconds_count[5m]))",
+          "legendFormat": "{{http_route}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "HTTP 请求延迟 P95",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 17 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le, http_route) (rate(http_server_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "{{http_route}}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Go 运行时：goroutine 数 / 堆内存",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 25 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "go_goroutines", "legendFormat": "goroutines" },
+        { "refId": "B", "expr": "go_memstats_heap_inuse_bytes / 1024 / 1024", "legendFormat": "heap inuse (MB)" }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "各服务 span 速率（每秒）",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 25 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (service_name) (rate(traces_spanmetrics_calls_total[5m]))",
+          "legendFormat": "{{service_name}}"
+        }
+      ],
+      "description": "来自 Tempo 的 span 指标（metrics_generator）。为空说明 Tempo 尚未生成指标，属正常——需要先有流量。"
+    }
+  ]
+}

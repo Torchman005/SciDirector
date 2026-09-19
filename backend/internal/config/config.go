@@ -26,6 +26,23 @@ type Config struct {
 	Media    MediaConfig
 	Pipeline PipelineConfig
 	Archive  ArchiveConfig
+	Obs      ObservabilityConfig
+}
+
+// ObservabilityConfig 描述链路追踪与指标（阶段五·可观测性）。
+type ObservabilityConfig struct {
+	// ServiceName 写进每个 span 的 service.name，用于在 Grafana/Tempo 里区分 api 与 worker。
+	ServiceName string
+	// OTLPEndpoint 是 OTLP/gRPC 端点（如 127.0.0.1:4317）。
+	// **为空表示不导出追踪** —— 本地不跑 collector 是常态，
+	// 此时应当是无害的 no-op，而不是启动失败。
+	OTLPEndpoint string
+	// Insecure 用明文 gRPC 连 collector。本地/内网应为 true。
+	Insecure bool
+	// SampleRatio 采样比例 (0,1]。1 表示全采（本地联调默认如此）。
+	SampleRatio float64
+	// MetricsPath 是 Prometheus 抓取路径。为空表示不暴露 /metrics。
+	MetricsPath string
 }
 
 // HTTPConfig 描述 Go API 网关的监听参数。
@@ -195,6 +212,7 @@ func Load() (*Config, error) {
 			ShotMaxAttempts:      getInt("SCID_SHOT_MAX_ATTEMPTS", 3),
 			CriticScoreThreshold: getFloat("SCID_CRITIC_SCORE_THRESHOLD", 0.75),
 		},
+		Obs: loadObservabilityConfig(),
 		Archive: ArchiveConfig{
 			Backend:        getEnv("SCID_ARCHIVE_BACKEND", "none"),
 			LocalDir:       getEnv("SCID_ARCHIVE_LOCAL_DIR", "./.data/archive"),
@@ -227,6 +245,22 @@ func Load() (*Config, error) {
 }
 
 // Validate 集中校验跨字段约束。分开写是为了让单测可以直接构造 Config 校验。
+// loadObservabilityConfig 读取可观测性配置。
+//
+// 缺省是**全关**：默认不导出追踪、不暴露 /metrics。
+// 理由与「默认归档后端是 none」一致 —— 没配就什么都不做，
+// 而不是去连一个不存在的 collector 然后让启动失败或刷一屏错误日志。
+func loadObservabilityConfig() ObservabilityConfig {
+	return ObservabilityConfig{
+		ServiceName:  getEnv("SCID_OTEL_SERVICE_NAME", "scidirector-api"),
+		OTLPEndpoint: getEnv("SCID_OTEL_ENDPOINT", ""),
+		// 本地/内网几乎都用明文；要 TLS 时显式设成 false。
+		Insecure:    getBool("SCID_OTEL_INSECURE", true),
+		SampleRatio: getFloat("SCID_OTEL_SAMPLE_RATIO", 1.0),
+		MetricsPath: getEnv("SCID_METRICS_PATH", ""),
+	}
+}
+
 func (c *Config) Validate() error {
 	if c.HTTP.Addr == "" {
 		return fmt.Errorf("config: SCID_HTTP_ADDR 不能为空")

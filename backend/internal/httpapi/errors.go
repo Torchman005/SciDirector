@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/itJinYu/SciDirector/backend/internal/ai"
 	"github.com/itJinYu/SciDirector/backend/internal/config"
@@ -55,6 +56,9 @@ type Deps struct {
 	// StartedAt 用于 /version 报告进程运行时长。
 	StartedAt time.Time
 	Version   string
+	// Metrics 是 Prometheus 注册表；为 nil 表示未启用（/metrics 返回 501）。
+	// 与 Inspector 同样的策略：观测能力缺失不该让网关整个不可用。
+	Metrics *prometheus.Registry
 }
 
 // abortWith 统一地写出错误响应并终止后续 handler。

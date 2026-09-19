@@ -1,0 +1,61 @@
+# OpenTelemetry Collector（阶段五·可观测性的入口）
+#
+# 为什么需要一个 collector，而不是让 Go/Python 直接发给 Tempo：
+#  1. **应用只认一个地址**。Tempo 的地址、协议、重试策略都收在这里，
+#     换后端（Tempo → Jaeger/其他）不需要重发布应用；
+#  2. **应用侧的失败面更小**。collector 挂了，应用只是导出超时被丢弃，
+#     而直连时后端的任何抖动都会回到业务代码里；
+#  3. **一处做采样与批处理**，比在每个进程里各配一遍可靠。
+#
+# 收到 OTLP 后同时导出到 Tempo（追踪）与调试日志（debug 级别），
+# 后者是排查「为什么 Tempo 里没有」时最直接的手段：
+# 如果 collector 的日志里有 span，问题在 Tempo；没有，问题在应用。
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  # 内存保护：collector 自己不能成为压垮机器的那一环。
+  memory_limiter:
+    check_interval: 2s
+    limit_percentage: 75
+    spike_limit_percentage: 20
+  batch:
+    # 与 SDK 侧的批处理配合：这里再批一次，减少发往 Tempo 的请求数。
+    send_batch_size: 512
+    timeout: 2s
+
+exporters:
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+    # 重试配置交给 collector：应用侧超时后就不再管了，
+    # 短暂的 Tempo 抖动由这里兜住，避免丢 span。
+    retry_on_failure:
+      enabled: true
+      initial_interval: 1s
+      max_interval: 10s
+  debug:
+    # basic 只打印摘要；要逐条看 span 改成 detailed。
+    verbosity: basic
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+service:
+  extensions: [health_check]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp/tempo, debug]
+  telemetry:
+    logs:
+      level: warn

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/itJinYu/SciDirector/backend/internal/domain"
 	"github.com/itJinYu/SciDirector/backend/internal/logging"
@@ -42,6 +43,15 @@ func NewRouter(s *Server, deps Deps) *gin.Engine {
 	r.GET("/healthz", s.HandleHealthz)
 	r.GET("/readyz", s.HandleReadyz)
 	r.GET("/version", s.HandleVersion)
+
+	// Prometheus 抓取端点。放在无版本前缀下、且路径可配（SCID_METRICS_PATH）：
+	// 抓取路径是**部署约定**，会写进 Prometheus 的 scrape config，
+	// 跟着 API 版本走会让升级 API 就得改抓取配置。
+	// 未启用时**不注册路由**（返回 404 而不是 501）：抓取目标不存在时
+	// Prometheus 会直接报 target down，比一个 501 更容易定位。
+	if metricsPath := s.deps.Config.Obs.MetricsPath; s.deps.Metrics != nil && metricsPath != "" {
+		r.GET(metricsPath, gin.WrapH(promhttp.HandlerFor(s.deps.Metrics, promhttp.HandlerOpts{})))
+	}
 
 	v1 := r.Group("/api/v1")
 	{

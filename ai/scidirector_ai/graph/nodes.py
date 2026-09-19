@@ -19,6 +19,8 @@
 
 from __future__ import annotations
 
+import functools
+
 import json
 import time
 import uuid
@@ -101,6 +103,36 @@ class PipelineDeps:
         return cached
 
 
+
+def traced_node(name: str) -> Any:
+    """给图节点套一层 span。
+
+    用装饰器而不是在每个节点里手写 `with tracer.start_as_current_span(...)`：
+    节点有 7 个、将来还会加，手写必然有人漏 —— 漏掉的表现是「链路里少一段」，
+    不会报错，只会让人以为那段时间没花在 Python 侧。
+
+    span 名字就是节点名（plan/code/render/critique/revise/advance），
+    与事件流里的 `node` 字段**同名**：这样「事件里的 node」与
+    「Tempo 里的 span」能直接对上，不必再维护一份映射表。
+    """
+
+    def wrap(fn: Any) -> Any:
+        @functools.wraps(fn)
+        def inner(self: Any, state: Any) -> Any:
+            from ..obs import tracer
+
+            shot_index = state.get("current_index", 0)
+            with tracer().start_as_current_span(name) as span:
+                span.set_attribute("scidirector.node", name)
+                span.set_attribute("scidirector.job_id", str(state.get("job_id", "")))
+                span.set_attribute("scidirector.shot_index", int(shot_index))
+                return fn(self, state)
+
+        return inner
+
+    return wrap
+
+
 class PipelineNodes:
     """流水线节点集合。每个公开方法都是一个 LangGraph 节点。"""
 
@@ -111,6 +143,7 @@ class PipelineNodes:
     # plan：导演智能体拆解脚本
     # ==================================================================
 
+    @traced_node("plan")
     def plan(self, state: PipelineState) -> dict[str, Any]:
         """脚本 -> 结构化分镜表。
 
@@ -182,6 +215,7 @@ class PipelineNodes:
     # code：编码智能体生成渲染代码
     # ==================================================================
 
+    @traced_node("code")
     def code(self, state: PipelineState) -> dict[str, Any]:
         """为当前镜头生成渲染代码。
 
@@ -280,6 +314,7 @@ class PipelineNodes:
     # render：沙盒渲染
     # ==================================================================
 
+    @traced_node("render")
     def render(self, state: PipelineState) -> dict[str, Any]:
         """在沙盒中执行代码，产出视频片段并抽帧。
 
@@ -483,6 +518,7 @@ class PipelineNodes:
         )
         return str(result.audio_path)
 
+    @traced_node("critique")
     def critique(self, state: PipelineState) -> dict[str, Any]:
         """用 VLM 审查抽帧，决定通过、重做还是转人工。"""
         shot = current_shot(state)
@@ -556,6 +592,7 @@ class PipelineNodes:
     # revise：熔断判断（重做的唯一入口）
     # ==================================================================
 
+    @traced_node("revise")
     def revise(self, state: PipelineState) -> dict[str, Any]:
         """决定"还能不能再试一次"。
 
@@ -606,6 +643,7 @@ class PipelineNodes:
     # advance：推进到下一镜头
     # ==================================================================
 
+    @traced_node("advance")
     def advance(self, state: PipelineState) -> dict[str, Any]:
         """游标前移；全部镜头处理完毕后收尾。"""
         shots = state.get("shots") or []

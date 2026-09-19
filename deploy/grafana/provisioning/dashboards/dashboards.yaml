@@ -1,0 +1,17 @@
+# 看板自动装配：把 deploy/grafana/dashboards/*.json 挂进 Grafana。
+# 看板与代码同仓库、随版本走，改看板也要过一次 code review ——
+# 这是「验收对象可复现」的前提。
+
+apiVersion: 1
+
+providers:
+  - name: scidirector
+    orgId: 1
+    folder: SciDirector
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

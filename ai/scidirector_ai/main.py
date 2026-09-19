@@ -100,6 +100,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings: Settings = app.state.settings
     service: PipelineService = _state["service"]  # type: ignore[assignment]
 
+    # 追踪必须在 gRPC server 之前建立：instrument 要在 server 构造前装好，
+    # 否则第一批请求不会被采到（表现为「链路开头总是缺一段」）。
+    from .obs import init_tracing, instrument_fastapi, instrument_grpc_server, shutdown_tracing
+
+    if init_tracing(settings):
+        instrument_grpc_server()
+        instrument_fastapi(app)
+    else:
+        # 如实说明：没配 endpoint 时追踪是 no-op。
+        logger.info("链路追踪未启用（未配置 SCID_OTEL_ENDPOINT）")
+
     grpc_server = build_server(settings, service)
     grpc_server.start()
     _state["grpc_server"] = grpc_server
@@ -119,6 +130,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             stopped.wait(timeout=35) if hasattr(stopped, "wait") else None
         except Exception:  # noqa: BLE001 - 收尾阶段的异常不应阻止退出
             logger.warning("等待 gRPC 停止超时，强制退出")
+        # 冲刷未导出的 span —— 不调用就丢掉最后几秒，
+        # 而那恰恰是崩溃现场最想看的部分。
+        shutdown_tracing()
         # 释放 checkpointer 的 Postgres 连接。
         service.close()
         logger.info("AI 大脑已退出")

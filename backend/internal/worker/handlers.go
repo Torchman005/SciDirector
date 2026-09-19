@@ -56,6 +56,8 @@ func RegisterHandlers(mux *asynq.ServeMux, p *Processor) {
 			// 包上 asynq.SkipRetry：格式错误的任务必须立刻归档，重试毫无意义。
 			return fmt.Errorf("%w: %w", asynq.SkipRetry, err)
 		}
+		ctx, span := startConsumerSpan(ctx, payload.Traceparent, "generate", payload.JobID)
+		defer span.End()
 		return p.HandleGenerateJob(ctx, GenerateTask{Task: t, Payload: payload})
 	})
 
@@ -64,6 +66,8 @@ func RegisterHandlers(mux *asynq.ServeMux, p *Processor) {
 		if err != nil {
 			return fmt.Errorf("%w: %w", asynq.SkipRetry, err)
 		}
+		ctx, span := startConsumerSpan(ctx, payload.Traceparent, "render_shot", payload.JobID)
+		defer span.End()
 		return p.HandleRenderShot(ctx, RenderShotTask{Task: t, Payload: payload})
 	})
 
@@ -72,6 +76,8 @@ func RegisterHandlers(mux *asynq.ServeMux, p *Processor) {
 		if err != nil {
 			return fmt.Errorf("%w: %w", asynq.SkipRetry, err)
 		}
+		ctx, span := startConsumerSpan(ctx, payload.Traceparent, "compose", payload.JobID)
+		defer span.End()
 		return p.HandleComposeJob(ctx, ComposeTask{Task: t, Payload: payload})
 	})
 }

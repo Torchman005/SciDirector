@@ -16,6 +16,7 @@ import (
 	"log/slog"
 	"time"
 
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -65,8 +66,18 @@ func NewClient(cfg config.AIConfig, logger *slog.Logger) (*Client, error) {
 			Timeout:             10 * time.Second,
 			PermitWithoutStream: true,
 		}),
-		grpc.WithChainUnaryInterceptor(unaryLoggingInterceptor(logger)),
-		grpc.WithChainStreamInterceptor(streamLoggingInterceptor(logger)),
+		// otelgrpc 负责把当前 span 上下文按 W3C 规范写进 gRPC metadata
+		// （`traceparent`），Python 侧据此把它的 span 挂到同一条链路上 ——
+		// 这是「Go span ↔ gRPC ↔ Python span 串成一棵树」的**唯一**环节。
+		// 顺序：otelgrpc 在前，日志拦截器在后（后者不碰 metadata）。
+		grpc.WithChainUnaryInterceptor(
+			otelgrpc.UnaryClientInterceptor(),
+			unaryLoggingInterceptor(logger),
+		),
+		grpc.WithChainStreamInterceptor(
+			otelgrpc.StreamClientInterceptor(),
+			streamLoggingInterceptor(logger),
+		),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("ai: 创建 gRPC 连接失败: %w", err)

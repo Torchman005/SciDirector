@@ -117,10 +117,20 @@ smoke-web: ## 冒烟审核台（C1 实时推进 + C3 断网重连；需全栈在
 	cd $(ROOT) && $(PYTHON) scripts/smoke-web.py --shots .tmp/shots \
 		$(if $(API_RESTART_CMD),--api-restart-cmd "$(API_RESTART_CMD)",)
 
+# 可观测性验收：在真实浏览器里确认「一次生成请求的 span 树」能在 Grafana 上看到。
+# 需要先起观测栈与全栈：
+#   docker compose --profile observability up -d
+#   SCID_OTEL_ENDPOINT=127.0.0.1:4317 make dev-api   # 并让 worker/ai 也带上这个变量
+# 判定依据是 DOM 文本（模型读不了图），截图另存供人复核。
+# 也支持指定链路：make verify-obs TRACE_ID=<32位hex>
+verify-obs: ## 验证 Grafana 上能看到跨服务的 span 树（需观测栈 + 全栈在跑）
+	cd $(ROOT) && $(PYTHON) scripts/verify-observability.py \
+		$(if $(TRACE_ID),--trace-id "$(TRACE_ID)",) --out-dir .tmp/obs-shots
+
 # ===========================================================================
 # 质量
 # ===========================================================================
-.PHONY: test test-go test-python test-failover test-s3 lint fmt
+.PHONY: test test-go test-python test-failover test-s3 lint fmt verify-obs
 test: test-go test-python ## 全量测试
 
 # 竞态检测默认开启（CI 上必须跑）。Windows 本地若缺少 race runtime DLL

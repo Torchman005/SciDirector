@@ -124,6 +124,16 @@ class Settings(BaseSettings):
     sandbox_max_memory_mb: int = Field(default=2048, ge=128, le=32768)
     sandbox_max_cpu_sec: int = Field(default=240, ge=5, le=3600)
     sandbox_python_bin: str = "python"
+    # ------------------------------------------------------------------
+    # 可观测性（阶段五）
+    # ------------------------------------------------------------------
+    #: OTLP/gRPC 端点（如 127.0.0.1:4317）。**为空表示不导出追踪** ——
+    #: 本地不跑 collector 是常态，此时必须是无害的 no-op，而不是启动失败。
+    otel_endpoint: str = ""
+    #: 用明文 gRPC 连 collector。本地/内网应为 true。
+    otel_insecure: bool = True
+    #: 写进 span 的 service.name，用于在 Grafana/Tempo 里区分服务。
+    otel_service_name: str = "scidirector-ai"
     #: 沙盒的网络隔离策略（阶段五·沙盒加固）。
     #:
     #: - ``auto``（默认）：本机支持用户命名空间就启用，不支持则**如实上报**为未隔离

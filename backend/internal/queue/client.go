@@ -9,6 +9,7 @@ import (
 	"github.com/hibiken/asynq"
 
 	"github.com/itJinYu/SciDirector/backend/internal/config"
+	"github.com/itJinYu/SciDirector/backend/internal/obs"
 )
 
 // Client 是任务入队门面，由 API 层使用。
@@ -51,11 +52,22 @@ func (c *Client) defaultRetry(queue string) []asynq.Option {
 	}
 }
 
+// carryTrace 把当前链路上下文写进载荷，供 worker 侧接续。
+//
+// **放在这里而不是各个调用点**：入队点有六处（HTTP 三个 handler、WS 路径、
+// worker 内部的补偿入队），逐个去记得填一定会漏 —— 而漏掉的表现是
+// 「这条链路的后半段没了」，不会报错、不会失败，只是查不到。
+// 收口在 client 上就消除了一整类「忘了传」的缺陷。
+func carryTrace(ctx context.Context, p *TraceCarrier) {
+	p.Traceparent = obs.InjectTraceparent(ctx)
+}
+
 // EnqueueGenerateJob 投递一次完整的生成任务。
 func (c *Client) EnqueueGenerateJob(ctx context.Context, p *GenerateJobPayload) (string, error) {
 	if p.EnqueuedAt.IsZero() {
 		p.EnqueuedAt = time.Now().UTC()
 	}
+	carryTrace(ctx, &p.TraceCarrier)
 	buf, err := Encode(p)
 	if err != nil {
 		return "", err
@@ -82,6 +94,7 @@ func (c *Client) EnqueueRenderShot(ctx context.Context, p *RenderShotPayload) (s
 	if p.EnqueuedAt.IsZero() {
 		p.EnqueuedAt = time.Now().UTC()
 	}
+	carryTrace(ctx, &p.TraceCarrier)
 	buf, err := Encode(p)
 	if err != nil {
 		return "", err
@@ -109,6 +122,7 @@ func (c *Client) EnqueueComposeJob(ctx context.Context, p *ComposeJobPayload) (s
 	if p.EnqueuedAt.IsZero() {
 		p.EnqueuedAt = time.Now().UTC()
 	}
+	carryTrace(ctx, &p.TraceCarrier)
 	buf, err := Encode(p)
 	if err != nil {
 		return "", err

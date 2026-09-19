@@ -22,6 +22,7 @@ import (
 	"github.com/itJinYu/SciDirector/backend/internal/config"
 	"github.com/itJinYu/SciDirector/backend/internal/logging"
 	"github.com/itJinYu/SciDirector/backend/internal/media"
+	"github.com/itJinYu/SciDirector/backend/internal/obs"
 	"github.com/itJinYu/SciDirector/backend/internal/queue"
 	"github.com/itJinYu/SciDirector/backend/internal/store"
 	"github.com/itJinYu/SciDirector/backend/internal/worker"
@@ -56,6 +57,42 @@ func run() error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// 可观测性：**必须在任何业务代码之前**初始化 —— 否则最早那批 span 会落到
+	// 全局 no-op provider 上被静默丢弃（表现为「链路开头缺一段」）。
+	obsCfg := cfg.Obs
+	if obsCfg.ServiceName == "" || obsCfg.ServiceName == "scidirector-api" {
+		obsCfg.ServiceName = "scid-worker"
+	}
+	obsProvider, err := obs.Init(ctx, obs.Config{
+		ServiceName:  obsCfg.ServiceName,
+		OTLPEndpoint: obsCfg.OTLPEndpoint,
+		Insecure:     obsCfg.Insecure,
+		SampleRatio:  obsCfg.SampleRatio,
+		// worker 不暴露 /metrics：它的性能问题看链路（每个任务的 consumer span
+		// 就是它的耗时分解），再开一个抓取端点只会多一处要维护的配置。
+		MetricsEnabled: false,
+		Env:            cfg.Env,
+	})
+	if err != nil {
+		return err
+	}
+	// Shutdown 会冲刷 BatchProcessor 里未导出的 span —— 不调用就丢掉最后几秒，
+	// 而那恰恰是崩溃现场最想看的部分。
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := obsProvider.Shutdown(shutdownCtx); err != nil {
+			logger.Warn("可观测性组件关闭失败", "error", err.Error())
+		}
+	}()
+	if obsProvider.TracingEnabled() {
+		logger.Info("链路追踪已启用", "endpoint", obsCfg.OTLPEndpoint, "service", obsCfg.ServiceName)
+	} else {
+		// 如实说明：没配 endpoint 时追踪是 no-op。
+		// 「以为采到了、其实什么都没采」是这类集成最常见的误解。
+		logger.Info("链路追踪未启用（未配置 SCID_OTEL_ENDPOINT）", "service", obsCfg.ServiceName)
+	}
 
 	// 媒体工作目录必须可写：提前验证，免得任务跑到合成阶段才发现没权限。
 	if err := os.MkdirAll(cfg.Media.WorkDir, 0o755); err != nil {

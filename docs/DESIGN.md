@@ -490,10 +490,45 @@ Job (一次生成请求)
 | --- | --- |
 | 日志 | Go `slog` + Python `structlog`，统一 JSON 字段：`trace_id / job_id / shot_id / attempt / node` |
 | 指标 | 一次通过率（first-pass rate）、平均尝试次数、单镜头渲染耗时、token 成本、VLM 调用次数 |
-| 追踪 | OpenTelemetry：Go span ↔ gRPC ↔ Python span 串联（阶段五） |
+| 追踪 | ✅ OpenTelemetry：Go span ↔ 队列 ↔ gRPC ↔ Python span 串成一棵树（见下） |
 | 成本控制 | 单镜头 attempt 上限；渲染前静态校验（省一次渲染）；VLM 只在渲染成功后调用 |
 
 > **一次通过率**是这套系统最重要的北极星指标：它同时反映提示词质量、RAG 质量、路由正确性。
+
+### 8.1 一条链路要跨四个边界（v0.5.5）
+
+一次生成请求的链路会穿过四个地方，每一处都可能断，而**断掉的表现都不是报错**：
+
+    浏览器 → HTTP（scid-api）→ Redis 队列 → worker（scid-worker）→ gRPC → Python（scidirector-ai）→ 图节点
+
+| 边界 | 传什么 | 为什么这么传 |
+| --- | --- | --- |
+| HTTP 入口 | W3C `traceparent` 头（有则沿用，无则新建根） | 上游网关/前端若已有链路，串起来才有意义 |
+| 队列 | 完整 `traceparent` 存进**任务载荷** | Asynq 不传递任何上下文，而 worker 是另一个进程。传完整 `traceparent` 而不是只传 trace ID：它同时带 span ID 与采样标志，worker 的 span 才能挂在**入队那一刻的 span** 之下 |
+| gRPC | `otelgrpc` 自动写进 metadata | 与 Python 侧官方插件的约定天然一致，不需要自定义协议 |
+| 日志 | 日志的 `trace_id` **就是** span 的 trace ID | 否则「拿日志里的 ID 查链路」会失效，而这不会有任何报错 |
+
+**三条必须遵守的约束**
+
+1. **只有一个 trace_id 来源。** 项目原本已有 `tr-` 前缀的 trace_id 语义（X-Request-ID 头、
+   日志字段），因此 Go 侧**不叠** otelgin 之类的自动埋点，而是让 `TraceMiddleware` 自己
+   承担服务端 span 职责。两层并存会出现「两个都叫 trace_id 的东西」：日志里写一个、
+   Tempo 里存另一个 —— 查不到时人只会以为链路没采到。
+2. **入队时的传播要收口在 queue client 上**（`carryTrace`），不能靠各个调用点自觉。
+   入队点有六处，漏掉的表现是「这条链路的后半段没了」，不报错也不失败。
+3. **高频抓取端点不建 span**（`/metrics`、`/healthz`）。Prometheus 每 5 秒抓一次，
+   这些 trace 会把 Grafana 表格的 limit 占满，让真正要看的跨服务 span 挤不进来 ——
+   看起来就像断链。
+
+**怎么判断链路断了**：worker 的消费 span 上带 `scidirector.trace_continued` 布尔属性。
+链路断掉时两侧各自都有**完整可看**的 trace，只是不在一棵树上，没有报错也没有失败；
+只有这个标记能让它一眼可见。（本轮就是靠它定位到自己写错的地方。）
+
+**观测栈**：`docker compose --profile observability` 起
+collector（OTLP 入口，一处收口后端地址与重试）→ Tempo（追踪）+ Prometheus（指标）→ Grafana。
+数据源与看板**全部 provisioning**：看板本身是验收对象，必须能被一条命令复现，
+手工点出来的配置在别人机器上复现不出来。
+四个容器都放在 profile 里，不拖慢日常 `up -d`；不启动它们时应用照常运行（追踪是 no-op）。
 
 ---
 

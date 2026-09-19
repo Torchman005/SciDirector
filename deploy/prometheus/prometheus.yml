@@ -1,0 +1,31 @@
+# Prometheus 抓取配置（阶段五·可观测性）
+#
+# 抓的就是 Go 网关自己暴露的 /metrics（见 httpapi 的 metrics 路由）。
+# worker 不暴露端点：它的性能问题看链路 —— 每个任务的 consumer span
+# 就是它的耗时分解，再开一个抓取目标只会多一处要维护的配置。
+
+global:
+  # 与 SDK 侧的批处理间隔配合。5s 足够看清趋势，又不会把存储写爆。
+  scrape_interval: 5s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # ① 标准部署：api 是 compose 网络里的一个容器。
+  - job_name: scidirector-api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["api:8080"]
+        labels:
+          service: scid-api
+
+  # ② 本机开发：Go 进程直接跑在宿主上（不起 api 容器），此时上面的目标会一直是
+  #    down —— 那是**预期**的，不是故障。这里用 host-gateway 指向宿主。
+  #    两个 job 并存而不是二选一：验证「指标确实被采到」时不必改配置，
+  #    也就不会出现「本地改过的配置没进仓库、别人复现不出来」。
+  - job_name: scidirector-api-host
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["host.docker.internal:8080"]
+        labels:
+          service: scid-api
+          deployment: host-process

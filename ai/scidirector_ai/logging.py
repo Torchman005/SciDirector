@@ -60,6 +60,25 @@ _RESERVED = {
 }
 
 
+
+def _current_otel_trace_id() -> str | None:
+    """当前 OpenTelemetry span 的 trace ID（hex）；无活跃 span 时返回 None。
+
+    **惰性导入**：opentelemetry 是可选的（未配置追踪时不必装），
+    而且这里在每条日志的渲染路径上 —— 顶层导入会把 opentelemetry 的
+    导入开销强加给所有使用者（包括只跑单测的场景）。
+    """
+    try:
+        from opentelemetry import trace as _otel_trace
+
+        ctx = _otel_trace.get_current_span().get_span_context()
+        if not ctx.is_valid:
+            return None
+        return format(ctx.trace_id, "032x")
+    except Exception:  # noqa: BLE001 - 日志路径绝不能因为可观测性而抛异常
+        return None
+
+
 class JsonFormatter(logging.Formatter):
     """把一条日志渲染为单行 JSON。
 
@@ -82,7 +101,13 @@ class JsonFormatter(logging.Formatter):
         }
 
         # 自动附加 contextvar 中的链路字段：调用方无需每处都手动传。
-        if (tid := _trace_id.get()) is not None:
+        #
+        # 回退到 OpenTelemetry 当前 span 的 trace ID：这是让「日志里的 trace_id」
+        # 与「Tempo 里的 trace ID」保持**同一个值**的关键一步。
+        # 没有这一步时，两边各是一个 ID —— 而用日志里的 ID 去查链路正是最常用的
+        # 排查动作，查不到时人只会以为「链路没采到」，不会怀疑是 ID 不一致。
+        tid = _trace_id.get() or _current_otel_trace_id()
+        if tid is not None:
             payload[FIELD_TRACE_ID] = tid
         if (jid := _job_id.get()) is not None:
             payload[FIELD_JOB_ID] = jid

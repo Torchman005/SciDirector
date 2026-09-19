@@ -43,6 +43,13 @@ x-common-env: &common-env
   SCID_S3_SECRET_KEY: ${SCID_S3_SECRET_KEY:-scidirector-secret}
   SCID_S3_BUCKET: ${SCID_S3_BUCKET:-scidirector-artifacts}
   SCID_MEDIA_WORK_DIR: /data/work
+  # 可观测性（阶段五）。缺省**关闭**：没跑 collector 时应当是无害的 no-op，
+  # 而不是让每个进程都去连一个不存在的端点然后刷一屏导出错误。
+  # 要打开就把 SCID_OTEL_ENDPOINT 设为 otel-collector:4317（见 .env.example）。
+  SCID_OTEL_ENDPOINT: ${SCID_OTEL_ENDPOINT:-}
+  SCID_OTEL_INSECURE: ${SCID_OTEL_INSECURE:-true}
+  SCID_OTEL_SAMPLE_RATIO: ${SCID_OTEL_SAMPLE_RATIO:-1.0}
+  SCID_METRICS_PATH: ${SCID_METRICS_PATH:-/metrics}
 
 services:
   # ---------------------------------------------------------------------------
@@ -244,6 +251,107 @@ services:
         condition: service_started
 
   # ---------------------------------------------------------------------------
+  # 可观测性：collector -> Tempo（追踪）+ Prometheus（指标）-> Grafana（看板）
+  #
+  # 为什么走 collector 而不是应用直连 Tempo：应用只认一个地址，
+  # 换后端不必重发布应用；collector 挂了应用只是导出超时被丢弃，
+  # 而直连时后端的任何抖动都会回到业务代码里。
+  #
+  # 这四个都是**可选的**：不启动它们时应用照常运行（追踪是 no-op），
+  # 因此在 compose 里用 profile 隔离，不拖慢日常 `up -d`。
+  #   docker compose --profile observability up -d
+  # ---------------------------------------------------------------------------
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.115.1
+    container_name: scid-otel-collector
+    <<: *restart
+    profiles: ["observability"]
+    command: ["--config=/etc/otel/collector.yaml"]
+    volumes:
+      - ./deploy/otel/collector.yaml:/etc/otel/collector.yaml:ro
+    ports:
+      - "${SCID_OTEL_GRPC_PORT:-4317}:4317"
+      - "${SCID_OTEL_HTTP_PORT:-4318}:4318"
+    depends_on:
+      - tempo
+    healthcheck:
+      # collector 自带健康检查扩展。用 wget 而不是 curl：基础镜像里没有 curl。
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:13133/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  tempo:
+    image: grafana/tempo:2.6.1
+    container_name: scid-tempo
+    <<: *restart
+    profiles: ["observability"]
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./deploy/otel/tempo.yaml:/etc/tempo.yaml:ro
+      - tempo-data:/var/tempo
+    ports:
+      - "${SCID_TEMPO_PORT:-3200}:3200"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3200/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    container_name: scid-prometheus
+    <<: *restart
+    profiles: ["observability"]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=24h
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    # 让容器能访问宿主机上直接运行的 Go 进程（本机开发工作流，见抓取配置的说明）。
+    # 纯 compose 部署下这个别名指向宿主、抓不到东西，是预期行为。
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${SCID_PROMETHEUS_PORT:-9090}:9090"
+    # **刻意不 depends_on api**：Prometheus 抓的是一个稍后才出现的目标是完全正常的
+    # （target 先显示 down，应用起来后自动转 up）。加上依赖反而会逼 compose
+    # 去构建 api 镜像 —— 观测栈不该把应用镜像的构建拖进来。
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    container_name: scid-grafana
+    <<: *restart
+    profiles: ["observability"]
+    environment:
+      # 单机开发关闭登录：看板是验收对象，不该卡在"先建个管理员账号"上。
+      # **生产必须打开并接 SSO/OAuth** —— 追踪数据里有任务脚本与内部拓扑。
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_FEATURE_TOGGLES_ENABLE: traceqlEditor
+    volumes:
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "${SCID_GRAFANA_PORT:-3000}:3000"
+    depends_on:
+      - tempo
+      - prometheus
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # ---------------------------------------------------------------------------
   # React 分镜审核台（人类反馈闭环 HITL）
   # ---------------------------------------------------------------------------
   web:
@@ -268,3 +376,8 @@ volumes:
   # 但如果你手上有想保留的旧数据，改名后需要自己 migrate。
   rustfs-data:
   media-work:
+  # 追踪/指标/看板数据。都是可重建的观测数据，
+  # 但仍然给命名卷：容器重建后还能回看上一次的链路。
+  tempo-data:
+  prometheus-data:
+  grafana-data:

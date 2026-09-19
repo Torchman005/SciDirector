@@ -36,11 +36,27 @@ const (
 	QueueLow      = "low"
 )
 
+// TraceCarrier 由各任务载荷内嵌，用于把**链路上下文**从入队方带到执行方。
+//
+// 为什么必须显式带上：入队与出队之间隔着 Redis 与（可能）另一台机器、另一个进程。
+// Asynq 不传递任何上下文，worker 侧起 span 时拿不到父级 —— 于是
+// 「HTTP 请求 → 入队 → worker 执行 → gRPC 调 Python」会断成两棵树，
+// 而断掉的那一段恰恰是最需要看的一段（排队等了多久、worker 里慢在哪）。
+//
+// 取值是 W3C 的 `traceparent` 头（而非只存 trace ID）：它同时带 span ID 与采样标志，
+// 因此 worker 的 span 能正确挂在**入队那一刻的 span** 之下，采样决定也能继承 ——
+// 只存 trace ID 的话，就得自己拼一个假 parent，采样标志也无从继承。
+type TraceCarrier struct {
+	// Traceparent 形如 00-<32位trace>-<16位span>-01；空表示入队方没有活跃链路。
+	Traceparent string `json:"traceparent,omitempty"`
+}
+
 // GenerateJobPayload 是主链路任务的载荷。
 //
 // 载荷只放「标识与参数」，不放业务状态：
 // 状态一律从 Redis 读取，这样重试时拿到的一定是最新状态而非过期快照。
 type GenerateJobPayload struct {
+	TraceCarrier
 	JobID             string  `json:"job_id"`
 	RawScript         string  `json:"raw_script"`
 	StyleGuideJSON    string  `json:"style_guide_json,omitempty"`
@@ -52,6 +68,7 @@ type GenerateJobPayload struct {
 
 // RenderShotPayload 是单镜头重做任务的载荷，主要来源于人类反馈闭环。
 type RenderShotPayload struct {
+	TraceCarrier
 	JobID        string `json:"job_id"`
 	ShotID       string `json:"shot_id"`
 	Attempt      int    `json:"attempt"`
@@ -79,6 +96,7 @@ func (p *RenderShotPayload) WantsPartialRender() bool {
 
 // ComposeJobPayload 是合成任务的载荷。
 type ComposeJobPayload struct {
+	TraceCarrier
 	JobID      string    `json:"job_id"`
 	EnqueuedAt time.Time `json:"enqueued_at"`
 }

@@ -1,0 +1,37 @@
+# Grafana 数据源（随容器自动装配）
+#
+# 用 provisioning 而不是「起来后手工点一遍」：手工配置的看板在别人机器上
+# 复现不出来，而「一次真实请求的 span 树」是本阶段的**验收对象** ——
+# 它必须能被一条 `docker compose up` 复现，否则验收就成了一次性的演示。
+
+apiVersion: 1
+
+datasources:
+  - name: Tempo
+    uid: tempo
+    type: tempo
+    access: proxy
+    url: http://tempo:3200
+    isDefault: true
+    jsonData:
+      # 让 Tempo 的 trace 视图里能按服务名筛选，并支持从 span 跳转到日志。
+      tracesToMetrics:
+        datasourceUid: prometheus
+      serviceMap:
+        datasourceUid: prometheus
+      nodeGraph:
+        enabled: true
+
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    # Go 网关自己就暴露 /metrics，这里直接用 Prometheus 的抓取能力
+    # （Grafana 内置 Prometheus 数据源不支持主动抓取，故由 Prometheus 服务来抓）。
+    url: http://prometheus:9090
+    jsonData:
+      httpMethod: POST
+      # 把 span 里的 trace_id 关联回链路：从指标异常一键跳到那次的链路。
+      exemplarTraceIdDestinations:
+        - name: trace_id
+          datasourceUid: tempo

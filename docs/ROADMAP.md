@@ -635,11 +635,85 @@ Python 包与浏览器二进制是**两步**安装（`pip install playwright` +
 
 ## 阶段五 · 生产加固 ⏳ 待办
 
-- **可观测性**：OpenTelemetry 链路追踪（Go span ↔ gRPC ↔ Python span 串联）、Prometheus 指标、Grafana 看板
+- **可观测性**：✅ OpenTelemetry 链路追踪（Go span ↔ gRPC ↔ Python span 串联）、Prometheus 指标、Grafana 看板
 - **成本核算**：✅ 按任务统计 token 与渲染时长（**配额与限流未做**，见下）
 - **多租户**：任务归属与隔离
 - **状态对账**：定期比对 Go 的 Redis 状态与 LangGraph 的 checkpoint，发现并修复双写不一致
 - **沙盒加固**：🟡 网络隔离已做（`unshare -r -n`，见下）；**容器级 `--network=none --read-only` 与 seccomp 白名单未做**
+
+### 可观测性：做到哪一步、证据是什么
+
+验收标准是「一次生成请求能在 Grafana 上看到完整的 span 树与耗时分解」。
+这句话的主语是 **Grafana**，所以最终的判定必须在**浏览器**里做，而不是查 Tempo 的 HTTP API ——
+两者的差别是真实存在的：现代 Grafana 里 Tempo 的 TraceQL 搜索由**前端插件**在浏览器里
+直接打数据源代理执行，不走 `/api/ds/query`（那里只认 `traceId` 等少数后端查询类型）。
+我一开始正是拿 `/api/ds/query` 去试，得到 `unsupported query type: 'traceql'`，差点
+得出「配置坏了」的错误结论。
+
+**实现的骨架**
+
+| 环节 | 做法 | 为什么这么做 |
+| --- | --- | --- |
+| Go 服务端 span | `httpapi.TraceMiddleware` **自己**承担，不叠 otelgin | 项目已有 `tr-` 前缀的 trace_id 语义（X-Request-ID、日志字段）。再加一层自动埋点就会出现**两个都叫 trace_id 的东西**，于是「拿日志里的 ID 查链路」必然失效 —— 而这类不一致不会报错，只会让人以为链路没采到 |
+| 跨队列传播 | 入队时把完整 `traceparent` 存进载荷，**收口在 queue client** | worker 与 api 是两个进程、中间隔着 Redis，Asynq 不传递任何上下文。入队点有六处，逐个去记得填一定会漏，而漏掉的表现是「链路后半段没了」 |
+| 跨语言传播 | `otelgrpc` 写 metadata，Python 用官方 `GrpcInstrumentorServer` 解 | 都用 W3C `traceparent`，不需要任何自定义协议 |
+| Python 图节点 | `traced_node` 装饰器，span 名 = 事件流里的 `node` 字段 | 两套视图（事件流与链路）能直接对上，不必维护映射表 |
+| 日志与链路对齐 | 日志的 `trace_id` 回退到当前 OTel span 的 trace ID | 保证是**同一个值**，否则「从日志跳到链路」不成立 |
+| 观测栈 | `--profile observability` 起 collector → Tempo + Prometheus → Grafana，数据源与看板**全部 provisioning** | 看板是验收对象，必须能被一条 `docker compose` 复现；手工点出来的配置在别人机器上复现不出来 |
+
+**证据一：一次真实请求的完整链路**（`job-f10e3761b20a8165`，本机全真实依赖）
+
+同一棵树上有 25 个 span，覆盖三个服务：
+
+    scid-api        /api/v1/generate                          5.12 ms
+    scid-worker     consume generate                          16.6 s
+    scid-worker     scidirector.v1.AiDirectorService/RunPipeline  16.5 s
+    scidirector-ai  /scidirector.v1.AiDirectorService/RunPipeline 16.5 s
+    scidirector-ai  plan / code / render / critique / advance / revise …
+
+worker 的消费 span 上带 `scidirector.trace_continued=true`。这个标记是刻意加的：
+链路断掉时，两侧各自都有**完整可看**的 trace，只是不在一棵树上 —— 没有报错、没有失败，
+只有这个布尔值能让「断链」一眼可见。本轮就是靠它定位到自己写错的地方（见下）。
+
+**证据二：浏览器里的 Grafana**（`scripts/verify-observability.py`）
+
+用真实 Chromium 驱动 Grafana，断言的是 **DOM 文本**而不是像素（模型读不了图；
+截图另存 `.data/obs-shots/` 供人复核）：
+
+- 看板页渲染出标题，且链路表格真的有 Trace ID 行（只断言标题的话，一个全是空面板的看板也能通过）；
+- 链路视图里同时出现 **三个服务名**、跨服务 span 名（`/api/v1/generate`、`consume generate`）
+  与**耗时数值**。
+
+**本轮踩到的坑（同一类：不报错，只是查不到）**
+
+1. **带 span 的 ctx 装回请求的时机**。必须放在 `c.Next()` **之前** —— 我第一版放在之后，
+   handler 里拿到的仍是没有 span 的上下文，于是入队 traceparent 为空、worker 自成一根。
+   这个错误格外隐蔽：两侧都有完整链路，只是不在一棵树上。
+2. **`/metrics` 不能建 span**。Prometheus 每 5 秒抓一次，它会把 Grafana 表格的 limit 占满，
+   让真正要看的跨服务 span **挤不进来**，看起来就像断链 —— 我因此误判过一次。
+3. Explore 链接格式必须**照抄 Grafana 自己生成的**：少了 query 内部的 `datasource`
+   会静默退化成「没有选中数据源」的空白编辑器（不报错，只是什么都不显示）。
+4. Tempo 的 `Spans Limit` 默认只有 3，会把跨服务的那一段截掉。
+5. Tempo 的 search 返回**去掉前导零**的 32 位 trace ID，字符串比对会失败，要补零。
+6. 容器读挂载配置报 `permission denied` 是**文件权限**（工具写出的文件可能是 0600）。
+7. 观测栈的 `depends_on` 不该指向需要**构建**的服务，否则会逼 compose 去构建 api 镜像。
+8. 本机 9090 已被 Clash 占用 —— 端口一律要可覆盖。
+
+**没验证的部分**
+
+- **未在 compose 内跑端到端的应用容器**：本机的 Go/Python 进程直接跑在宿主上
+  （api 容器需要 `golang:1.23-alpine` 基础镜像，本网络下不可达）。因此
+  Prometheus 的 `api:8080` 目标在本机是 **down**（预期），验证走的是 `host.docker.internal:8080`
+  这个并列的 job。两个 job 都写在提交的抓取配置里，不是本地临时改动。
+- **Grafana 的嵌套瀑布图（trace view）未做自动化断言**：验证到的是「跨服务 span 表 + 耗时」。
+  从表格点进单条 trace 的瀑布图需要额外的 UI 交互（Grafana 11 的 Explore 用 Monaco 编辑器 +
+  懒加载表格），本轮没有把它做稳；截图存档供人工点开复核。
+- **指标侧只验到了「被抓到且有真实数据」**（`go_goroutines`、`process_resident_memory_bytes`、
+  `up=1`，以及 Grafana 经 Prometheus 数据源查询成功）。**业务指标未做**：
+  目前没有把「任务数 / 一次通过率 / 渲染时长分布」导出为 Prometheus 指标，
+  这些信息在链路与成本接口里可得，但 Grafana 上还看不到趋势图。
+- **采样率、Tempo 保留期、Grafana 匿名登录都是开发档配置**：生产要改成有限采样、
+  接对象存储、打开认证（追踪数据里有任务脚本与内部拓扑）。
 
 ### 成本核算：已完成的部分与口径
 
@@ -764,9 +838,14 @@ Python 包与浏览器二进制是**两步**安装（`pip install playwright` +
 
 ### 验收标准
 
-- 一次生成请求能在 Grafana 上看到完整的 span 树与耗时分解
-- 能查询任意历史任务的 token 成本与渲染成本
-- 沙盒容器在无网络条件下仍能完成渲染（证明没有隐式外联）
+- ✅ 一次生成请求能在 Grafana 上看到完整的 span 树与耗时分解
+      （已验：跨三个服务、25 个 span；浏览器里断言过跨服务 span 名与耗时数值。
+       未验：从表格点进单条 trace 的嵌套瀑布图未做自动化断言）
+- ✅ 能查询任意历史任务的 token 成本与渲染成本（`GET /api/v1/jobs/:id/cost`）
+- 🟡 沙盒在无网络条件下仍能完成渲染（证明没有隐式外联）
+      （已验：外联与 DNS 被挡住、且**同一台机器不隔离时能连出去**这个反向对照成立、
+       隔离下 ffmpeg 真实出片。未做：容器级 `--network=none --read-only` 与 seccomp；
+       HTML 引擎的 Chromium 不经 runner，**未被隔离**）
 
 ---
 
@@ -778,4 +857,4 @@ Python 包与浏览器二进制是**两步**安装（`pip install playwright` +
 | 二 · 多智能体核心 | ✅ 已完成 | 368 → 377 个 Python 单测通过；5 个 RPC 全部实现并经 Go 侧 gRPC 打通 |
 | 三 · 编排与媒体 | ✅ 已完成 | FFmpeg 并发收敛为全局有界 Worker Pool、转场与统一调色、字幕与软字幕封装、局部重渲染、产物归档、队列可观测；Go 测试 media 包 68 项 / archive 包 27 项 / queue 包 6 项。B4/B5 已补自动化验证（B4 共 6 项、B5 共 2 项；其中「执行中断线」是 `make test-failover` 显式运行的慢用例）。**全片 TTS 配音待办**（无可用引擎） |
 | 四 · 反馈闭环与前端 | ✅ 已完成 | React 审核台、打回/放行/成分镜编辑、断线重连与快照重放；C4/C5 已用真实服务端到端验证，C1/C3 的浏览器人工目视验证待做 |
-| 五 · 生产加固 | ⏳ 进行中 | 成本核算 ✅（`GET /jobs/:id/cost` + 详情内 `cost`；真实任务端到端复验，推导项与分镜原文逐项一致）；沙盒网络隔离 🟡（`unshare -r -n` + 反向对照验证「外联确实被挡住」；**HTML 引擎的 Chromium 未被覆盖**、容器层与 seccomp 未做）。**未做**：真实 token 链路实测（本机 mock LLM 不产生用量）、配额与限流、可观测性、多租户、状态对账 |
+| 五 · 生产加固 | ⏳ 进行中 | 可观测性 ✅（一次生成请求 = 跨 scid-api/scid-worker/scidirector-ai 的 25 个 span，浏览器里验证过 Grafana 能看到跨服务 span 与耗时；**业务指标未导出**、嵌套瀑布图未自动化断言）；成本核算 ✅（`GET /jobs/:id/cost` + 详情内 `cost`；真实任务端到端复验，推导项与分镜原文逐项一致）；沙盒网络隔离 🟡（`unshare -r -n` + 反向对照验证「外联确实被挡住」；**HTML 引擎的 Chromium 未被覆盖**、容器层与 seccomp 未做）。**未做**：真实 token 链路实测（本机 mock LLM 不产生用量）、配额与限流、可观测性、多租户、状态对账 |

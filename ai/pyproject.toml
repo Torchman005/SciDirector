@@ -25,6 +25,16 @@ dependencies = [
 [project.optional-dependencies]
 # 渲染依赖体积很大（Manim + TeX + 浏览器），单独分组以便按需安装。
 render = ["manim>=0.18", "playwright>=1.47", "numpy>=1.26"]
+# 链路追踪（阶段五）。单独分组的原因：**不装也应当能跑** ——
+# 未配置 SCID_OTEL_ENDPOINT 时追踪走 no-op，装不装都不影响业务。
+# 代码里对 opentelemetry 一律惰性导入，缺包时报一句清楚的警告而不是崩掉。
+telemetry = [
+    "opentelemetry-api>=1.28",
+    "opentelemetry-sdk>=1.28",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.28",
+    "opentelemetry-instrumentation-grpc>=0.49b0",
+    "opentelemetry-instrumentation-fastapi>=0.49b0",
+]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.24", "ruff>=0.7", "mypy>=1.13"]
 
 [project.scripts]
