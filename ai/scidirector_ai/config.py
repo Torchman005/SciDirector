@@ -86,6 +86,10 @@ class Settings(BaseSettings):
     #: 语速倍率，1.0 表示不变。
     tts_speed: float = Field(default=1.0, gt=0.0, le=3.0)
     tts_timeout_sec: int = Field(default=60, ge=5, le=600)
+    # 重试：TTS 是网络调用，实测会遇到「连接被 reset」这类瞬时失败。
+    # 只试一次会让大部分镜头悄悄失去配音（成片莫名没声音）。
+    tts_max_attempts: int = Field(default=3, ge=1, le=10)
+    tts_retry_backoff_sec: float = Field(default=1.0, ge=0.0, le=30.0)
 
     # 豆包（火山引擎）。cluster 与 voice_type 依账号开通情况而定。
     doubao_appid: str = ""

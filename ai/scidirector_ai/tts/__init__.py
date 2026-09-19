@@ -13,6 +13,7 @@ from .base import (
     TTSProvider,
     marks_sidecar_path,
     read_marks_sidecar,
+    synthesize_with_retry,
     write_marks_sidecar,
 )
 
@@ -24,5 +25,6 @@ __all__ = [
     "TTSProvider",
     "marks_sidecar_path",
     "read_marks_sidecar",
+    "synthesize_with_retry",
     "write_marks_sidecar",
 ]

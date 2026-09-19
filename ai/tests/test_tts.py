@@ -28,6 +28,7 @@ from scidirector_ai.tts.base import (
     TTSError,
     marks_sidecar_path,
     read_marks_sidecar,
+    synthesize_with_retry,
     write_marks_sidecar,
 )
 from scidirector_ai.tts.doubao import SUCCESS_CODE, DoubaoTTSProvider
@@ -400,3 +401,64 @@ class TestOutputPathIsAbsolute:
         res = provider.synthesize("你好", out_path=Path("rel/x.mp3"))
         side = write_marks_sidecar(res.audio_path, res)
         assert side.is_absolute() and side.is_file()
+
+
+# ---------------------------------------------------------------------------
+# 带重试的合成
+# ---------------------------------------------------------------------------
+
+
+class _FlakyProvider:
+    """前 N 次抛可重试错误，之后成功。"""
+
+    name = "flaky"
+
+    def __init__(self, fail_times: int, *, retryable: bool = True) -> None:
+        self.fail_times = fail_times
+        self.retryable = retryable
+        self.calls = 0
+
+    def available(self):
+        return True, ""
+
+    def synthesize(self, text, *, out_path, voice=None, speed=None):
+        self.calls += 1
+        if self.calls <= self.fail_times:
+            raise TTSError(f"模拟第 {self.calls} 次失败", retryable=self.retryable, provider=self.name)
+        return SynthesisResult(audio_path=Path(out_path), duration_sec=1.0, provider=self.name)
+
+
+class TestSynthesizeWithRetry:
+    """回归：TTS 的瞬时失败必须重试，否则大部分镜头会悄悄失去配音。
+
+    实测 Edge TTS 在本机会出现「第一次成功、紧接着连接被 reset」，
+    而失去配音**只降级不报错** —— 成片出来是「莫名没声音」，极难归因。
+    """
+
+    def test_retries_transient_failure_then_succeeds(self) -> None:
+        provider = _FlakyProvider(fail_times=2)
+        res = synthesize_with_retry(
+            provider, "你好", out_path=Path("/tmp/x.mp3"), attempts=3, backoff_sec=0.0
+        )
+        assert provider.calls == 3
+        assert res.provider == "flaky"
+
+    def test_gives_up_after_attempts(self) -> None:
+        provider = _FlakyProvider(fail_times=99)
+        with pytest.raises(TTSError) as exc:
+            synthesize_with_retry(provider, "你好", out_path=Path("/tmp/x.mp3"), attempts=2, backoff_sec=0.0)
+        assert provider.calls == 2, "重试次数必须受 attempts 限制（不能无限拖住任务）"
+        assert exc.value.retryable is True
+
+    def test_does_not_retry_non_retryable(self) -> None:
+        """缺密钥这类错误重试多少次都一样，重试只是把一次必然失败拖成三次。"""
+        provider = _FlakyProvider(fail_times=99, retryable=False)
+        with pytest.raises(TTSError) as exc:
+            synthesize_with_retry(provider, "你好", out_path=Path("/tmp/x.mp3"), attempts=3, backoff_sec=0.0)
+        assert provider.calls == 1, "不可重试的错误必须立刻抛出，不做任何重试"
+        assert exc.value.retryable is False
+
+    def test_needs_no_retry_when_first_call_succeeds(self) -> None:
+        provider = _FlakyProvider(fail_times=0)
+        synthesize_with_retry(provider, "你好", out_path=Path("/tmp/x.mp3"), backoff_sec=0.0)
+        assert provider.calls == 1

@@ -36,7 +36,7 @@ from ..media import MediaToolError, extract_frames
 from ..pbconv import shots_payload_json
 from ..renderer import Renderer, RendererError, RenderRequest, build_renderer
 from ..sandbox.runner import SandboxRunner
-from ..tts.base import write_marks_sidecar
+from ..tts.base import synthesize_with_retry, write_marks_sidecar
 from ..schemas import CriticFeedback, RenderArtifact, ShotSpec, StyleGuide
 from .state import (
     NODE_ADVANCE,
@@ -440,7 +440,15 @@ class PipelineNodes:
         # 相对路径在生产端看着没问题、到消费端就是「文件不存在」。
         out_path = out_dir.resolve() / "narration.mp3"
         try:
-            result = provider.synthesize(narration, out_path=out_path)
+            # 带重试：TTS 是网络调用，实测会遇到「连接被 reset」这类瞬时失败。
+            # 只试一次会让大部分镜头悄悄失去配音（成片莫名没声音）。
+            result = synthesize_with_retry(
+                provider,
+                narration,
+                out_path=out_path,
+                attempts=getattr(self.deps.settings, "tts_max_attempts", 3),
+                backoff_sec=getattr(self.deps.settings, "tts_retry_backoff_sec", 1.0),
+            )
         except Exception as exc:  # noqa: BLE001 - TTSError 或适配器未预期的异常
             logger.warning(
                 "配音合成失败，该镜头将没有配音",

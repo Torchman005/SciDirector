@@ -32,6 +32,8 @@
 from __future__ import annotations
 
 import json
+import random
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -185,3 +187,57 @@ def read_marks_sidecar(audio_path: str | Path) -> tuple[SentenceMark, ...]:
         except (KeyError, TypeError, ValueError):
             continue
     return tuple(out)
+
+
+# ---------------------------------------------------------------------------
+# 带重试的合成
+# ---------------------------------------------------------------------------
+
+
+def synthesize_with_retry(
+    provider: TTSProvider,
+    text: str,
+    *,
+    out_path,
+    voice: str | None = None,
+    speed: float | None = None,
+    attempts: int = 3,
+    backoff_sec: float = 1.0,
+) -> SynthesisResult:
+    """调用服务商合成，只对**可重试**失败做有限次退避重试。
+
+    为什么这是必需的而不是「锦上添花」：TTS 是网络调用，而实测本机访问
+    Edge TTS 会出现「第一次成功、紧接着的连接被 reset」——
+
+        [0] OK   2.32s
+        [1] FAIL Connection reset by peer (retryable)
+        [2] FAIL Connection reset by peer (retryable)
+
+    只试一次的话，**大部分镜头会直接失去配音**；而失去配音只降级不报错，
+    成片出来是「莫名没声音」，排查方向会完全跑偏（见 v0.5.0 的那次实测）。
+
+    三分纪律：
+    * **只重试可重试的**：把「密钥无效」也重试，只会把一次必然失败拖成三次；
+    * **退避带抖动**：同一批镜头同时失败时，固定间隔会让它们同时重试（惊群）；
+    * **次数有限**：TTS 是增强，不该为了它把任务拖住 —— 重试用尽就降级。
+    """
+    if attempts < 1:
+        attempts = 1
+
+    last: TTSError | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return provider.synthesize(text, out_path=out_path, voice=voice, speed=speed)
+        except TTSError as err:
+            if not err.retryable:
+                raise
+            last = err
+            if attempt == attempts:
+                break
+            # 指数退避 + ±30% 抖动
+            delay = backoff_sec * (2 ** (attempt - 1))
+            delay *= 0.7 + random.random() * 0.6  # noqa: S311 - 抖动不需要密码学随机
+            time.sleep(delay)
+
+    assert last is not None
+    raise last
