@@ -400,6 +400,11 @@ class TestBrowserProbe:
         因此这里替换的是前者真正会调用的那一步。
         """
         pytest.importorskip("playwright.sync_api", reason="本用例要穿过 browser_ready 的真实分支")
+        # 自己清掉 SCID_CHROME：它会**短路**掉探测（覆盖优先），
+        # 于是这条用例在不带该变量的机器上绿、在带了的机器上红 ——
+        # "只在别人机器上红"的测试比没有测试更浪费时间。本用例测的是缓存，
+        # 覆盖行为由 TestBrowserOverride 单独覆盖。
+        monkeypatch.delenv("SCID_CHROME", raising=False)
 
         calls = {"n": 0}
 
@@ -418,6 +423,41 @@ class TestBrowserProbe:
         reset_browser_probe_cache()
         browser_ready()
         assert calls["n"] == 2
+
+
+class TestBrowserOverride:
+    """SCID_CHROME 覆盖：策略在 `browser_ready()`，机制在 `_probe_browser_with()`。
+
+    这条区分很重要：把覆盖塞进 `_probe_browser_with()` 会让"注入假工厂"失效
+    （真实环境变量会盖掉注入的对象），于是探测机制本身没法再被单独测试 ——
+    改这一处时就是被上面几条用例当场拦下来的。
+    """
+
+    def test_override_short_circuits_the_probe(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("SCID_CHROME", sys.executable)
+        reset_browser_probe_cache()
+
+        def _should_not_be_called(_factory):  # noqa: ANN001, ANN202
+            raise AssertionError("设置 SCID_CHROME 后不该再去问 Playwright")
+
+        monkeypatch.setattr(config_module, "_probe_browser_with", _should_not_be_called)
+        assert browser_ready() == (True, "")
+        reset_browser_probe_cache()
+
+    def test_override_pointing_nowhere_is_reported_not_ignored(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """指向不存在的路径必须**如实报不可用**，而不是无条件放行。
+
+        "配了就放行"会让一个手滑的路径变成"引擎可用但渲染全失败"，
+        那正是本项目反复强调的一类静默失败。
+        """
+        monkeypatch.setenv("SCID_CHROME", "/nonexistent/chrome")
+        reset_browser_probe_cache()
+        ok, reason = browser_ready()
+        assert ok is False
+        assert "SCID_CHROME" in reason
+        reset_browser_probe_cache()
 
 
 class TestHtmlRendererAvailability:

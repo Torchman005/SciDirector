@@ -21,7 +21,9 @@
 
 from __future__ import annotations
 
+import os
 import shutil
+import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -31,7 +33,7 @@ from .config import Settings, browser_ready, get_settings
 from .logging import get_logger
 from .sandbox.manim import ManimRenderRequest, ManimSandbox, ManimSandboxError
 from .sandbox.policy import PolicyReport, PolicyViolation
-from .sandbox.runner import SandboxRunner
+from .sandbox.runner import ResourceLimits, SandboxRunner
 from .media import MediaInfo, MediaToolError, encode_frames, probe, render_ambient
 
 logger = get_logger(__name__)
@@ -293,7 +295,9 @@ class HtmlRenderer:
         started = time.monotonic()
 
         try:
-            self._capture(html, frames_dir, total_frames, fps, request, start_sec=start_sec)
+            self._capture(
+                html, frames_dir, total_frames, fps, request, runner, start_sec=start_sec
+            )
         except RendererError:
             raise
         except Exception as exc:  # noqa: BLE001 - Playwright 异常类型繁多
@@ -330,46 +334,54 @@ class HtmlRenderer:
         total_frames: int,
         fps: int,
         request: RenderRequest,
+        runner: SandboxRunner,
         start_sec: float = 0.0,
     ) -> None:
-        """用 Playwright 逐帧截图。"""
-        from playwright.sync_api import sync_playwright
+        """逐帧截图 —— **在沙盒子进程里跑**。
 
-        with sync_playwright() as pw:
-            browser = pw.chromium.launch(
-                # 容器里需要这些参数：没有 /dev/shm 与沙盒权限时 Chromium 会直接崩。
-                args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+        这里被渲染的是 LLM 生成的页面，页面里带着它的 JS。此前这段是**在 AI 服务
+        进程内**直接起 Chromium 的，因此完全不经过 `SandboxRunner` ——
+        网络隔离、只读、seccomp 三块加固对它一律无效，生成的 JS 可以在一个有网络的
+        浏览器里跑。这是沙盒覆盖面上最大的一个洞。
+
+        改为子进程后那些加固自动生效；代价是每镜多一次进程启动（约几十毫秒），
+        相对渲染耗时可以忽略。
+        """
+        script = Path(__file__).with_name("html_capture.py")
+        argv = [
+            sys.executable, str(script),
+            "--html", str(html.resolve()),
+            "--frames-dir", str(frames_dir.resolve()),
+            "--frames", str(total_frames),
+            "--fps", str(fps),
+            "--width", str(request.width),
+            "--height", str(request.height),
+            "--start-sec", f"{start_sec:.6f}",
+        ]
+        # 环境里浏览器 build 号与 Playwright 期望不一致时（本机就是这样），
+        # 允许显式指一个可执行文件；仅用于联调与测试。
+        if chrome := os.environ.get("SCID_CHROME"):
+            argv += ["--executable", chrome]
+
+        res = runner.run(
+            argv,
+            cwd=frames_dir.parent,
+            limits=ResourceLimits(timeout_sec=self.settings.sandbox_timeout_sec),
+        )
+        if res.returncode == 0:
+            return
+        # 把沙盒的真实原因带出去：退出码 3 是"页面缺 window.__seek"（内容问题），
+        # 其余是执行失败（环境/沙盒问题）。两者对上游的含义完全不同：
+        # 前者该回灌给编码智能体重写，后者重试或转人工。
+        if res.returncode == 3:
+            raise RendererError(
+                "页面未定义 window.__seek(t)，无法逐帧渲染",
+                retryable=True,
+                detail=res.tail(1200),
             )
-            try:
-                page = browser.new_page(
-                    viewport={"width": request.width, "height": request.height},
-                    device_scale_factor=1,
-                )
-                page.goto(html.resolve().as_uri(), wait_until="load")
-                # 等页面自报就绪（脚本可能异步加载字体等）。
-                page.wait_for_function("() => window.__ready !== false", timeout=30_000)
-
-                if page.evaluate("() => typeof window.__seek !== 'function'"):
-                    raise RendererError(
-                        "页面未定义 window.__seek(t)，无法逐帧渲染",
-                        retryable=True,
-                        detail=(
-                            "HTML 渲染路径要求页面暴露 window.__seek = (t) => {...}，"
-                            "t 为 0..duration_sec 的秒数。请参考提示词中的模板。"
-                        ),
-                    )
-
-                for index in range(total_frames):
-                    # 局部重渲染时，帧号从区间起点开始计：
-                    # 第 0 帧对应 start_sec，而不是整镜的第 0 秒。
-                    # 这里漏加偏移是最典型的错误 —— 画面能出来、时长也对，
-                    # 但内容整体前移了 start_sec，且只有把片段拼回原片才看得出来。
-                    page.evaluate("(t) => window.__seek(t)", start_sec + index / fps)
-                    # 等待 rAF 完成一帧，避免截到动画中间态。
-                    page.evaluate("() => new Promise(r => requestAnimationFrame(() => r()))")
-                    page.screenshot(path=str(frames_dir / f"frame_{index:05d}.png"))
-            finally:
-                browser.close()
+        raise RendererError(
+            f"浏览器渲染失败：{res.summary()}", retryable=True, detail=res.tail(1200)
+        )
 
 
 # ---------------------------------------------------------------------------

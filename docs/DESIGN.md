@@ -273,7 +273,23 @@ Python 图只负责"产出并审查每一个镜头片段"。
 在多数环境（包括本机）装不起来，那份名单**无法被验证** —— 漏一个就让渲染静默失败，
 原因极难反推。**没验证过的白名单比不加更危险。** 开关默认 `off`，开启前需逐个引擎验证。
 
-> **覆盖边界（重要）**：本层隔离的是**经 `SandboxRunner` 跑的子进程**（manim、ffmpeg/ffprobe）。
+#### HTML 引擎：浏览器也进了沙盒（v0.6.0）
+
+三个 HTML 引擎渲染的是 LLM 生成的页面，而截图此前是在 **AI 服务进程内**直接
+`sync_playwright()` 起 Chromium 的 —— 不经过 `SandboxRunner`，三块加固对它一律无效。
+现改为**沙盒子进程**（`html_capture.py`）：截图脚本自己只依赖标准库与 playwright，
+经 runner 执行，于是网络隔离/只读/seccomp 自动覆盖它。
+
+两个前置修复值得记住：
+
+- **`RLIMIT_AS` 兜底下限必须实测**：Chromium 需要 **>32GB、≤64GB** 地址空间
+  （二分实测 32GB 崩 / 64GB 正常），原值 2GB 让浏览器启动即 `SIGTRAP` 且报错无可读信息。
+- **环境覆盖要放在策略层**：`SCID_CHROME` 的判断在 `browser_ready()`，
+  而**不在**可注入的 `_probe_browser_with()` —— 后者是被测试注入假工厂的地方，
+  把策略塞进去会让注入失效（真实环境变量盖掉假对象）。
+
+> **覆盖边界（重要）**：本层隔离的是**经 `SandboxRunner` 跑的子进程**
+> （manim、ffmpeg/ffprobe、**浏览器**）。
 > **HTML 引擎（d3 / echarts / code_anim）不在其中** —— `HtmlRenderer._capture` 是在
 > AI 服务进程里直接 `sync_playwright()` 起 Chromium，不经过 runner。
 > 这是当前的真实缺口，见 `docs/ROADMAP.md` 阶段五。

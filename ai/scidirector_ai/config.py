@@ -341,6 +341,26 @@ def browser_ready() -> tuple[bool, str]:
     """
     global _browser_probe_cache
     if _browser_probe_cache is None:
+        # 显式覆盖优先：SCID_CHROME 指向一个现成的浏览器可执行文件时以它为准。
+        #
+        # 理由是一个很现实的环境问题：Playwright 的浏览器按 **build 号**装在固定
+        # 目录下，而 Python 包升级后期望的 build 号会变 ——
+        # "包有、浏览器也有，只是 build 号对不上"，默认路径报
+        # `Executable doesn't exist`。此时指向一个确实能跑的浏览器是合理的部署选择，
+        # 探测也应当如实反映它（仍然**验证文件存在**，不是无条件放行）。
+        #
+        # 这段刻意放在 `browser_ready()` 而**不是** `_probe_browser_with()`：
+        # 后者是"问 Playwright 要路径"的**机制**，且被测试注入了假工厂；
+        # 把策略塞进去会让注入失败（真实环境变量会盖掉注入的假对象），
+        # 于是"探测的机制"没法再被单独测试。
+        override = os.environ.get("SCID_CHROME", "").strip()
+        if override:
+            _browser_probe_cache = (
+                (True, "") if os.path.exists(override)
+                else (False, f"SCID_CHROME 指向的浏览器不存在：{override}")
+            )
+            return _browser_probe_cache
+
         try:
             from playwright.sync_api import sync_playwright
         except ImportError:

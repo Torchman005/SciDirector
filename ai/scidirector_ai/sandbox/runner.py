@@ -122,7 +122,22 @@ def _classify_resource_exit(returncode: int | None) -> str:
 #: 下限取 2GB 是因为实测低于这个值正常 ffmpeg 就会失败；它只是防跑飞的兜底，
 #: 真正生效的内存限制是 RLIMIT_DATA（见 ``_rlimit_hook``）。
 _AS_HEADROOM_FACTOR = 4
-_AS_FLOOR_BYTES = 2 * 1024**3
+
+#: RLIMIT_AS 兜底的**下限**（字节）。
+#:
+#: 这个值由实测决定，不能凭感觉取小：**Chromium 会预留极大的地址空间**。
+#: 逐项二分的结果（本机、Playwright + chromium-1208）：
+#:
+#:     AS = 32GB  → 启动即 SIGTRAP（exitCode=null）
+#:     AS = 64GB  → 正常
+#:
+#: 原先取 2GB（"够 ffmpeg 抽帧就行"），于是**任何经过 runner 的浏览器进程都会崩**，
+#: 而现象是 `signal=SIGTRAP`、没有任何可读的错误 —— 看起来像"浏览器坏了"，
+#: 实际是资源限制。取 128GB 给实测阈值留一倍余量，同时它仍然拦得住
+#: "疯狂预留 TB 级地址空间"这种真正病态的行为（这才是这个兜底的本意）。
+#:
+#: 若将来某个浏览器仍在此限制下崩溃：先按上面的方法重新二分出阈值，再调这里。
+_AS_FLOOR_BYTES = 128 * 1024**3
 
 
 # ===========================================================================
@@ -509,6 +524,10 @@ class SandboxRunner:
         "PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "TEMP", "TMP",
         "SYSTEMROOT", "WINDIR", "PATHEXT", "NUMBER_OF_PROCESSORS",  # Windows 必需
         "SCID_RENDER_WIDTH", "SCID_RENDER_HEIGHT", "SCID_RENDER_FPS",
+        # Playwright 的浏览器目录。它是一个**路径**配置而不是密钥，白名单里没有它
+        # 会让沙盒里的浏览器找不到自己 —— 表现为截图全部失败，
+        # 而原因（环境变量被裁掉了）从错误信息里完全看不出来。
+        "PLAYWRIGHT_BROWSERS_PATH",
     )
 
     def run(
