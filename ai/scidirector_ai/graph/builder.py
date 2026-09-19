@@ -154,7 +154,7 @@ class PipelineRunner:
             critic=CriticAgent(self.llm, settings),
             # 注意：SandboxRunner 本身无状态（资源上限由每次调用的 ResourceLimits
             # 决定），唯一例外是网络隔离策略 —— 它是部署级不变式，因此从 settings 传入。
-            runner=SandboxRunner(settings.sandbox_network_isolation),
+            runner=SandboxRunner(settings.sandbox_network_isolation, settings.sandbox_read_only),
             # TTS：缺省关闭（SCID_TTS_PROVIDER 为空），此时为 None，
             # 渲染节点不会合成任何音频、也不会产生额外文件 ——
             # 与既有行为逐字节一致。

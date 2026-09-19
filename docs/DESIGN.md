@@ -227,6 +227,29 @@ Python 图只负责"产出并审查每一个镜头片段"。
 配置 `SCID_SANDBOX_NETWORK_ISOLATION=require` 时探测失败会**拒绝执行**（fail closed）：
 「要了隔离却静默降级成不隔离」是安全代码里最危险的失败形态。
 
+#### 只读文件系统：`--read-only` 的命名空间等价物（v0.5.8）
+
+    unshare -r -n -m -- python exec_guard.py --workdir <wd> -- <原命令>
+
+`exec_guard` 把**每一个真实文件系统**重挂为只读、给 `/tmp` 挂一个有界私有 tmpfs、
+把工作目录绑定回可写，然后 **exec 掉自己**（PID 不变 —— 内存探针仍读得到真进程）。
+
+三个必须知道的事实：
+
+1. **`mount -o remount,ro,bind /` 只作用于根那一个挂载。** 本机 `/vol1`/`/vol2` 是独立 btrfs、
+   `/boot/efi` 是 vfat；只重挂 `/` 之后往 `/vol1/...` 写文件**照样成功**。
+   必须遍历 `/proc/self/mountinfo` 逐个重挂（按**挂载类型**跳过伪文件系统，而不是按路径）。
+2. **只读根会让 `/tmp` 不可写**，而 ffmpeg/Playwright 都要写临时目录 ——
+   表现为"渲染莫名失败"。故挂私有 tmpfs，且**必须带 `size=`**（不设上限的 tmpfs
+   能吃掉整机内存，等于用新 OOM 风险换掉只读加固）。
+3. **工作目录若在 `/tmp` 下，替换 `/tmp` 会遮蔽它**（写进去的东西外面看不到，
+   表现为"渲染成功但产物凭空消失"）。检测到就不替换，并如实记 gap。
+
+**"配置启用了"不等于"实际生效"**：网络隔离由能力+配置决定，只读则是**逐次**才知道 ——
+因此 `read_only_enforced`/`read_only_gaps` 来自子进程写回的报告，读不到一律按未生效处理，
+且不生效时打警告日志。**默认 `off`**：只读根与 `$HOME` 缓存（matplotlib/LaTeX）冲突，
+开启前需逐个引擎验证。
+
 > **覆盖边界（重要）**：本层隔离的是**经 `SandboxRunner` 跑的子进程**（manim、ffmpeg/ffprobe）。
 > **HTML 引擎（d3 / echarts / code_anim）不在其中** —— `HtmlRenderer._capture` 是在
 > AI 服务进程里直接 `sync_playwright()` 起 Chromium，不经过 runner。

@@ -33,12 +33,13 @@ from __future__ import annotations
 
 import sys
 import textwrap
+from pathlib import Path
 
 import pytest
 
+from scidirector_ai.sandbox.isolation import Isolator
 from scidirector_ai.sandbox.netns import (
     NetworkIsolationUnavailable,
-    NetworkIsolator,
     network_isolation_available,
     reset_probe_cache,
 )
@@ -204,15 +205,19 @@ def test_loopback_state_inside_namespace_is_documented(tmp_path) -> None:
 
 
 def test_mechanism_reports_none_when_disabled() -> None:
-    assert NetworkIsolator("off").mechanism() == "none"
-    assert NetworkIsolator("off").wrap(["echo", "hi"]) == ["echo", "hi"]
+    iso = Isolator("off", "off")
+    assert iso.network_mechanism() == "none"
+    # 关闭时不加任何包装：多一层包装就多一处会坏的地方。
+    wrapped, status = iso.wrap(["echo", "hi"], "/tmp/wd")
+    assert wrapped == ["echo", "hi"]
+    assert status == ""
 
 
 @requires_netns
 def test_mechanism_reports_netns_when_available() -> None:
-    iso = NetworkIsolator("auto")
-    assert iso.mechanism() == "netns"
-    wrapped = iso.wrap(["echo", "hi"])
+    iso = Isolator("auto", "off")
+    assert iso.network_mechanism() == "netns"
+    wrapped, _ = iso.wrap(["echo", "hi"], "/tmp/wd")
     assert wrapped[-2:] == ["echo", "hi"]
     assert "-n" in wrapped and "-r" in wrapped
     # "--" 必须存在：否则参数会被 unshare 自己的选项解析吃掉。
@@ -226,13 +231,13 @@ def test_require_mode_fails_closed_when_unavailable(monkeypatch) -> None:
     而它偏偏"一切正常"——渲染成功、任务完成，只是代码能随便外联。
     """
     monkeypatch.setattr(
-        "scidirector_ai.sandbox.netns.network_isolation_available", lambda *a, **k: False
+        "scidirector_ai.sandbox.isolation.network_isolation_available", lambda *a, **k: False
     )
-    iso = NetworkIsolator("require")
+    iso = Isolator("require", "off")
 
-    assert iso.mechanism() == "none"
+    assert iso.network_mechanism() == "none"
     with pytest.raises(NetworkIsolationUnavailable):
-        iso.wrap(["echo", "hi"])
+        iso.wrap(["echo", "hi"], "/tmp/wd")
 
 
 def test_require_mode_runner_returns_failure_instead_of_raising(monkeypatch, tmp_path) -> None:
@@ -243,7 +248,7 @@ def test_require_mode_runner_returns_failure_instead_of_raising(monkeypatch, tmp
     上层据此把原因写进事件流，用户看到的是一句能读懂的话。
     """
     monkeypatch.setattr(
-        "scidirector_ai.sandbox.netns.network_isolation_available", lambda *a, **k: False
+        "scidirector_ai.sandbox.isolation.network_isolation_available", lambda *a, **k: False
     )
     runner = SandboxRunner("require")
     res = runner.run(["echo", "should-not-run"], cwd=tmp_path)
@@ -258,7 +263,7 @@ def test_require_mode_runner_returns_failure_instead_of_raising(monkeypatch, tmp
 def test_auto_mode_degrades_honestly_when_unavailable(monkeypatch, tmp_path) -> None:
     """`auto` 允许降级，但必须**如实上报** —— 而不是假装隔离了。"""
     monkeypatch.setattr(
-        "scidirector_ai.sandbox.netns.network_isolation_available", lambda *a, **k: False
+        "scidirector_ai.sandbox.isolation.network_isolation_available", lambda *a, **k: False
     )
     res = SandboxRunner("auto").run(["echo", "hi"], cwd=tmp_path)
 
@@ -295,3 +300,188 @@ def test_missing_executable_contract_holds_with_isolation(tmp_path) -> None:
         assert "unshare" not in res.stderr, (
             f"mode={mode} 泄漏了 unshare 的实现细节，调用方不该看到它"
         )
+
+
+# ---------------------------------------------------------------------------
+# 6) 只读根文件系统（阶段五·沙盒加固的另一半）
+# ---------------------------------------------------------------------------
+#
+# 需求里的「容器级 --read-only」在命名空间模型下的等价物：
+# 把**每一个真实文件系统**重挂为只读，再单独把工作目录绑定回可写、
+# 给 /tmp 挂一个有界的私有 tmpfs。
+#
+# 两条最容易搞错、也最值得钉住的事实：
+#   1. `mount -o remount,ro,bind /` **只作用于根那一个挂载**。本机 /vol1、/vol2
+#      是独立的 btrfs 挂载 —— 只重挂 / 之后，往 /vol1/... 写文件照样成功。
+#      我第一版就是这么写的，测试当场把 blocked.txt 写进了宿主机的项目目录。
+#   2. 只读根会让 /tmp 也不可写，而 ffmpeg / Playwright 都要写临时目录，
+#      表现为「渲染莫名失败」。因此必须挂私有 tmpfs，且**必须带 size=**
+#      （不设上限的 tmpfs 能吃掉整机内存，等于用一个新的 OOM 风险换掉只读加固）。
+
+from scidirector_ai.sandbox.isolation import read_only_available as _ro_available
+
+
+@pytest.fixture()
+def sandbox_workdir(tmp_path_factory):
+    """只读用例使用的工作目录。
+
+    **刻意不用 pytest 的 tmp_path**：它在 /tmp 之下，而只读隔离会把 /tmp 换成
+    私有 tmpfs —— 那会把工作目录整个遮蔽，写在里面的产物在命名空间外看不到。
+    代码已经会把这种情况如实记成 gap，但用例本身要用**生产路径形状**
+    （独立于 /tmp 的数据目录）才能真正验证正常工作时的行为。
+    """
+    base = Path(__file__).resolve().parents[2] / ".data" / "test-sandbox"
+    base.mkdir(parents=True, exist_ok=True)
+    d = base / f"case-{tmp_path_factory.getbasetemp().name}"
+    if d.exists():
+        import shutil as _sh
+
+        _sh.rmtree(d, ignore_errors=True)
+    (d / "work").mkdir(parents=True)
+    yield d
+    import shutil as _sh
+
+    _sh.rmtree(d, ignore_errors=True)
+
+requires_ro = pytest.mark.skipif(
+    not _ro_available(),
+    reason="本机不支持非特权挂载命名空间（unshare -r -m），跳过只读隔离验证",
+)
+
+
+def _write_probe(tmp_path):
+    """返回一段脚本：分别尝试往工作目录、工作目录的**父目录**、/etc、/tmp 写文件。"""
+    return textwrap.dedent(
+        f"""
+        import socket
+
+        def try_write(p):
+            try:
+                with open(p, "w") as fh:
+                    fh.write("x")
+                return "OK"
+            except OSError as exc:
+                return "BLOCKED:" + (exc.strerror or "")
+
+        work = {str(tmp_path / "work")!r}
+        print("workdir", try_write(work + "/a.txt"))
+        print("parent", try_write({str(tmp_path)!r} + "/blocked.txt"))
+        print("etc", try_write("/etc/passwd"))
+        print("tmp", try_write("/tmp/scid_ro_probe"))
+        try:
+            socket.create_connection(("8.8.8.8", 53), timeout=3)
+            print("egress REACHABLE")
+        except Exception as exc:
+            print("egress BLOCKED", type(exc).__name__)
+        """
+    )
+
+
+def _probe(tmp_path, mode: str):
+    work = tmp_path / "work"
+    work.mkdir(exist_ok=True)
+    runner = SandboxRunner("off" if mode == "off" else "auto", mode)
+    res = runner.run(
+        [sys.executable, "-c", _write_probe(tmp_path)],
+        cwd=work,
+        limits=ResourceLimits(timeout_sec=60),
+    )
+    got = {}
+    for line in res.stdout.splitlines():
+        parts = line.split(None, 1)
+        if len(parts) == 2:
+            got[parts[0]] = parts[1]
+    return res, got
+
+
+@requires_ro
+def test_read_only_blocks_writes_outside_workdir(sandbox_workdir) -> None:
+    res, got = _probe(sandbox_workdir, "auto")
+
+    assert res.read_only_enforced, f"只读未生效，gaps={res.read_only_gaps}"
+    assert res.read_only_gaps == [], f"不该有保护不上的挂载点：{res.read_only_gaps}"
+    assert res.returncode == 0, res.tail()
+
+    # 工作目录必须可写 —— 否则渲染根本出不了产物。
+    assert got["workdir"] == "OK", got
+    # 工作目录的**父目录**也必须被挡住：这正是"只重挂 / 不够"的那个坑。
+    assert got["parent"].startswith("BLOCKED"), got
+    assert got["etc"].startswith("BLOCKED"), got
+    # /tmp 必须可写（ffmpeg / Playwright 依赖它），且是私有的。
+    assert got["tmp"] == "OK", got
+    # 网络那半同时也在生效。
+    assert got["egress"].startswith("BLOCKED"), got
+
+
+@requires_ro
+def test_writes_succeed_without_read_only(sandbox_workdir) -> None:
+    """**反向对照。**
+
+    没有它，「写父目录被挡住」在一个本来就没有写权限的机器上会永远为真 ——
+    那时用例是绿的，却只是证明了这台机器不给写，而不是只读生效。
+    """
+    res, got = _probe(sandbox_workdir, "off")
+
+    assert not res.read_only_enforced, "关闭时不该声称已只读"
+    assert got["workdir"] == "OK", got
+    if not got["parent"].startswith("OK"):
+        pytest.skip(
+            "本机对测试目录本来就没有写权限，无法构成反向对照；"
+            "上一条用例因此在本次运行中不构成证据"
+        )
+    assert got["etc"].startswith("BLOCKED"), got  # /etc 本来就不该给普通用户写
+
+
+@requires_ro
+def test_read_only_report_is_removed_from_workdir(sandbox_workdir) -> None:
+    """状态文件读完即删：它写在工作目录里，留着会污染渲染产物目录。"""
+    _probe(sandbox_workdir, "auto")
+    leftovers = list((sandbox_workdir / "work").glob(".scid_sandbox_status.json"))
+    assert leftovers == [], f"状态文件未清理：{leftovers}"
+
+
+@requires_ro
+def test_read_only_render_still_works(sandbox_workdir) -> None:
+    """只读下真实跑一次 ffmpeg 渲染，必须照常出片。
+
+    这条是「不把功能弄坏」的那一半证据：只阻断不该做的写，
+    不该影响该做的写（工作目录）。
+    """
+    from scidirector_ai.media import _binary
+
+    work = sandbox_workdir / "work"
+    work.mkdir(exist_ok=True)
+    out = work / "shot.mp4"
+    res = SandboxRunner("off", "auto").run(
+        [
+            _binary("ffmpeg"), "-y", "-hide_banner", "-loglevel", "error",
+            "-f", "lavfi", "-i", "color=c=teal:s=320x240:d=1",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", str(out),
+        ],
+        cwd=work,
+        limits=ResourceLimits(timeout_sec=120),
+    )
+
+    assert res.read_only_enforced, f"只读未生效：{res.read_only_gaps}"
+    assert res.returncode == 0, res.tail()
+    assert out.is_file() and out.stat().st_size > 0, "只读下渲染没有产出文件"
+
+
+def test_read_only_require_fails_closed_when_unavailable(monkeypatch, tmp_path) -> None:
+    """`require` 拿不到只读时必须拒绝执行，绝不能静默降级。"""
+    monkeypatch.setattr(
+        "scidirector_ai.sandbox.isolation.read_only_available", lambda: False
+    )
+    res = SandboxRunner("off", "require").run(["echo", "should-not-run"], cwd=tmp_path)
+
+    assert not res.ok
+    assert "只读" in res.stderr
+    assert "should-not-run" not in res.stdout, "命令不该被执行"
+
+
+def test_read_only_off_means_no_wrapper(tmp_path) -> None:
+    """关闭时**不加任何包装**：多一层包装就多一处会坏的地方，也有成本。"""
+    iso = SandboxRunner("off", "off").isolator
+    wrapped, status = iso.wrap(["echo", "hi"], str(tmp_path))
+    assert wrapped == ["echo", "hi"]
+    assert status == ""

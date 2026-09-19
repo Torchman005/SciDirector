@@ -43,7 +43,8 @@ from pathlib import Path
 from typing import Protocol
 
 from ..logging import get_logger
-from .netns import IsolationMode, NetworkIsolator, NetworkIsolationUnavailable
+from .isolation import Isolator, ReadOnlyMode, ReadOnlyUnavailable
+from .netns import IsolationMode, NetworkIsolationUnavailable
 
 logger = get_logger(__name__)
 
@@ -156,6 +157,14 @@ class ExecResult:
     #: 网络隔离实际由谁执行：netns / none。**如实上报** ——
     #: 与内存那项同理，谎报"已隔离"比没有隔离更危险（见 netns.py 的说明）。
     network_isolation: str = "none"
+    #: 只读根是否**确实生效**。
+    #:
+    #: 注意这与 network_isolation 的语义不同：网络隔离是"配置 + 能力"决定的，
+    #: 而只读是**逐次执行**才知道结果的（某个挂载点重挂失败就会让这一层失效）。
+    #: 因此它的取值来自子进程写回的状态报告，而不是配置。
+    read_only_enforced: bool = False
+    #: 没能变成只读的挂载点（含原因）。空列表 + enforced=true 才算真的只读。
+    read_only_gaps: list[str] = field(default_factory=list)
     #: 使用的超时值（便于错误信息里给出确切数字）。
     timeout_sec: float = 0.0
 
@@ -456,10 +465,15 @@ class _KillFlag:
 class SandboxRunner:
     """受控子进程执行器。无共享可变状态，可被多线程共用。"""
 
-    def __init__(self, network_isolation: IsolationMode = "auto") -> None:
-        #: 网络隔离策略。默认 auto：能用就用，不能用则如实上报而不是假装隔离。
-        #: 生产应配 require（见 netns.py）。
-        self.isolator = NetworkIsolator(network_isolation)
+    def __init__(
+        self,
+        network_isolation: IsolationMode = "auto",
+        read_only: ReadOnlyMode = "off",
+    ) -> None:
+        #: 网络隔离默认 auto：能用就用，不能用则如实上报而不是假装隔离。
+        #: 只读默认 **off**：它会让 $HOME 下的缓存不可写（matplotlib/LaTeX 依赖），
+        #: 开启前必须逐个引擎验证，不能替使用者默认打开。
+        self.isolator = Isolator(network_isolation, read_only)
 
     #: 允许子进程继承的环境变量白名单。
     #: 用白名单而不是黑名单：黑名单永远会漏（新增一个 *_KEY 就泄露了）。
@@ -511,9 +525,9 @@ class SandboxRunner:
         # 顺序很重要 —— rlimit 由 preexec_fn 在 fork 后设置，命名空间由 unshare
         # 在 exec 前建立，两者作用于同一个进程（以及它的后代），互不干扰。
         try:
-            mechanism = self.isolator.mechanism()
-            spawn_argv = self.isolator.wrap(argv)
-        except NetworkIsolationUnavailable as exc:
+            mechanism = self.isolator.network_mechanism()
+            spawn_argv, status_path = self.isolator.wrap(argv, str(cwd))
+        except (NetworkIsolationUnavailable, ReadOnlyUnavailable) as exc:
             # 这是**部署配置**问题而不是渲染问题，但仍返回结果而不是抛异常：
             # 与本方法对「找不到可执行文件」的处理保持一致 —— 让上层统一按渲染失败
             # 处理并把原因写进事件流。抛异常会穿透到图外层，把单个镜头的失败升级成
@@ -620,6 +634,19 @@ class SandboxRunner:
             network_isolation=mechanism,
             timeout_sec=limits.timeout_sec,
         )
+        # 只读报告由子进程写回：逐次执行才知道某个挂载点有没有保护上。
+        if status_path != "":
+            enforced, gaps = read_readonly_report(status_path)
+            result.read_only_enforced = enforced
+            result.read_only_gaps = gaps
+            if not enforced:
+                # **必须让人看见**：配置要求只读、而某个挂载点没保护上，
+                # 这是"以为加固了其实没有"的典型场景。不打日志的话，
+                # 它只会体现在一个没人看的字段里。
+                logger.warning(
+                    "沙盒只读未生效",
+                    extra={"command": argv[0], "gaps": gaps, "workdir": str(cwd)},
+                )
 
         if job:
             # KILL_ON_JOB_CLOSE 保证句柄关闭时残留子进程一并被清理。
@@ -837,3 +864,31 @@ def _decode(raw: bytes | None) -> str:
     if len(text) > MAX_OUTPUT_BYTES:
         return text[:MAX_OUTPUT_BYTES] + "\n…（输出已截断）"
     return text
+
+def read_readonly_report(status_path: str) -> tuple[bool, list[str]]:
+    """读子进程写回的只读状态报告并删除它。
+
+    **读不到就返回 (False, [...])** —— 保守失败：拿不到证据就不声称已只读。
+    反过来（读不到就当成功）会让这一层在报告机制坏掉时静默失效。
+    """
+    import json
+    from pathlib import Path
+
+    path = Path(status_path)
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError) as exc:
+        return False, [f"未取到只读状态报告（{exc.__class__.__name__}）——按未生效处理"]
+    finally:
+        # 状态文件写在工作目录里，读完即删，避免污染产物目录。
+        try:
+            path.unlink()
+        except OSError:
+            pass
+
+    enforced = bool(data.get("readonly_enforced", False))
+    gaps = [str(g) for g in (data.get("readonly_gaps") or [])]
+    if err := data.get("error"):
+        gaps.append(str(err))
+    return enforced, gaps

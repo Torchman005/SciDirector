@@ -142,6 +142,18 @@ class Settings(BaseSettings):
     #:   沙盒执行的是 LLM 生成的代码，"要了隔离却静默降级成不隔离"是最危险的失败形态。
     #: - ``off``：明确不用（例如已经由容器提供隔离）。
     sandbox_network_isolation: Literal["auto", "require", "off"] = "auto"
+    #: 沙盒的**只读根文件系统**（阶段五·沙盒加固）。
+    #:
+    #: 机制是「非特权挂载命名空间 + 把每个真实文件系统重挂为只读」，
+    #: 再单独把工作目录绑定回可写、给 /tmp 挂一个有界的私有 tmpfs。
+    #: 效果上等价于容器级 `--network=none --read-only`（网络那半由上一个开关负责）。
+    #:
+    #: - ``off``（缺省）：不启用。**为什么默认关**：只读根会让 ``$HOME`` 下的缓存
+    #:   （matplotlib 字体缓存、LaTeX 缓存）也不可写，而 manim/LaTeX 依赖它们 ——
+    #:   开启前必须逐个引擎验证。
+    #: - ``auto``：能用就用，不能用则如实上报（报告里的 ``read_only_gaps``）。
+    #: - ``require``：必须生效，否则拒绝执行（fail closed）。
+    sandbox_read_only: Literal["off", "auto", "require"] = "off"
     # Manim 渲染质量：l=480p 草稿（快，用于先验证再高清重渲）, m=720p, h=1080p
     sandbox_manim_quality: Literal["l", "m", "h", "k"] = "l"
     # 沙盒工作目录根；每个 job 在其下建独立子目录。

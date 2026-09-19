@@ -125,7 +125,9 @@ class PipelineService:
     @property
     def runner(self) -> SandboxRunner:
         if self._sandbox is None:
-            self._sandbox = SandboxRunner(self.settings.sandbox_network_isolation)
+            self._sandbox = SandboxRunner(
+                self.settings.sandbox_network_isolation, self.settings.sandbox_read_only
+            )
         return self._sandbox
 
     @property
@@ -174,8 +176,11 @@ class PipelineService:
         # 网络隔离：报**实际生效**的机制，而不是配置里写的模式。
         # 两者必须分开暴露 —— 配置写 require 不等于隔离真的生效，
         # 而「以为隔离了其实没有」是这里最危险的误解。
-        isolation = self.runner.isolator.mechanism()
-        capabilities.append(f"sandbox:network={isolation}")
+        capabilities.append(f"sandbox:network={self.runner.isolator.network_mechanism()}")
+        # 只读这里报的是**配置上打算用的机制**；逐次执行是否真的保护上了，
+        # 由每次执行的 ExecResult.read_only_enforced/read_only_gaps 回答 ——
+        # 某个挂载点重挂失败会让这一层失效，那是执行期才知道的。
+        capabilities.append(f"sandbox:read_only={self.runner.isolator.read_only_mechanism()}")
 
         checkpoint_backend = "memory"
         if self._runner is not None:

@@ -28,6 +28,12 @@
 （`test_netns.py` 把这个事实钉住了：如果将来某个引擎真的需要 loopback，
 那条用例会告诉后来者，而不是让人对着「连接被拒」猜半天。）
 
+## 本模块的职责边界
+
+这里**只**回答「网络命名空间能不能用、怎么包成 netns 形式」。
+把网络与只读文件系统拼成一条命令、以及两者的模式开关，都在 `isolation.py` ——
+拼装规则散在两处必然会出现「加了 -m 但忘了挂 guard」这类静默失效。
+
 ## 诚实的汇报，而不是想当然的「已隔离」
 
 与 `ExecResult.memory_limit_enforced_by` 同一条原则：**谎报「已加固」是安全代码里
@@ -113,47 +119,6 @@ def network_isolation_available(executable: str = "unshare") -> bool:
                     "生产环境请设置 SCID_SANDBOX_NETWORK_ISOLATION=require 以拒绝在无隔离时渲染"
                 )
         return _PROBE_RESULT
-
-
-class NetworkIsolator:
-    """按模式决定是否把命令包进网络命名空间。"""
-
-    def __init__(self, mode: IsolationMode = "auto", executable: str = "unshare") -> None:
-        self.mode = mode
-        self.executable = executable
-
-    def mechanism(self) -> str:
-        """返回实际会生效的机制名，不改变任何状态。"""
-        if self.mode == "off":
-            return "none"
-        if not network_isolation_available(self.executable):
-            return "none"
-        return "netns"
-
-    def wrap(self, argv: list[str]) -> list[str]:
-        """把命令包成隔离形式；`require` 模式下不可用则抛错。"""
-        if self.mode == "off":
-            return argv
-        if not network_isolation_available(self.executable):
-            if self.mode == "require":
-                # fail closed：要了隔离却拿不到，必须显式失败。
-                # 静默降级成"不隔离"会让整个安全假设在无人察觉时失效。
-                raise NetworkIsolationUnavailable(
-                    "沙盒网络隔离被要求（SCID_SANDBOX_NETWORK_ISOLATION=require）"
-                    "但本机不可用：需要 unshare 且允许非特权用户命名空间"
-                    "（检查 kernel.unprivileged_userns_clone / 容器安全策略）"
-                )
-            return argv
-        path = shutil.which(self.executable) or self.executable
-        # 用 "--" 明确分隔：后面的参数一律当成命令，不会与 unshare 自身的选项混淆。
-        #
-        # **绝对不要加 `--fork`。** unshare 默认用 `exec` 直接换成目标命令（**同一个
-        # PID**，已实测确认），而 `--fork` 会多出一个父进程。那会悄悄弄坏两件事：
-        #   1. 内存探针读的是 Popen 返回的 pid（`/proc/<pid>/status` 的 VmHWM），
-        #      变成读 unshare 自己 —— 峰值内存会小到离谱，而**没有任何报错**；
-        #   2. 信号与退出码的传递多一层中转。
-        # `--fork` 只在需要 PID 命名空间时才有意义，这里不需要。
-        return [path, "-r", "-n", "--", *argv]
 
 
 class NetworkIsolationUnavailable(RuntimeError):
