@@ -119,9 +119,32 @@ func (s *Server) HandleGenerate(c *gin.Context) {
 
 	ctx := c.Request.Context()
 	lg := logging.FromContext(ctx)
+	// 归属在这个请求的上下文里（中间件已解析）。先取出来：
+	// 配额检查与任务落库都要用它，而「解析规则」只应存在于中间件一处。
+	tenant := tenantOf(c)
+
+	// 租户配额（阶段五）：资源隔离，而不只是数据隔离。
+	// 渲染是重活，一个租户灌进几十个任务会把所有租户一起拖慢。
+	// 配额为 0 时不做任何检查（单租户/本地开发的缺省）。
+	if limit := s.deps.Config.Tenant.MaxActiveJobs; limit > 0 {
+		active, cerr := s.deps.Store.CountActiveJobs(ctx, tenant)
+		if cerr != nil {
+			// 配额是**保护性**能力，它自己坏了不该让用户提交不了任务：
+			// 记一条警告后放行。若反过来直接 500，一次 Redis 抖动就会
+			// 把整个服务变成不可用 —— 保护机制不该比被保护的东西更脆。
+			lg.Warn("读取租户配额失败，本次放行", "error", cerr.Error())
+		} else if qerr := domain.CheckQuota(tenant, active, limit); qerr != nil {
+			mapError(c, qerr)
+			return
+		}
+	}
 
 	// 快速失败：AI 大脑不可用时立刻拒绝，避免任务入队后长时间卡在队列里，
 	// 也让用户马上得到「稍后重试」而不是「一直转圈」。
+	//
+	// 顺序上放在配额检查**之后**：配额是本地、确定、便宜且更具体的判断，
+	// 先在本地把该拒的拒掉，既省一次上游调用，也让「你已超额」这个更可操作的
+	// 原因不会被「上游不可用」盖住。
 	healthCtx, cancel := withTimeout(ctx, 3*time.Second)
 	defer cancel()
 	if _, err := s.deps.AI.Health(healthCtx); err != nil {
@@ -143,7 +166,11 @@ func (s *Server) HandleGenerate(c *gin.Context) {
 	now := time.Now().UTC()
 
 	job := &domain.Job{
-		JobID:             jobID,
+		JobID: jobID,
+		// 归属在**创建时落定**，之后不可更改。
+		// 从这个请求的上下文里取（中间件已解析），而不是让 handler 自己读头 ——
+		// 这样「解析规则」只有一处，改鉴权方式时不必翻遍 handler。
+		TenantID:          tenant,
 		RawScript:         req.RawScript,
 		StyleGuide:        req.StyleGuide,
 		TargetDurationSec: target,
@@ -156,6 +183,11 @@ func (s *Server) HandleGenerate(c *gin.Context) {
 	if err := s.deps.Store.SaveJob(ctx, job); err != nil {
 		mapError(c, err)
 		return
+	}
+	// 登记进租户的在跑集合。失败只记警告：任务的真实状态才是权威，
+	// 配额集合靠「现算 + 自愈」修正，不需要在这里保证强一致。
+	if err := s.deps.Store.TrackActiveJob(ctx, tenant, jobID, now); err != nil {
+		lg.Warn("登记租户在跑任务失败", "error", err.Error())
 	}
 
 	// 记录首条事件，使 WS 的「加入即重放」从任务创建那一刻就有内容。
@@ -207,10 +239,8 @@ func (s *Server) HandleGenerate(c *gin.Context) {
 
 // HandleGetJob 返回任务详情（含分镜表）。
 func (s *Server) HandleGetJob(c *gin.Context) {
-	jobID := c.Param("jobID")
-	job, err := s.deps.Store.GetJob(c.Request.Context(), jobID)
-	if err != nil {
-		mapError(c, err)
+	job, ok := s.loadJobForTenant(c, c.Param("jobID"))
+	if !ok {
 		return
 	}
 	respondOK(c, JobResponse{
@@ -224,9 +254,8 @@ func (s *Server) HandleGetJob(c *gin.Context) {
 // 它要能被单独查询、单独采集（例如定时把开销异常的任务捞出来），
 // 而不必每次都把整份分镜表拉下来。
 func (s *Server) HandleGetJobCost(c *gin.Context) {
-	job, err := s.deps.Store.GetJob(c.Request.Context(), c.Param("jobID"))
-	if err != nil {
-		mapError(c, err)
+	job, ok := s.loadJobForTenant(c, c.Param("jobID"))
+	if !ok {
 		return
 	}
 	respondOK(c, CostResponse{JobID: job.JobID, Cost: job.CostSnapshot()})
@@ -234,9 +263,8 @@ func (s *Server) HandleGetJobCost(c *gin.Context) {
 
 // HandleListShots 只返回分镜数组。
 func (s *Server) HandleListShots(c *gin.Context) {
-	job, err := s.deps.Store.GetJob(c.Request.Context(), c.Param("jobID"))
-	if err != nil {
-		mapError(c, err)
+	job, ok := s.loadJobForTenant(c, c.Param("jobID"))
+	if !ok {
 		return
 	}
 	respondOK(c, ShotsResponse{JobID: job.JobID, Total: len(job.Shots), Shots: job.Shots})
@@ -247,9 +275,9 @@ func (s *Server) HandleListEvents(c *gin.Context) {
 	jobID := c.Param("jobID")
 	afterID, _ := strconv.ParseInt(c.DefaultQuery("after_id", "0"), 10, 64)
 
-	// 先确认任务存在，避免对不存在的 job 返回空数组造成误解。
-	if _, err := s.deps.Store.GetJob(c.Request.Context(), jobID); err != nil {
-		mapError(c, err)
+	// 先确认任务存在**且属于本租户**，避免对不存在的 job 返回空数组造成误解，
+	// 也避免越权者从「有事件」推断出该 job 存在。
+	if _, ok := s.loadJobForTenant(c, jobID); !ok {
 		return
 	}
 	events, err := s.deps.Store.ListEvents(c.Request.Context(), jobID, afterID)
@@ -283,7 +311,9 @@ func (s *Server) HandleRejectShot(c *gin.Context) {
 		newAttempt int
 		newStatus  domain.ShotStatus
 	)
-	job, err := s.deps.Store.UpdateJob(ctx, jobID, func(j *domain.Job) error {
+	// 归属校验在**锁内**完成（见 store.UpdateJobForTenant）：
+	// 「先查再改」之间存在 TOCTOU 窗口，且那也留下了「忘了查」的可能。
+	job, err := s.deps.Store.UpdateJobForTenant(ctx, jobID, tenantOf(c), func(j *domain.Job) error {
 		shot := j.FindShot(shotID)
 		if shot == nil {
 			return errShotNotFound
@@ -362,7 +392,9 @@ func (s *Server) HandleApproveShot(c *gin.Context) {
 	jobID, shotID := c.Param("jobID"), c.Param("shotID")
 	ctx := c.Request.Context()
 
-	job, err := s.deps.Store.UpdateJob(ctx, jobID, func(j *domain.Job) error {
+	// 归属校验在**锁内**完成（见 store.UpdateJobForTenant）：
+	// 「先查再改」之间存在 TOCTOU 窗口，且那也留下了「忘了查」的可能。
+	job, err := s.deps.Store.UpdateJobForTenant(ctx, jobID, tenantOf(c), func(j *domain.Job) error {
 		shot := j.FindShot(shotID)
 		if shot == nil {
 			return errShotNotFound
@@ -465,7 +497,9 @@ func (s *Server) HandlePatchShot(c *gin.Context) {
 		newAttempt int
 		newStatus  domain.ShotStatus
 	)
-	job, err := s.deps.Store.UpdateJob(ctx, jobID, func(j *domain.Job) error {
+	// 归属校验在**锁内**完成（见 store.UpdateJobForTenant）：
+	// 「先查再改」之间存在 TOCTOU 窗口，且那也留下了「忘了查」的可能。
+	job, err := s.deps.Store.UpdateJobForTenant(ctx, jobID, tenantOf(c), func(j *domain.Job) error {
 		shot := j.FindShot(shotID)
 		if shot == nil {
 			return errShotNotFound

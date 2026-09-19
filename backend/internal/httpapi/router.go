@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/itJinYu/SciDirector/backend/internal/domain"
 	"github.com/itJinYu/SciDirector/backend/internal/logging"
 	"github.com/itJinYu/SciDirector/backend/internal/queue"
+	"github.com/itJinYu/SciDirector/backend/internal/store"
 	"github.com/itJinYu/SciDirector/backend/internal/ws"
 )
 
@@ -35,6 +37,8 @@ func NewRouter(s *Server, deps Deps) *gin.Engine {
 		RecoveryMiddleware(),
 		AccessLogMiddleware(),
 		CORSMiddleware(deps.Config.HTTP.CORSAllowedOrigins),
+		// 租户解析放在业务路由之前、探针之后：探针（/healthz 等）不该要求租户头。
+		TenantMiddleware(deps.Config.Tenant.Mode, deps.Config.Tenant.Header),
 	)
 	// 限制请求体大小：脚本类接口不应接受超大 body，避免内存放大攻击。
 	r.MaxMultipartMemory = 8 << 20
@@ -129,7 +133,14 @@ func (s *Server) HandleJobWS(c *gin.Context) {
 
 	// 连接前先确认任务存在：否则前端会连上一个永远没有事件的空频道，
 	// 表现为「一直在转圈」，很难排查。
-	if _, err := s.deps.Store.GetJob(ctx, jobID); err != nil {
+	// 与 REST 同样的归属校验：WS 是另一个入口，**不能因为「REST 已经检查过了」就跳过** ——
+	// 客户端可以直接连 WS。越权时与不存在返回同一个 404。
+	if _, err := s.deps.Store.GetJobForTenant(ctx, jobID, tenantOf(c)); err != nil {
+		if !errors.Is(err, domain.ErrTenantMismatch) && !errors.Is(err, store.ErrJobNotFound) {
+			mapError(c, err)
+			return
+		}
+		logging.FromContext(ctx).Warn("拒绝了 WebSocket 连接", "job_id", jobID, "reason", err.Error())
 		c.JSON(http.StatusNotFound, APIError{Code: ErrCodeNotFound, Message: "任务不存在"})
 		return
 	}
@@ -137,7 +148,7 @@ func (s *Server) HandleJobWS(c *gin.Context) {
 	// onConnect：把快照与历史事件一次性下发。
 	// 这样前端只有一条「首包」路径要处理，不必区分「首次连接」与「重连」。
 	onConnect := func(cctx context.Context) *ws.Message {
-		job, err := s.deps.Store.GetJob(cctx, jobID)
+		job, err := s.deps.Store.GetJobForTenant(cctx, jobID, tenantOf(c))
 		if err != nil {
 			return &ws.Message{Type: "error", Data: "读取任务失败: " + err.Error()}
 		}
@@ -167,7 +178,13 @@ func (s *Server) HandleJobWS(c *gin.Context) {
 	release := s.subs.acquire(jobID)
 	defer release()
 
-	s.deps.Hub.Serve(c.Writer, c.Request, jobID, onConnect, s.handleInbound)
+	// 把租户绑进 request context：WS 的上行消息（打回/重做）也要按归属校验，
+	// 而那些回调只拿得到 ctx，拿不到 gin.Context。
+	tenant := tenantOf(c)
+	wsReq := c.Request.WithContext(logging.WithTenant(ctx, tenant))
+	s.deps.Hub.Serve(c.Writer, wsReq, jobID, onConnect, func(hctx context.Context, jid string, msg ws.InboundMessage) *ws.Message {
+		return s.handleInbound(hctx, jid, tenant, msg)
+	})
 }
 
 // handleInbound 处理来自前端的上行消息。
@@ -176,7 +193,7 @@ func (s *Server) HandleJobWS(c *gin.Context) {
 //   - "feedback"：人工对某镜头的意见（等价于 REST 的打回接口，走 WS 是为了低延迟交互）；
 //   - "resync"  ：前端重连后请求补发 after_id 之后的事件；
 //   - "ping"    ：应用层心跳（某些代理会吞掉 WS 控制帧，应用层 ping 更可靠）。
-func (s *Server) handleInbound(ctx context.Context, jobID string, msg ws.InboundMessage) *ws.Message {
+func (s *Server) handleInbound(ctx context.Context, jobID, tenant string, msg ws.InboundMessage) *ws.Message {
 	lg := logging.FromContext(ctx).With("job_id", jobID)
 
 	switch msg.Type {
@@ -195,7 +212,7 @@ func (s *Server) handleInbound(ctx context.Context, jobID string, msg ws.Inbound
 		if msg.ShotID == "" || msg.Comment == "" {
 			return &ws.Message{Type: "error", Data: "feedback 消息需要 shot_id 与 comment"}
 		}
-		if err := s.applyHumanFeedback(ctx, jobID, msg.ShotID, msg.Comment); err != nil {
+		if err := s.applyHumanFeedback(ctx, jobID, tenant, msg.ShotID, msg.Comment); err != nil {
 			lg.Warn("处理 WS 人工反馈失败", "shot_id", msg.ShotID, "error", err.Error())
 			return &ws.Message{Type: "error", Data: err.Error()}
 		}
@@ -211,8 +228,8 @@ func (s *Server) handleInbound(ctx context.Context, jobID string, msg ws.Inbound
 
 // applyHumanFeedback 是 WS 路径下的人工打回实现。
 // 与 REST 版本共享同一套状态迁移规则，只是入口不同（低延迟交互 vs 表单提交）。
-func (s *Server) applyHumanFeedback(ctx context.Context, jobID, shotID, comment string) error {
-	job, err := s.deps.Store.UpdateJob(ctx, jobID, func(j *domain.Job) error {
+func (s *Server) applyHumanFeedback(ctx context.Context, jobID, tenant, shotID, comment string) error {
+	job, err := s.deps.Store.UpdateJobForTenant(ctx, jobID, tenant, func(j *domain.Job) error {
 		shot := j.FindShot(shotID)
 		if shot == nil {
 			return errShotNotFound

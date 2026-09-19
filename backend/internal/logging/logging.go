@@ -19,13 +19,17 @@ const (
 	FieldAttempt = "attempt"
 	FieldNode    = "node"
 	FieldTaskID  = "task_id"
+	// FieldTenantID 是多租户下的归属字段（阶段五）。
+	// 与其它字段同名的跨语言约定：Python 侧也用 tenant_id。
+	FieldTenantID = "tenant_id"
 )
 
 type ctxKey string
 
 const (
-	ctxKeyTraceID ctxKey = "logging.trace_id"
-	ctxKeyJobID   ctxKey = "logging.job_id"
+	ctxKeyTraceID  ctxKey = "logging.trace_id"
+	ctxKeyJobID    ctxKey = "logging.job_id"
+	ctxKeyTenantID ctxKey = "logging.tenant_id"
 )
 
 // Options 控制日志后端行为。
@@ -77,6 +81,17 @@ func WithJob(ctx context.Context, jobID string) context.Context {
 	return context.WithValue(ctx, ctxKeyJobID, jobID)
 }
 
+// WithTenant 把租户 ID 注入 context，供后续所有日志自动携带。
+//
+// 多租户下「按租户排查」是最常见的诉求：没有这个字段，
+// 就只能靠 job_id 反查归属，而那一刻往往已经在处理故障了。
+func WithTenant(ctx context.Context, tenantID string) context.Context {
+	if tenantID == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, ctxKeyTenantID, tenantID)
+}
+
 // FromContext 返回一个已附加 context 中追踪字段的 logger。
 // 约定：所有跨函数边界的日志都用 FromContext(ctx).Info(...)，而不是 slog.Info(...)。
 func FromContext(ctx context.Context) *slog.Logger {
@@ -89,6 +104,9 @@ func FromContext(ctx context.Context) *slog.Logger {
 	}
 	if v, ok := ctx.Value(ctxKeyJobID).(string); ok && v != "" {
 		l = l.With(slog.String(FieldJobID, v))
+	}
+	if v, ok := ctx.Value(ctxKeyTenantID).(string); ok && v != "" {
+		l = l.With(slog.String(FieldTenantID, v))
 	}
 	return l
 }

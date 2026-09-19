@@ -13,10 +13,13 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	goredis "github.com/redis/go-redis/v9"
+	"google.golang.org/grpc"
 
 	"github.com/itJinYu/SciDirector/backend/internal/ai"
 	"github.com/itJinYu/SciDirector/backend/internal/config"
 	"github.com/itJinYu/SciDirector/backend/internal/domain"
+	pb "github.com/itJinYu/SciDirector/backend/internal/pb/scidirector/v1"
 	"github.com/itJinYu/SciDirector/backend/internal/queue"
 	"github.com/itJinYu/SciDirector/backend/internal/store"
 	"github.com/itJinYu/SciDirector/backend/internal/ws"
@@ -46,12 +49,34 @@ type harness struct {
 }
 
 func newHarness(t *testing.T) *harness {
+	return newHarnessWithQuota(t, 0)
+}
+
+// newHarnessWithQuota 允许用例指定租户配额上限。
+//
+// 做成构造参数而不是「构造完再改字段」：后者要在路由已经建好之后改配置，
+// 而路由/中间件可能已经把配置读走了 —— 那样测出来的行为会取决于实现细节，
+// 而且很容易写成"设了但没生效"却依然是绿的。
+func newHarnessWithQuota(t *testing.T, maxActiveJobs int) *harness {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	addr := testRedisAddr(t)
 
 	redisCfg := config.RedisConfig{Addr: addr, DB: 14}
 	ctx := context.Background()
+
+	// 每个用例从干净的库开始。
+	//
+	// 不加这一步时，**配额类用例不是可重复的**：租户的在跑集合与任务都留在库里，
+	// 第二次跑同一个用例时计数会累积（实测本用例第二次跑就报 "3/3 已达上限"）。
+	// 一个"只在新库上通过"的测试比没有测试更糟 —— 它会训练人忽视红灯。
+	// 与 queue/worker 包的做法一致：每个包独占一个库号并在用例前清空。
+	if rdb := goredis.NewClient(&goredis.Options{Addr: addr, DB: 14}); true {
+		if err := rdb.FlushDB(ctx).Err(); err != nil {
+			t.Fatalf("清空测试库失败: %v", err)
+		}
+		_ = rdb.Close()
+	}
 
 	st, err := store.New(ctx, redisCfg)
 	if err != nil {
@@ -65,12 +90,22 @@ func newHarness(t *testing.T) *harness {
 		HTTP:     config.HTTPConfig{CORSAllowedOrigins: []string{"*"}},
 		Redis:    redisCfg,
 		Queue:    config.QueueConfig{Queues: map[string]int{"critical": 6, "default": 3}},
+		Tenant:   config.TenantConfig{Mode: "header", Header: "X-Tenant-ID", MaxActiveJobs: maxActiveJobs},
 	}
 	q := queue.NewClient(redisCfg, cfg.Queue)
 	t.Cleanup(func() { _ = q.Close() })
 
+	// 起一个**真实的 gRPC server** 扮演 AI 大脑，只实现 Health。
+	//
+	// 为什么不是"随便指向一个不存在的地址"：HandleGenerate 会先探活，
+	// 探活失败就 503 —— 于是「创建任务的真实路径」（归属落库、配额、入队）
+	// 在这些用例里**根本走不到**，只能靠 t.Skip 掩盖过去。
+	// 我第一版就是那样，而 skip 掉的恰恰是本节最想验的那段代码。
+	aiAddr := startFakeAIServer(t)
+
 	aiClient, err := ai.NewClient(config.AIConfig{
-		Addr: "127.0.0.1:59999", // 不会被调用；构造是惰性的
+		Addr:         aiAddr,
+		UnaryTimeout: 5 * time.Second,
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatalf("构造 ai 客户端失败: %v", err)
@@ -504,4 +539,30 @@ func TestPatchShotNotFound(t *testing.T) {
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("分镜不存在应返回 404，实际 HTTP %d", w.Code)
 	}
+}
+
+// fakeAIServer 只实现 Health —— 本等用例只关心"探活通过后"的路径。
+//
+// 用真实 gRPC server 而不是 mock 掉 ai.Client：ai 客户端是具体类型，
+// 没有接口可替身；而真起一个 server 顺带把「探活成功」这件事也如实覆盖了。
+type fakeAIServer struct {
+	pb.UnimplementedAiDirectorServiceServer
+}
+
+func (f *fakeAIServer) Health(context.Context, *pb.HealthRequest) (*pb.HealthResponse, error) {
+	return &pb.HealthResponse{Healthy: true, Version: "test", LlmProvider: "mock"}, nil
+}
+
+// startFakeAIServer 起一个监听随机端口的假 AI 大脑，返回其地址。
+func startFakeAIServer(t *testing.T) string {
+	t.Helper()
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("监听 gRPC 端口失败: %v", err)
+	}
+	gs := grpc.NewServer()
+	pb.RegisterAiDirectorServiceServer(gs, &fakeAIServer{})
+	go func() { _ = gs.Serve(lis) }()
+	t.Cleanup(gs.Stop)
+	return lis.Addr().String()
 }

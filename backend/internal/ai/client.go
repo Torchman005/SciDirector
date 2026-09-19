@@ -53,7 +53,18 @@ type Client struct {
 // 注意：这里用 grpc.NewClient（惰性连接）而不是 DialContext（立即连接）。
 // 惰性连接让 Worker 在 Python 侧尚未就绪时仍能启动，由 gRPC 自动重连 +
 // 就绪探针兜底，避免容器编排中的启动顺序死锁。
+// defaultMaxRecvMsgSizeMB 与 config 里的缺省保持一致（8MB）。
+const defaultMaxRecvMsgSizeMB = 8
+
 func NewClient(cfg config.AIConfig, logger *slog.Logger) (*Client, error) {
+	// MaxRecvMsgSizeMB 的**零值是个陷阱**：它会被原样当成 0 字节上限，
+	// 于是每一个响应都失败，报错是 `received message larger than max (14 vs. 0)`
+	// —— 看起来像"消息太大"，实际是"上限没配"。手写 Config 的调用方
+	// （测试、脚本、将来别的二进制）很容易漏掉这个字段。
+	// 这里给一个防御性缺省：宁可接受稍大的消息，也不要让整条链路静默不可用。
+	if cfg.MaxRecvMsgSizeMB <= 0 {
+		cfg.MaxRecvMsgSizeMB = defaultMaxRecvMsgSizeMB
+	}
 	conn, err := grpc.NewClient(cfg.Addr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithDefaultCallOptions(

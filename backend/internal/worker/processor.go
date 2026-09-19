@@ -96,6 +96,9 @@ func (p *Processor) HandleGenerateJob(ctx context.Context, task GenerateTask) er
 		return fmt.Errorf("worker: 读取任务失败: %w", err)
 	}
 
+	// 读到任务后立刻绑定归属，让后续所有日志都带 tenant_id。
+	ctx = bindTenant(ctx, job)
+
 	lg.Info("开始执行生成任务",
 		"target_duration_sec", job.TargetDurationSec,
 		"locale", job.Locale,
@@ -416,6 +419,8 @@ func (p *Processor) HandleRenderShot(ctx context.Context, task RenderShotTask) e
 		}
 		return err
 	}
+	// 读到任务后立刻绑定归属，让后续所有日志都带 tenant_id。
+	ctx = bindTenant(ctx, job)
 	shot := job.FindShot(shotID)
 	if shot == nil {
 		lg.Warn("分镜不存在，忽略镜头重做消息")

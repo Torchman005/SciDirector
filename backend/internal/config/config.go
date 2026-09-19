@@ -27,6 +27,23 @@ type Config struct {
 	Pipeline PipelineConfig
 	Archive  ArchiveConfig
 	Obs      ObservabilityConfig
+	Tenant   TenantConfig
+}
+
+// TenantConfig 描述多租户的接入方式（阶段五）。
+type TenantConfig struct {
+	// Mode: "header"（缺省，读请求头，缺失时回落 default）或
+	// "required"（必须带请求头，否则 400）。**多租户部署必须用 required** ——
+	// 它把「网关照配了但没透传租户」从一个静默的越权风险变成立刻可见的失败。
+	Mode string
+	// Header 是携带租户标识的请求头名，默认 X-Tenant-ID。
+	Header string
+	// MaxActiveJobs 是**每个租户**允许同时在跑的任务数上限（阶段五·配额）。
+	// 0（缺省）= 不限制：单租户/本地开发不该被一个凭空出现的上限挡住。
+	//
+	// 这是「资源隔离」而不只是「数据隔离」：渲染是重活，
+	// 一个租户灌进几十个任务会把所有租户一起拖慢。
+	MaxActiveJobs int
 }
 
 // ObservabilityConfig 描述链路追踪与指标（阶段五·可观测性）。
@@ -213,6 +230,11 @@ func Load() (*Config, error) {
 			CriticScoreThreshold: getFloat("SCID_CRITIC_SCORE_THRESHOLD", 0.75),
 		},
 		Obs: loadObservabilityConfig(),
+		Tenant: TenantConfig{
+			Mode:          getEnv("SCID_TENANT_MODE", "header"),
+			Header:        getEnv("SCID_TENANT_HEADER", "X-Tenant-ID"),
+			MaxActiveJobs: getInt("SCID_TENANT_MAX_ACTIVE_JOBS", 0),
+		},
 		Archive: ArchiveConfig{
 			Backend:        getEnv("SCID_ARCHIVE_BACKEND", "none"),
 			LocalDir:       getEnv("SCID_ARCHIVE_LOCAL_DIR", "./.data/archive"),

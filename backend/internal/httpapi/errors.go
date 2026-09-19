@@ -10,6 +10,7 @@ package httpapi
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 
 	"github.com/itJinYu/SciDirector/backend/internal/ai"
 	"github.com/itJinYu/SciDirector/backend/internal/config"
+	"github.com/itJinYu/SciDirector/backend/internal/domain"
 	"github.com/itJinYu/SciDirector/backend/internal/logging"
 	"github.com/itJinYu/SciDirector/backend/internal/queue"
 	"github.com/itJinYu/SciDirector/backend/internal/store"
@@ -40,6 +42,10 @@ const (
 	ErrCodeUpstream     = "UPSTREAM_UNAVAILABLE"
 	ErrCodeInternal     = "INTERNAL"
 	ErrCodeUnauthorized = "UNAUTHORIZED"
+	// ErrCodeRateLimited 用于配额/限流被触发（HTTP 429）。
+	// 与 BAD_REQUEST 分开是为了让客户端能区分「请求写错了」与「现在不行，等会儿再来」——
+	// 前者重试无用，后者应当退避重试。
+	ErrCodeRateLimited = "RATE_LIMITED"
 )
 
 // Deps 汇总 HTTP 层所需的外部依赖。
@@ -87,8 +93,20 @@ func abortWith(c *gin.Context, status int, code, msg string, cause error) {
 // 集中映射的好处：不会出现「同一个错误在不同 handler 里返回不同状态码」。
 func mapError(c *gin.Context, err error) {
 	switch {
+	case errors.Is(err, domain.ErrTenantMismatch):
+		// 越权与不存在必须给出**完全相同**的响应，包括不携带 detail ——
+		// 否则「detail 里写着『任务不属于该租户』」直接确认了这个 job_id 存在，
+		// 攻击者可以据此枚举。这正是本轮由路由表用例抓出来的实际缺陷：
+		// approve/reject 曾经返回 500 + 那段 detail。
+		abortWith(c, http.StatusNotFound, ErrCodeNotFound, "任务不存在", nil)
 	case errors.Is(err, store.ErrJobNotFound):
 		abortWith(c, http.StatusNotFound, ErrCodeNotFound, "任务不存在", err)
+	case asQuotaExceeded(err) != nil:
+		// 429 而不是 400/500：语义是「请求本身没错，只是现在不行」，
+		// 客户端据此应当退避重试，而不是把它当成 bug 上报。
+		q := asQuotaExceeded(err)
+		abortWith(c, http.StatusTooManyRequests, ErrCodeRateLimited,
+			fmt.Sprintf("在跑任务数已达上限（%d/%d），请等待已有任务完成后再提交", q.Active, q.Limit), nil)
 	case errors.Is(err, store.ErrJobConflict):
 		abortWith(c, http.StatusConflict, ErrCodeConflict, "任务正被其他请求修改，请稍后重试", err)
 	case errors.Is(err, ai.ErrUnavailable):
@@ -108,4 +126,13 @@ func respondOK(c *gin.Context, data any) {
 // respondAccepted 用于「已受理但结果异步产生」的场景（如提交生成任务）。
 func respondAccepted(c *gin.Context, data any) {
 	c.JSON(http.StatusAccepted, gin.H{"ok": true, "data": data})
+}
+
+// asQuotaExceeded 提取配额错误（`errors.As` 的薄封装，让 switch 里能写得干净些）。
+func asQuotaExceeded(err error) *domain.QuotaExceededError {
+	var q *domain.QuotaExceededError
+	if errors.As(err, &q) {
+		return q
+	}
+	return nil
 }

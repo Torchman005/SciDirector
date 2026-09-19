@@ -184,7 +184,13 @@ type Shot struct {
 
 // Job 是一次「脚本 -> 成片」的生成请求。
 type Job struct {
-	JobID             string         `json:"job_id"`
+	JobID string `json:"job_id"`
+	// TenantID 是任务的**归属**（阶段五·多租户）。
+	//
+	// 在创建时落库、之后不可更改：归属一旦可以改，"谁有权看"就变得不可推理。
+	// 旧任务没有这个字段，读取时按 DefaultTenantID 处理（见 JobBelongsTo），
+	// 因此加这个字段不会让历史任务突然全部「不存在」。
+	TenantID          string         `json:"tenant_id,omitempty"`
 	RawScript         string         `json:"raw_script"`
 	StyleGuide        map[string]any `json:"style_guide,omitempty"`
 	TargetDurationSec float64        `json:"target_duration_sec"`

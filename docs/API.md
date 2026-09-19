@@ -124,6 +124,22 @@ curl -X POST http://localhost:8080/api/v1/generate \
 
 ### 2.3 查询任务
 
+#### 租户标识（阶段五）
+
+所有 `/api/v1/jobs/...` 与 `/ws/jobs/...` 的请求都应带租户头（默认 `X-Tenant-ID`）：
+
+```
+X-Tenant-ID: acme
+```
+
+- 归属在**创建任务时**落定，之后不可更改。
+- **跨租户访问与「任务不存在」返回完全相同的 404**（含错误码与文案，且不带 `detail`）——
+  否则可以靠 403/差异文案枚举出哪些 job_id 存在。
+- 缺失该头时回落到 `default` 租户（单租户/本地开发）。多租户部署应设
+  `SCID_TENANT_MODE=required`，让"网关漏配"立刻表现为 400 而不是静默共用一个租户。
+- 该头只做**归属与隔离**，不是身份认证：它挡不住伪造请求头的调用方。
+  生产应由可信网关注入，或替换为从令牌/证书解析的实现。
+
 #### `GET /api/v1/jobs/:jobID`
 
 ```json
@@ -131,6 +147,7 @@ curl -X POST http://localhost:8080/api/v1/generate \
   "ok": true,
   "data": {
     "job": {
+      "tenant_id": "acme",
       "job_id": "job-9f3a…", "status": "RENDERING", "progress": 0.25,
       "raw_script": "…", "final_video_path": "",
       "shots": [ { "shot_id": "job-9f3a…-s000", "index": 0, "tag": "MATH",
@@ -191,6 +208,23 @@ curl -X POST http://localhost:8080/api/v1/generate \
 这是 WebSocket 的降级通道，也用于断线重连补齐。
 
 ---
+
+#### 配额：`429 RATE_LIMITED`
+
+按租户限制**同时在跑**的任务数（`SCID_TENANT_MAX_ACTIVE_JOBS`，0 = 不限制）。
+超出时：
+
+```json
+{ "code": "RATE_LIMITED",
+  "message": "在跑任务数已达上限（2/2），请等待已有任务完成后再提交" }
+```
+
+用 429 而不是 400/500：语义是「请求本身没错，只是现在不行」，客户端应当**退避重试**，
+而不是把它当成服务端 bug 上报。消息里给出确切数字，用户才知道要等多久。
+
+「在跑」不含 `COMPLETED` / `PARTIAL` / `FAILED` —— 尤其是 `PARTIAL`（有镜头转人工）：
+它的流水线已经停了、在等人类，不该继续占配额，否则一个卡着人工审核的任务会把
+整个租户挡在门外。
 
 ### 2.4 人类反馈闭环
 

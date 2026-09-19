@@ -124,6 +124,9 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 		}
 		return err
 	}
+	// 读到任务后立刻绑定归属，让后续所有日志都带 tenant_id。
+	ctx = bindTenant(ctx, job)
+	lg = logging.FromContext(ctx).With("job_id", jobID)
 
 	// 收集所有已通过镜头的视频产物。未通过的镜头一律不参与合成 ——
 	// 「部分成片」会误导用户，正确做法是保持 PARTIAL 状态并提示缺少哪些镜头。
@@ -529,4 +532,18 @@ func (p *Processor) subtitleOptions() media.SubtitleOptions {
 		opt.MaxCueSec = p.cfg.Media.SubtitleMaxCueSec
 	}
 	return opt
+}
+
+// bindTenant 把任务的归属绑进日志上下文。
+//
+// 租户从**任务记录**里读，而不是从队列载荷里带：
+//   - 任务记录是归属的唯一权威来源，载荷里再放一份就有两个来源，迟早不一致；
+//   - 载荷是可被入队方构造的，而归属不该由调用方在入队时"声明"。
+//
+// 这样 worker 侧的所有日志都自动带 tenant_id，多租户下按租户排查才有依据。
+func bindTenant(ctx context.Context, job *domain.Job) context.Context {
+	if job == nil || job.TenantID == "" {
+		return ctx
+	}
+	return logging.WithTenant(ctx, job.TenantID)
 }

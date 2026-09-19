@@ -112,36 +112,132 @@ func (s *Store) GetJob(ctx context.Context, jobID string) (*domain.Job, error) {
 	return &job, nil
 }
 
+// GetJobForTenant 读取任务并**校验归属**（阶段五·多租户）。
+//
+// 这是所有「按 job_id 访问」的对外入口，把归属检查放在**存储层**而不是各个 handler 里，
+// 是为了让它无法被遗漏：handler 有八九个（查询、事件、成本、三个 HITL 操作、WS），
+// 逐个记得写检查必然会漏一个 —— 而漏掉的表现是「某个接口能读到别人的任务」，
+// 既不会报错也不会失败，只会在某次审计里被发现。
+//
+// 两种失败明确区分：任务不存在返回 ErrJobNotFound，
+// 存在但不属于该租户返回 ErrTenantMismatch（由 HTTP 层统一映射成同一个 404，
+// 对外不可区分，避免用 404/403 的差异枚举出哪些 job_id 存在）。
+func (s *Store) GetJobForTenant(ctx context.Context, jobID, tenantID string) (*domain.Job, error) {
+	job, err := s.GetJob(ctx, jobID)
+	if err != nil {
+		return nil, err
+	}
+	if !domain.JobBelongsTo(job, tenantID) {
+		// 不返回 job 内容 —— 越权路径上一个字段都不该泄漏出去。
+		return nil, fmt.Errorf("%w: job=%s", domain.ErrTenantMismatch, jobID)
+	}
+	return job, nil
+}
+
 // UpdateJob 以「加锁 + 读改写」的方式原子更新任务。
 //
 // mutate 函数在持有分布式锁的情况下被调用；返回错误则不写回（更新被放弃）。
 // 这是本系统唯一允许修改已存在任务的入口，杜绝丢失更新。
 func (s *Store) UpdateJob(ctx context.Context, jobID string, mutate func(*domain.Job) error) (*domain.Job, error) {
+	return s.updateJob(ctx, jobID, "", mutate)
+}
+
+// UpdateJobForTenant 与 UpdateJob 相同，但**在锁内**校验归属（阶段五·多租户）。
+//
+// 校验必须放在锁内，不能放在调用方「先查再改」：
+// 两步之间任务可能被删掉或改归属，检查通过之后的操作对象已经不是被检查的对象
+// —— 这正是经典的 TOCTOU。放在 mutate 之前、同一次加锁之内，才真正是原子的。
+func (s *Store) UpdateJobForTenant(ctx context.Context, jobID, tenantID string, mutate func(*domain.Job) error) (*domain.Job, error) {
+	return s.updateJob(ctx, jobID, tenantID, mutate)
+}
+
+// updateJob 是 UpdateJob / UpdateJobForTenant 的共同实现。
+// tenantID 为空表示不校验归属（内部调用、系统补偿任务走这条）。
+func (s *Store) updateJob(ctx context.Context, jobID, tenantID string, mutate func(*domain.Job) error) (*domain.Job, error) {
 	unlock, err := s.acquireLock(ctx, jobID)
 	if err != nil {
 		return nil, err
 	}
 	defer unlock()
 
-	job, err := s.GetJob(ctx, jobID)
-	if err != nil {
-		return nil, err
+	// 读**原始字节**而不是直接反序列化：写回时要把"我们不认识的字段"原样带回去，
+	// 见 mergeUnknownFields 的说明。
+	raw, err := s.rdb.Get(ctx, jobKey(jobID)).Bytes()
+	if errors.Is(err, redis.Nil) {
+		return nil, ErrJobNotFound
 	}
-	if err := mutate(job); err != nil {
+	if err != nil {
+		return nil, fmt.Errorf("store: 读取任务失败: %w", err)
+	}
+	var job domain.Job
+	if err := json.Unmarshal(raw, &job); err != nil {
+		return nil, fmt.Errorf("store: 反序列化任务失败: %w", err)
+	}
+	if tenantID != "" && !domain.JobBelongsTo(&job, tenantID) {
+		return nil, fmt.Errorf("%w: job=%s", domain.ErrTenantMismatch, jobID)
+	}
+	if err := mutate(&job); err != nil {
 		return nil, err
 	}
 
 	// 进度是派生值：统一在此重算，避免各调用点忘记更新导致前端进度回跳。
 	job.Progress = job.ProgressRatio()
 	job.UpdatedAt = time.Now().UTC()
-	buf, err := json.Marshal(job)
+	buf, err := json.Marshal(&job)
 	if err != nil {
 		return nil, fmt.Errorf("store: 序列化任务失败: %w", err)
+	}
+	buf, err = mergeUnknownFields(raw, buf)
+	if err != nil {
+		return nil, err
 	}
 	if err := s.rdb.Set(ctx, jobKey(job.JobID), buf, 7*24*time.Hour).Err(); err != nil {
 		return nil, fmt.Errorf("store: 写回任务失败: %w", err)
 	}
-	return job, nil
+	return &job, nil
+}
+
+// mergeUnknownFields 把旧 JSON 里、新 JSON 中**没有的**键原样保留下来。
+//
+// ## 为什么必须这么做（一个真实发生过的授权降级）
+//
+// 任务是整份 JSON 存在 Redis 里的，而**多个进程**都会读改写它（api 与 worker）。
+// 于是「给结构体加一个字段」在不同版本并存时不是向后兼容的：
+// 旧版本的进程把 JSON 反序列化进**不认识该字段**的结构体，再整份写回 ——
+// 那个字段就被静默抹掉了。
+//
+// 本项目真实踩到：新增 tenant_id 之后只重启了 api，仍在跑的旧 worker
+// 一碰任务就把 tenant_id 抹掉；而读取时「缺失 = default 租户」，
+// 于是任务的主人反而读不到自己的任务（表现为 404），
+// 并且它对 default 租户变得可见 —— 这是**授权降级**，不只是数据丢失。
+//
+// 保留未知字段让加字段变成真正的滚动兼容：新旧版本并存期间，
+// 各自只改自己认识的字段，谁都不会把对方的抹掉。
+// （代价是无法通过删字段来清理数据；要删就得显式处理，这比静默丢失好得多。）
+func mergeUnknownFields(oldRaw, newRaw []byte) ([]byte, error) {
+	var oldMap, newMap map[string]json.RawMessage
+	if err := json.Unmarshal(oldRaw, &oldMap); err != nil {
+		// 旧值不是合法 JSON 时不做合并：宁可写新值，也不要因为脏数据而更新失败。
+		return newRaw, nil //nolint:nilerr // 见上：脏数据不应阻断更新
+	}
+	if err := json.Unmarshal(newRaw, &newMap); err != nil {
+		return nil, fmt.Errorf("store: 序列化任务失败: %w", err)
+	}
+	changed := false
+	for k, v := range oldMap {
+		if _, ok := newMap[k]; !ok {
+			newMap[k] = v
+			changed = true
+		}
+	}
+	if !changed {
+		return newRaw, nil
+	}
+	merged, err := json.Marshal(newMap)
+	if err != nil {
+		return nil, fmt.Errorf("store: 合并未知字段失败: %w", err)
+	}
+	return merged, nil
 }
 
 // ---------------------------------------------------------------------------
