@@ -116,6 +116,24 @@ func (c *Client) Health(ctx context.Context) (*pb.HealthResponse, error) {
 	return resp, nil
 }
 
+// GetCheckpointSnapshot 读取某任务的 checkpoint 快照（阶段五·状态对账）。
+//
+// 只读、无副作用。用于比对 Go 的 Redis 状态与 LangGraph 的续跑状态。
+//
+// 超时用 UnaryTimeout 而不是更短的值：它要读 Postgres 并反序列化整份图状态，
+// 比 Health 之类的探测重得多；超时太短会把"读得慢"报成"读不到"，
+// 而对账报告里的 found=false 是有明确含义的（线程不存在），不能被超时污染。
+func (c *Client) GetCheckpointSnapshot(ctx context.Context, req *pb.CheckpointSnapshotRequest) (*pb.CheckpointSnapshotResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, c.cfg.UnaryTimeout)
+	defer cancel()
+
+	resp, err := c.cli.GetCheckpointSnapshot(ctx, req)
+	if err != nil {
+		return nil, wrapRPCError("GetCheckpointSnapshot", err)
+	}
+	return resp, nil
+}
+
 // PlanScript 只调用导演智能体：脚本 -> 分镜表。
 func (c *Client) PlanScript(ctx context.Context, req *pb.PlanScriptRequest) (*pb.PlanScriptResponse, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.cfg.UnaryTimeout)

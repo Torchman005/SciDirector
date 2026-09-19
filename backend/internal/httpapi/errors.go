@@ -22,6 +22,7 @@ import (
 	"github.com/itJinYu/SciDirector/backend/internal/domain"
 	"github.com/itJinYu/SciDirector/backend/internal/logging"
 	"github.com/itJinYu/SciDirector/backend/internal/queue"
+	"github.com/itJinYu/SciDirector/backend/internal/reconcile"
 	"github.com/itJinYu/SciDirector/backend/internal/store"
 	"github.com/itJinYu/SciDirector/backend/internal/ws"
 )
@@ -65,6 +66,20 @@ type Deps struct {
 	// Metrics 是 Prometheus 注册表；为 nil 表示未启用（/metrics 返回 501）。
 	// 与 Inspector 同样的策略：观测能力缺失不该让网关整个不可用。
 	Metrics *prometheus.Registry
+	// Reconciler 提供按需状态对账；为 nil 时该接口返回 501。
+	//
+	// 用接口而不是 *worker.Processor：httpapi 不该依赖 worker 包
+	// （worker 背着一整套媒体/归档栈，反向依赖会把编译期耦合拉成一张网）。
+	// 接口只声明这里真正要用的那一个方法。
+	Reconciler Reconciler
+}
+
+// Reconciler 是按需状态对账的能力（由 reconcile.Reconciler 实现）。
+//
+// 接口定义在**使用方**（httpapi）而不是实现方：这样 httpapi 只依赖
+// 一个方法签名，实现放在哪个包、内部怎么组织都与它无关。
+type Reconciler interface {
+	ReconcileJob(ctx context.Context, jobID string, repair bool) (*reconcile.Outcome, error)
 }
 
 // abortWith 统一地写出错误响应并终止后续 handler。

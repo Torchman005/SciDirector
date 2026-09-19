@@ -31,6 +31,7 @@ import (
 	pb "github.com/itJinYu/SciDirector/backend/internal/pb/scidirector/v1"
 	"github.com/itJinYu/SciDirector/backend/internal/pbconv"
 	"github.com/itJinYu/SciDirector/backend/internal/queue"
+	"github.com/itJinYu/SciDirector/backend/internal/reconcile"
 	"github.com/itJinYu/SciDirector/backend/internal/store"
 )
 
@@ -43,6 +44,9 @@ type Processor struct {
 	media   *media.Runner
 	archive archive.Archiver
 	log     *slog.Logger
+	// reconciler 与 api 共用（internal/reconcile）：
+	// 周期扫描与按需对账必须是同一套判断，否则两边的结论会不一致。
+	reconciler *reconcile.Reconciler
 }
 
 // NewProcessor 构造处理器。
@@ -69,6 +73,9 @@ func NewProcessor(
 	return &Processor{
 		cfg: cfg, store: st, ai: aiClient, q: q,
 		media: runner, archive: archiver, log: logger,
+		// 对账器与 api 共用同一个实现（internal/reconcile），
+		// 避免"周期扫描"与"按需对账"两套逻辑日后各说各话。
+		reconciler: reconcile.New(st, aiClient, logger),
 	}
 }
 

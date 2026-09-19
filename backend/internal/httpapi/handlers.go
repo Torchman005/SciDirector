@@ -261,6 +261,33 @@ func (s *Server) HandleGetJobCost(c *gin.Context) {
 	respondOK(c, CostResponse{JobID: job.JobID, Cost: job.CostSnapshot()})
 }
 
+// HandleReconcileJob 按需对账：比对 Redis 状态与 LangGraph checkpoint。
+//
+// 默认**只读**（`?repair=false`），要看修复就显式传 `?repair=true`。
+// 为什么默认不修：这是一个诊断接口，运维人员的第一个动作通常是"先看看有没有问题"，
+// 而一个默认就会改状态的诊断接口会让人不敢调用它 —— 于是它就不会被用。
+//
+// 只读模式下同样要求任务属于本租户（对账会读到任务的镜头明细，越权同样泄漏信息）。
+func (s *Server) HandleReconcileJob(c *gin.Context) {
+	// repair=true 会修改任务状态，因此必须先做归属校验。
+	if _, ok := s.loadJobForTenant(c, c.Param("jobID")); !ok {
+		return
+	}
+	if s.deps.Reconciler == nil {
+		abortWith(c, http.StatusNotImplemented, ErrCodeInternal,
+			"状态对账未启用（api 与 worker 未在同一进程/未配置对账能力）", nil)
+		return
+	}
+
+	repair := c.Query("repair") == "true"
+	outcome, err := s.deps.Reconciler.ReconcileJob(c.Request.Context(), c.Param("jobID"), repair)
+	if err != nil {
+		mapError(c, err)
+		return
+	}
+	respondOK(c, outcome)
+}
+
 // HandleListShots 只返回分镜数组。
 func (s *Server) HandleListShots(c *gin.Context) {
 	job, ok := s.loadJobForTenant(c, c.Param("jobID"))

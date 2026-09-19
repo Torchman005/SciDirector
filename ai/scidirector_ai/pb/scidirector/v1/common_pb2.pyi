@@ -2,7 +2,8 @@ from google.protobuf.internal import containers as _containers
 from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import message as _message
-from typing import ClassVar as _ClassVar, Iterable as _Iterable, Mapping as _Mapping, Optional as _Optional, Union as _Union
+from collections.abc import Iterable as _Iterable, Mapping as _Mapping
+from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
@@ -169,7 +170,7 @@ class CriticFeedback(_message.Message):
     pacing_score: float
     aesthetics_score: float
     created_at_unix_ms: int
-    def __init__(self, passed: bool = ..., score: _Optional[float] = ..., issues: _Optional[_Iterable[str]] = ..., suggestions: _Optional[_Iterable[str]] = ..., raw_response: _Optional[str] = ..., model: _Optional[str] = ..., source: _Optional[_Union[FeedbackSource, str]] = ..., attempt: _Optional[int] = ..., logic_score: _Optional[float] = ..., readability_score: _Optional[float] = ..., pacing_score: _Optional[float] = ..., aesthetics_score: _Optional[float] = ..., created_at_unix_ms: _Optional[int] = ...) -> None: ...
+    def __init__(self, passed: _Optional[bool] = ..., score: _Optional[float] = ..., issues: _Optional[_Iterable[str]] = ..., suggestions: _Optional[_Iterable[str]] = ..., raw_response: _Optional[str] = ..., model: _Optional[str] = ..., source: _Optional[_Union[FeedbackSource, str]] = ..., attempt: _Optional[int] = ..., logic_score: _Optional[float] = ..., readability_score: _Optional[float] = ..., pacing_score: _Optional[float] = ..., aesthetics_score: _Optional[float] = ..., created_at_unix_ms: _Optional[int] = ...) -> None: ...
 
 class PipelineEvent(_message.Message):
     __slots__ = ("job_id", "shot_id", "node", "status", "message", "attempt", "shot_index", "total_shots", "progress", "artifact", "feedback", "error", "ts_unix_ms", "payload_json")
@@ -243,4 +244,4 @@ class HealthResponse(_message.Message):
     sandbox_ready: bool
     capabilities: _containers.RepeatedScalarFieldContainer[str]
     uptime_sec: int
-    def __init__(self, healthy: bool = ..., version: _Optional[str] = ..., llm_provider: _Optional[str] = ..., vlm_model: _Optional[str] = ..., sandbox_ready: bool = ..., capabilities: _Optional[_Iterable[str]] = ..., uptime_sec: _Optional[int] = ...) -> None: ...
+    def __init__(self, healthy: _Optional[bool] = ..., version: _Optional[str] = ..., llm_provider: _Optional[str] = ..., vlm_model: _Optional[str] = ..., sandbox_ready: _Optional[bool] = ..., capabilities: _Optional[_Iterable[str]] = ..., uptime_sec: _Optional[int] = ...) -> None: ...

@@ -192,6 +192,11 @@ func run() error {
 		}
 	}()
 
+	// 状态对账：周期性找出「流水线已结束但状态没落地」的任务并修正。
+	// 用独立的 goroutine 而不是 Asynq 的 Scheduler：后者会让对账与业务任务
+	// 共享并发槽位，一次积压就会让它迟迟不跑 —— 而那恰恰是最需要它的时候。
+	go processor.RunReconcileSweep(ctx, cfg.Reconcile.Interval)
+
 	select {
 	case err := <-serverErr:
 		return err

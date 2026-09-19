@@ -274,12 +274,16 @@ services:
       - "${SCID_OTEL_HTTP_PORT:-4318}:4318"
     depends_on:
       - tempo
-    healthcheck:
-      # collector 自带健康检查扩展。用 wget 而不是 curl：基础镜像里没有 curl。
-      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:13133/"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+    # **刻意不配 healthcheck。**
+    #
+    # 这个镜像是 distroless 的（没有 sh、没有 curl/wget/nc，什么都没有），
+    # 容器内**无法**发起任何探测 —— 上一版写的 `wget --spider .../13133/`
+    # 让容器永久停在 `unhealthy`：明明 collector 在正常收 span 并导出到 Tempo，
+    # 状态却是红的。一个永远为红的健康检查比没有更糟 —— 它会训练人忽略这一列。
+    #
+    # collector 自己的 health_check 扩展仍然开着（13133），从**宿主机**探：
+    #   curl -s -o /dev/null -w '%{http_code}' localhost:13133/
+    # 需要容器内探活时应换成带 shell 的镜像或用 compose 之外的探针。
 
   tempo:
     image: grafana/tempo:2.6.1

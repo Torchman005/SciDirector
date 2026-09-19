@@ -198,6 +198,51 @@ X-Tenant-ID: acme
 - `tts_chars` 按**字符**计（中文一个字算 1），不是字节。
 - 推导项不进持久化状态，因此**与分镜表永远一致**，不存在两处口径不一致的问题。
 
+#### `GET /api/v1/jobs/:jobID/reconcile?repair=false`
+
+状态对账：比对 Redis 里的任务状态与 LangGraph checkpoint 的续跑状态。
+
+**默认只读**（`repair` 缺省为 `false`）。默认不修的原因很实际：
+运维人员的第一个动作通常是"先看看有没有问题"，而一个默认就会改状态的诊断接口
+会让人不敢调用它 —— 于是它就不会被用。
+
+```json
+{
+  "ok": true,
+  "data": {
+    "report": {
+      "job_id": "job-9f3a…",
+      "checkpoint_backend": "postgres",
+      "checkpoint_detail": "状态持久化到 Postgres，进程重启后可从断点续跑",
+      "redis_status": "RENDERING",
+      "divergences": [
+        { "kind": "stuck_job", "message": "checkpoint 显示图已跑完，而 Redis 仍为 RENDERING：最后的状态迁移丢失（任务会永远停在非终态）", "repairable": true }
+      ]
+    },
+    "repaired": false
+  }
+}
+```
+
+差异种类（`kind`）：
+
+| kind | 含义 | 可自动修 |
+| --- | --- | --- |
+| `stuck_job` | Redis 非终态而图已跑完（最后的状态迁移丢失） | ✅ 唯一会修的一类 |
+| `checkpoint_ahead` | Redis 已终态而图未跑完 | ❌ 图可能继续推进，把"已完成"拉回进行中是危险的 |
+| `checkpoint_missing` | Redis 在跑但 checkpoint 没有该线程 | ❌ "尚未开始"与"被清理"含义不同 |
+| `progress_ahead` | checkpoint 游标超过 Redis 的镜头数 | ❌ 补分镜需重放 plan 事件 |
+| `shot_unknown_to_redis` | checkpoint 有该镜头而 Redis 没有 | ❌ 同上 |
+| `artifact_on_one_side` | 产物存在性不一致 | ❌ 两侧"产物"含义不同 |
+| `unknown` | 后端非持久化，**无从比较** | — 不算不一致 |
+
+`?repair=true` 时的修复是**幂等**的，且会写一条 `node=reconcile` 的事件
+（payload 含 `reason`/`from`/`to`），前端据此更新。
+该接口同样受租户归属校验：跨租户访问与"任务不存在"返回相同的 404。
+
+> 这是**按需**入口。worker 还有周期扫描（`SCID_RECONCILE_INTERVAL`，缺省 0 = 关闭），
+> 两者共用同一套判断逻辑。
+
 #### `GET /api/v1/jobs/:jobID/shots`
 
 只返回分镜数组（审核台的高频轮询端点，避免重复传整份脚本）。

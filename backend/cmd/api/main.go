@@ -21,6 +21,7 @@ import (
 	"github.com/itJinYu/SciDirector/backend/internal/logging"
 	"github.com/itJinYu/SciDirector/backend/internal/obs"
 	"github.com/itJinYu/SciDirector/backend/internal/queue"
+	"github.com/itJinYu/SciDirector/backend/internal/reconcile"
 	"github.com/itJinYu/SciDirector/backend/internal/store"
 	"github.com/itJinYu/SciDirector/backend/internal/ws"
 )
@@ -128,6 +129,9 @@ func run() error {
 		StartedAt: time.Now().UTC(),
 		Version:   version,
 		Metrics:   obsProvider.Registry,
+		// 按需状态对账：与 worker 的周期扫描共用同一个实现。
+		// api 只用到 store + ai 客户端，因此不需要（也不该）拉起整个 worker。
+		Reconciler: reconcile.New(st, aiClient, logger),
 	}
 	router := httpapi.NewRouter(httpapi.NewServer(deps), deps)
 

@@ -22,6 +22,7 @@ import grpc
 
 from .config import Settings, get_settings
 from .llm import LLMError, LLMParseError
+from .graph.reconcile import read_snapshot
 from .logging import bind_job, clear_bindings, get_logger
 from .pb import _PB_ROOT  # noqa: F401 - 导入即完成 sys.path 注入，必须先于 pb 导入
 from .pbconv import (
@@ -120,6 +121,49 @@ class AiDirectorServicer(pb_grpc.AiDirectorServiceServicer):
             # 线程池会复用线程：不清理绑定，前一个请求的 job_id 会"泄漏"到
             # 后一个请求的日志里，这是极具误导性的一类 bug。
             clear_bindings()
+
+    # ------------------------------------------------------------------
+    # 状态对账（阶段五）
+    # ------------------------------------------------------------------
+
+    def GetCheckpointSnapshot(self, request: Any, context: grpc.ServicerContext) -> Any:  # noqa: N802
+        """读取某任务的 checkpoint 快照。**只读，无副作用。**
+
+        为什么这个 handler 不做任何判断、只报事实：
+        「镜头算 APPROVED 还是 AWAITING_HUMAN」是状态机的判断，属于 Go 侧的领域逻辑。
+        在这里再推导一份就等于有两套状态机，而两套实现迟早会不一致 ——
+        那时"对账"本身反而成了新的不一致来源。
+
+        也**不**把读取失败当 gRPC 错误：对账是诊断动作，「读不到」正是它要报告的
+        情况之一（例如 memory 后端在进程重启后什么都没有）。用 UNAVAILABLE 之类
+        会让 Go 侧只看到一个错误，却拿不到"后端不持久"这个关键上下文。
+        """
+        bind_job(request.job_id)
+        try:
+            snapshot = read_snapshot(self.service.pipeline, request.job_id, request.thread_id)
+        except Exception as exc:  # noqa: BLE001 - 兜底：诊断动作绝不向上抛
+            logger.warning(
+                "对账快照读取异常", extra={"job_id": request.job_id, "error": str(exc)}
+            )
+            return pb.CheckpointSnapshotResponse(
+                found=False, backend="", detail=f"读取异常：{exc}"
+            )
+
+        return pb.CheckpointSnapshotResponse(
+            found=snapshot.found,
+            finished=snapshot.finished,
+            cursor=snapshot.cursor,
+            shots=[
+                pb.CheckpointShotState(
+                    shot_id=sid,
+                    attempt=int(info.get("attempt", 0)),
+                    has_artifact=bool(info.get("has_artifact", False)),
+                )
+                for sid, info in sorted(snapshot.shots.items())
+            ],
+            backend=snapshot.backend,
+            detail=snapshot.detail,
+        )
 
     # ------------------------------------------------------------------
     # PlanScript

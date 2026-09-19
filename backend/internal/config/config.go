@@ -26,8 +26,10 @@ type Config struct {
 	Media    MediaConfig
 	Pipeline PipelineConfig
 	Archive  ArchiveConfig
-	Obs      ObservabilityConfig
-	Tenant   TenantConfig
+	// Reconcile 描述状态对账（阶段五）。
+	Reconcile ReconcileConfig
+	Obs       ObservabilityConfig
+	Tenant    TenantConfig
 }
 
 // TenantConfig 描述多租户的接入方式（阶段五）。
@@ -44,6 +46,17 @@ type TenantConfig struct {
 	// 这是「资源隔离」而不只是「数据隔离」：渲染是重活，
 	// 一个租户灌进几十个任务会把所有租户一起拖慢。
 	MaxActiveJobs int
+}
+
+// ReconcileConfig 描述状态对账（阶段五）。
+//
+// 对账要解决的是一类**不会自己暴露**的问题：事件在途中丢失后，
+// 任务会永远停在非终态（用户看到 100% 却等不到成片），而系统里没有任何错误。
+type ReconcileConfig struct {
+	// Interval 是扫描周期。0（缺省）表示**不启用** ——
+	// 单机开发不需要它，而多副本部署时每个副本都扫是浪费
+	// （修复动作幂等，不会产生错误结果，只是重复读 Postgres）。
+	Interval time.Duration
 }
 
 // ObservabilityConfig 描述链路追踪与指标（阶段五·可观测性）。
@@ -230,6 +243,9 @@ func Load() (*Config, error) {
 			CriticScoreThreshold: getFloat("SCID_CRITIC_SCORE_THRESHOLD", 0.75),
 		},
 		Obs: loadObservabilityConfig(),
+		Reconcile: ReconcileConfig{
+			Interval: getDuration("SCID_RECONCILE_INTERVAL", 0),
+		},
 		Tenant: TenantConfig{
 			Mode:          getEnv("SCID_TENANT_MODE", "header"),
 			Header:        getEnv("SCID_TENANT_HEADER", "X-Tenant-ID"),

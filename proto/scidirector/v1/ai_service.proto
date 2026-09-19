@@ -43,6 +43,59 @@ service AiDirectorService {
 
   // 人工意见回灌：把审核员的自然语言意见转成可执行指令，重新生成该镜头。
   rpc ReviseShot(ReviseShotRequest) returns (ReviseShotResponse);
+
+  // ---------------------------------------------------------------------------
+  // 状态对账（阶段五）：读取某任务的 checkpoint 快照。
+  //
+  // **只读、无副作用。** Go 侧据此比对「Redis 里的对外状态」与
+  // 「LangGraph checkpoint 里的续跑状态」，发现双写不一致。
+  //
+  // 为什么由 Python 提供而不是让 Go 直接读 Postgres：
+  // checkpoint 的**存储格式是 LangGraph 的实现细节**（表结构、序列化方式都可能
+  // 随版本变化）。让 Go 去解析它，等于把两个项目的内部实现焊在一起 ——
+  // 一次 LangGraph 升级就会静默读出错的数据。因此由持有方读取，对外只暴露
+  // 语义化字段。
+  // ---------------------------------------------------------------------------
+  rpc GetCheckpointSnapshot(CheckpointSnapshotRequest) returns (CheckpointSnapshotResponse);
+}
+
+// -----------------------------------------------------------------------------
+// 状态对账
+// -----------------------------------------------------------------------------
+
+message CheckpointSnapshotRequest {
+  string job_id = 1;
+  // checkpoint 线程 ID。为空时由 Python 用 job_id 推断 ——
+  // 两侧本来就以 job_id 作为 thread_id（见 RunPipelineRequest.checkpoint_thread_id）。
+  string thread_id = 2;
+}
+
+message CheckpointSnapshotResponse {
+  // 该线程是否存在于 checkpoint 中。
+  // false 表示图从未在这个线程上跑过：可能是任务刚入队还没开始，
+  // 也可能是 checkpoint 已被清理 —— **两种含义完全不同**，
+  // 因此必须结合 backend/detail 一起看，不能直接判定为不一致。
+  bool found = 1;
+  // 图是否已跑完（状态里的 finished 标志）。
+  bool finished = 2;
+  // 当前处理到的镜头游标。
+  int32 cursor = 3;
+  // 每个镜头在 checkpoint 里的续跑信息。
+  repeated CheckpointShotState shots = 4;
+  // checkpoint 后端：postgres / memory。
+  // **memory 在进程重启后不保留**，对账时必须如实告知 ——
+  // 否则「checkpoint 里没有这个线程」会被误读成不一致。
+  string backend = 5;
+  // 人类可读的说明（例如后端不持久时说明原因）。
+  string detail = 6;
+}
+
+message CheckpointShotState {
+  string shot_id = 1;
+  // 已尝试次数（checkpoint 里的计数，与 Redis 的 attempt 口径可能不同）。
+  int32 attempt = 2;
+  // checkpoint 里是否已经有该镜头的产物。
+  bool has_artifact = 3;
 }
 
 // -----------------------------------------------------------------------------
