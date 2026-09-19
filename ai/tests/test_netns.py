@@ -485,3 +485,148 @@ def test_read_only_off_means_no_wrapper(tmp_path) -> None:
     wrapped, status = iso.wrap(["echo", "hi"], str(tmp_path))
     assert wrapped == ["echo", "hi"]
     assert status == ""
+
+
+# ---------------------------------------------------------------------------
+# 7) seccomp 系统调用过滤（阶段五·沙盒加固的第三块）
+# ---------------------------------------------------------------------------
+#
+# 需求里写的是「seccomp 白名单」，这里实现的是**拒绝名单**，理由见
+# exec_guard.py 的模块文档：允许名单要求把目标程序的每个系统调用都列全，
+# 而本机只装得起 ffmpeg（manim/LaTeX/Chromium 都不可用），那份名单**无法被验证**——
+# 没验证过的允许名单比不加更危险。
+#
+# 判定依据是真实调用一个被拦的系统调用（ptrace），而不是去读配置：
+# "配置说开着了"和"真的拦住了"是两件事。
+
+_ptrace_probe = textwrap.dedent(
+    """
+    import ctypes
+    import sys
+
+    libc = ctypes.CDLL("libc.so.6", use_errno=True)
+    ctypes.set_errno(0)
+    # PTRACE_TRACEME：正常环境返回 0；被 seccomp 拦下时返回 -1 / EPERM。
+    rc = libc.ptrace(0, 0, None, None)
+    errno = ctypes.get_errno()
+    print("ptrace", rc, errno)
+    # 反向确认：无关的调用不受影响（过滤器不能把什么都拦掉）。
+    import socket
+
+    s = socket.socket()
+    s.close()
+    print("socket OK")
+    """
+)
+
+
+def _run_ptrace_probe(seccomp_mode: str, tmp_path):
+    runner = SandboxRunner("off", "off", seccomp_mode)
+    return runner.run(
+        [sys.executable, "-c", _ptrace_probe],
+        cwd=tmp_path,
+        limits=ResourceLimits(timeout_sec=30),
+    )
+
+
+def test_seccomp_blocks_denied_syscall(tmp_path) -> None:
+    res = _run_ptrace_probe("deny", tmp_path)
+
+    assert res.seccomp_enforced, "seccomp 未生效"
+    assert res.seccomp_denied > 20, f"拦下的条数明显偏少：{res.seccomp_denied}"
+    assert res.returncode == 0, res.tail()
+    assert "ptrace 0 0" not in res.stdout, f"ptrace 没有被拦住：{res.stdout!r}"
+    assert "ptrace -1 1" in res.stdout, f"应当是 -1/EPERM，实际 {res.stdout!r}"
+    # 过滤器不能把无关调用也拦掉 —— 否则它就是把功能弄坏了。
+    assert "socket OK" in res.stdout, res.stdout
+
+
+def test_syscall_succeeds_without_seccomp(tmp_path) -> None:
+    """**反向对照。**
+
+    没有它，「ptrace 被拦住」在一个本来就禁止 ptrace 的环境（某些容器默认策略）
+    里会永远为真 —— 那时用例是绿的，却只是证明了环境如此，而不是我们的过滤器生效。
+    """
+    res = _run_ptrace_probe("off", tmp_path)
+
+    assert not res.seccomp_enforced, "关闭时不该声称已启用"
+    if "ptrace 0 0" not in res.stdout:
+        pytest.skip(
+            "本机环境本身就禁止 ptrace（容器默认策略），无法构成反向对照；"
+            "上一条用例因此在本次运行中不构成证据"
+        )
+    assert "socket OK" in res.stdout
+
+
+def test_seccomp_does_not_break_rendering(tmp_path) -> None:
+    """seccomp 下真实跑一次 ffmpeg：过滤不能把正常渲染弄坏。
+
+    这是"加固没有变成功能回归"的那一半证据。也是为什么默认关：
+    另外三个引擎在本机装不起来，因此**无法**验证它们不会用到被拦的调用。
+    """
+    from scidirector_ai.media import _binary
+
+    out = tmp_path / "shot.mp4"
+    res = SandboxRunner("off", "off", "deny").run(
+        [
+            _binary("ffmpeg"), "-y", "-hide_banner", "-loglevel", "error",
+            "-f", "lavfi", "-i", "color=c=purple:s=320x240:d=1",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", str(out),
+        ],
+        cwd=tmp_path,
+        limits=ResourceLimits(timeout_sec=120),
+    )
+
+    assert res.seccomp_enforced, "seccomp 未生效"
+    assert res.returncode == 0, res.tail()
+    assert out.is_file() and out.stat().st_size > 0, "seccomp 下渲染没有产出文件"
+
+
+def test_seccomp_and_network_and_readonly_compose(sandbox_workdir) -> None:
+    """三层同时开启：都必须如实上报已生效，且命令照常跑完。
+
+    用 `sandbox_workdir` 而不是 `tmp_path`：后者在 /tmp 之下，
+    而只读隔离会把 /tmp 换成私有 tmpfs（那会遮蔽工作目录）——
+    代码会正确地记为一条 gap 并**拒绝声称已只读**，于是这里测的就不是
+    "三层都生效"，而是那个边界情况。
+    """
+    work = sandbox_workdir / "work"
+    work.mkdir(exist_ok=True)
+    res = SandboxRunner("auto", "auto", "deny").run(
+        [sys.executable, "-c", "print('all layers')"],
+        cwd=work,
+        limits=ResourceLimits(timeout_sec=60),
+    )
+
+    assert res.network_isolation == "netns"
+    assert res.read_only_enforced, f"只读未生效：{res.read_only_gaps}"
+    assert res.seccomp_enforced
+    assert res.returncode == 0, res.tail()
+    assert "all layers" in res.stdout
+
+
+def test_seccomp_require_fails_closed_when_unavailable(monkeypatch, tmp_path) -> None:
+    """`require` 拿不到 seccomp 时必须拒绝执行，绝不静默降级。"""
+    monkeypatch.setattr(
+        "scidirector_ai.sandbox.isolation.Isolator.seccomp_mechanism", lambda self: "none"
+    )
+    res = SandboxRunner("off", "off", "require").run(["echo", "should-not-run"], cwd=tmp_path)
+
+    assert not res.ok
+    assert "seccomp" in res.stderr
+    assert "should-not-run" not in res.stdout, "命令不该被执行"
+
+
+def test_seccomp_report_marks_unresolved_syscalls() -> None:
+    """名单里解析不到的条目必须被记下来，而不是只报"拦了 N 条"。
+
+    只报条数会让人以为名单里每一条都生效了 —— 而某个系统调用在当前内核上
+    不存在（例如旧内核没有 io_uring）时，那条规则其实**根本没装上**。
+    """
+    from scidirector_ai.sandbox.exec_guard import DENY_SYSCALLS, setup_seccomp
+
+    report = setup_seccomp()
+    total_listed = sum(len(v) for v in DENY_SYSCALLS.values())
+    assert report["seccomp_enforced"] is True
+    # 装上 + 未解析 = 名单总数：不允许有"既没装上也没记录"的条目。
+    assert report["seccomp_denied"] + len(report["seccomp_unresolved"]) == total_listed, report

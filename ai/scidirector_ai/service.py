@@ -126,7 +126,9 @@ class PipelineService:
     def runner(self) -> SandboxRunner:
         if self._sandbox is None:
             self._sandbox = SandboxRunner(
-                self.settings.sandbox_network_isolation, self.settings.sandbox_read_only
+                self.settings.sandbox_network_isolation,
+                self.settings.sandbox_read_only,
+                self.settings.sandbox_seccomp,
             )
         return self._sandbox
 
@@ -181,6 +183,9 @@ class PipelineService:
         # 由每次执行的 ExecResult.read_only_enforced/read_only_gaps 回答 ——
         # 某个挂载点重挂失败会让这一层失效，那是执行期才知道的。
         capabilities.append(f"sandbox:read_only={self.runner.isolator.read_only_mechanism()}")
+        # 同上：报的是机制名（denylist/none），逐次是否真的装上由
+        # ExecResult.seccomp_enforced 回答。
+        capabilities.append(f"sandbox:seccomp={self.runner.isolator.seccomp_mechanism()}")
 
         checkpoint_backend = "memory"
         if self._runner is not None:

@@ -33,6 +33,14 @@ from .netns import NetworkIsolationUnavailable, network_isolation_available
 #: - ``require``：必须生效，否则拒绝执行（fail closed）。
 ReadOnlyMode = Literal["off", "auto", "require"]
 
+#: seccomp 的模式。
+#: - ``off``（缺省）：不启用。**为什么默认关**：拒绝名单只在本机可用的引擎
+#:   （stock/ffmpeg）上验证过，manim/LaTeX/Chromium 在本机根本装不起来，
+#:   也就无法验证它们不会用到被拦的系统调用。
+#: - ``deny``：安装拒绝名单（见 ``exec_guard.DENY_SYSCALLS``）。
+#: - ``require``：必须装上，装不上就拒绝执行。
+SeccompMode = Literal["off", "deny", "require"]
+
 #: 工作目录内的状态文件名。runner 读完即删，避免污染产物目录。
 STATUS_FILE_NAME = ".scid_sandbox_status.json"
 
@@ -66,10 +74,12 @@ class Isolator:
         self,
         network_mode: str = "auto",
         read_only_mode: ReadOnlyMode = "off",
+        seccomp_mode: SeccompMode = "off",
         unshare_bin: str = "unshare",
     ) -> None:
         self.network_mode = network_mode
         self.read_only_mode = read_only_mode
+        self.seccomp_mode = seccomp_mode
         self.unshare_bin = unshare_bin
 
     # ------------------------------------------------------------------
@@ -80,6 +90,18 @@ class Isolator:
         if self.network_mode == "off":
             return "none"
         return "netns" if network_isolation_available(self.unshare_bin) else "none"
+
+    def seccomp_mechanism(self) -> str:
+        """seccomp 的机制名（配置视角）。
+
+        seccomp 不需要任何命名空间特权，因此只要 libseccomp 在就可用；
+        真正的"装上没有"由逐次执行的状态报告回答。
+        """
+        if self.seccomp_mode == "off":
+            return "none"
+        import ctypes.util
+
+        return "denylist" if ctypes.util.find_library("seccomp") else "none"
 
     def read_only_mechanism(self) -> str:
         """配置上打算用哪种只读机制。
@@ -97,9 +119,10 @@ class Isolator:
     # ------------------------------------------------------------------
 
     def wrap(self, argv: list[str], workdir: str) -> list[str]:
-        """返回真正要执行的 argv，以及状态文件路径（未启用只读时为空）。
+        """返回真正要执行的 argv，以及状态文件路径（没有包装时为空）。
 
-        抛 ``NetworkIsolationUnavailable`` 表示配置要求隔离但拿不到。
+        抛 ``NetworkIsolationUnavailable`` / ``ReadOnlyUnavailable``
+        表示配置要求隔离但拿不到（fail closed）。
         """
         want_net = self.network_mode != "off" and network_isolation_available(self.unshare_bin)
         if self.network_mode == "require" and not want_net:
@@ -115,35 +138,53 @@ class Isolator:
                 "但本机不可用：需要 unshare -r -m（非特权挂载命名空间）"
             )
 
-        if not want_net and not want_ro:
+        want_seccomp = self.seccomp_mode != "off" and self.seccomp_mechanism() != "none"
+        if self.seccomp_mode == "require" and not want_seccomp:
+            raise SeccompUnavailable(
+                "沙盒 seccomp 被要求（SCID_SANDBOX_SECCOMP=require）"
+                "但本机不可用：需要 libseccomp"
+            )
+
+        if not want_net and not want_ro and not want_seccomp:
             return argv, ""
+
+        needs_guard = want_ro or want_seccomp
+        if needs_guard:
+            # 用**绝对脚本路径**而不是 `-m scidirector_ai...`：runner 会把子进程
+            # 环境裁剪到白名单（不含 PYTHONPATH），cwd 又是工作目录，`-m` 因此
+            # 找不到包 —— 表现只是"状态报告缺失"，看起来像"加固没生效"而不是
+            # "包装器根本没起来"。exec_guard 只依赖标准库，按脚本路径最稳。
+            # 状态文件放在工作目录里（那里一定可写）。
+            status_path = f"{workdir.rstrip('/')}/{STATUS_FILE_NAME}"
+            guard_script = str(Path(__file__).with_name("exec_guard.py"))
+            guard = [sys.executable, guard_script, "--workdir", workdir, "--status", status_path]
+            if want_ro:
+                guard.append("--readonly")
+            if want_seccomp:
+                guard += ["--seccomp", "deny"]
+            guard.append("--")
+            body = [*guard, *argv]
+        else:
+            status_path = ""
+            body = list(argv)
+
+        if not want_net and not want_ro:
+            # 只要 seccomp：**不需要命名空间**，也就不必经过 unshare。
+            # 少一层进程与一次 unshare，就少一处会坏的地方。
+            return body, status_path
 
         exe = shutil.which(self.unshare_bin) or self.unshare_bin
         flags = ["-r"]
         if want_net:
             flags.append("-n")
         if want_ro:
+            # 只读设置必须在挂载命名空间里做（它要 mount）。
             flags.append("-m")
+        return [exe, *flags, "--", *body], status_path
 
-        if not want_ro:
-            # 只要网络隔离：不需要包装进程，unshare 直接 exec 目标（PID 不变）。
-            return [exe, *flags, "--", *argv], ""
 
-        # 需要只读：挂一层包装进程做 mount 设置，做完 exec 掉自己（PID 不变）。
-        #
-        # 用**绝对脚本路径**而不是 `-m scidirector_ai.sandbox.exec_guard`：
-        # runner 会把子进程环境裁剪到白名单（不含 PYTHONPATH），子进程的 cwd 又是
-        # 工作目录，因此 `-m` 找不到包 —— 表现为包装器直接 ModuleNotFoundError 退出、
-        # 命令根本没跑，而状态报告缺失只会让 read_only_enforced 为 false，
-        # **看起来就像"只读没生效"而不是"整个包装器没起来"**。
-        # exec_guard 只依赖标准库，因此按脚本路径执行是最稳的。
-        status_path = f"{workdir.rstrip('/')}/{STATUS_FILE_NAME}"
-        guard_script = str(Path(__file__).with_name("exec_guard.py"))
-        guard = [
-            sys.executable, guard_script,
-            "--workdir", workdir, "--status", status_path, "--",
-        ]
-        return [exe, *flags, "--", *guard, *argv], status_path
+class SeccompUnavailable(RuntimeError):
+    """要求 seccomp 但本机不可用。"""
 
 
 class ReadOnlyUnavailable(RuntimeError):

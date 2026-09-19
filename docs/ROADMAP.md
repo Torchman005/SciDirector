@@ -761,7 +761,7 @@ Python 包与浏览器二进制是**两步**安装（`pip install playwright` +
 - **成本核算**：✅ 按任务统计 token 与渲染时长；**配额已随多租户一起做**（按租户限制在跑任务数）
 - **多租户**：✅ 任务归属与隔离（含按租户配额，见下）
 - **状态对账**：✅ 定期比对 + 自动修一类（见下）
-- **沙盒加固**：🟡 网络隔离（`unshare -r -n`）与**只读根文件系统**（`unshare -r -m`）已做；**seccomp 白名单未做**（本机有 `libseccomp.so.2`，可行）
+- **沙盒加固**：✅ 网络隔离（`unshare -r -n`）+ 只读根（`unshare -r -m`）+ seccomp 过滤（`libseccomp`，**拒绝名单**而非白名单，理由见下）；**真正的容器/cgroup 层未做**
 
 ### 可观测性：做到哪一步、证据是什么
 
@@ -968,6 +968,34 @@ worker 的消费 span 上带 `scidirector.trace_continued=true`。这个标记�
 不可写，而 manim/LaTeX 依赖它们。开启前必须逐个引擎验证 ——
 不能替使用者默认打开一个会让 manim 静默失败的开关。
 
+### seccomp：为什么是拒绝名单而不是白名单
+
+需求写的是「seccomp 白名单」。实现的是**拒绝名单**，理由必须写清楚而不是默默换做法：
+
+允许名单要求把目标程序用到的每个系统调用都列全。本机只装得起 ffmpeg
+（manim/LaTeX/Chromium 全部不可用），因此那份名单**无法被验证** ——
+漏掉一个系统调用会让渲染静默失败，而"缺了哪一个"极难从现象反推。
+**一份没验证过的允许名单比不加更危险。**
+
+拒绝名单拦的是沙盒里**没有正当用途**的那批，共 39 条：
+
+| 组 | 内容 | 为什么 |
+| --- | --- | --- |
+| 内核/命名空间 | `mount` `umount2` `pivot_root` `chroot` `setns` `unshare` `init_module` `kexec_load` `reboot` `swapon` `adjtimex` … | 在用户命名空间里我们**就是 root**，这些并非天然不可达 —— exec_guard 自己就用 `mount` 做只读设置 |
+| 进程注入 | `ptrace` `process_vm_readv/writev` `kcmp` `perf_event_open` `userfaultfd` `pidfd_getfd` | 沙盒里没有正当用途 |
+| 密钥环 | `keyctl` `add_key` `request_key` | 可把宿主机密钥读出去 |
+| bpf / io_uring / 句柄 | `bpf` `io_uring_*` `open_by_handle_at` `lookup_dcookie` | 攻击面大，且历史上出现过绕过 seccomp 的路径 |
+
+默认动作 `ALLOW`，被拦的返回 **EPERM 而非杀进程** —— 意外的调用会得到一个普通错误，
+程序往往还能降级继续。SIGSYS 单独归成 `killed_reason="seccomp"`：
+`returncode=-31` 没人认得出，否则现象就是"渲染莫名失败"。
+
+**证据**：23 项隔离用例，含**反向对照**（不启用时 `ptrace` 必须成功 ——
+否则在默认禁止 ptrace 的容器里该断言永远为真）、「seccomp 下 ffmpeg 真实出片」、
+「三层同时开启都要如实上报且照常跑完」；**变异验证**：去掉 `seccomp_load`
+只置标志位（谎报已加固）后用例立刻变红。三层全开时真实任务照常出片，
+日志里「未生效」出现 **0 次**。
+
 **没做到的部分（这一项不能算全部完成）**
 
 - **HTML 引擎（d3 / echarts / code_anim）不在隔离范围内。**
@@ -978,9 +1006,9 @@ worker 的消费 span 上带 `scidirector.trace_continued=true`。这个标记�
   runner 的 `RLIMIT_AS` 兜底会让 Chromium 瞬间 SIGTRAP 崩溃（已逐项二分确认：
   `RLIMIT_DATA` 2GB/8GB 正常，`RLIMIT_AS` 8GB/32GB 都崩）—— 所以这一步要连带调整
   资源限制策略，属于独立的一次改动，**本轮没有做**。
-- **seccomp 白名单未做。** 本机有 `libseccomp.so.2`（可经 ctypes 使用），因此这条路可行；
-  未做的原因是需要先确定"白名单还是黑名单"以及逐个引擎验证系统调用面 ——
-  一个过窄的白名单会让渲染**静默失败**，比不加更危险。
+- **seccomp 只在 stock/ffmpeg 上验证过。** manim/LaTeX/Chromium 在本机装不起来，
+  因此无法验证它们不会用到被拦的系统调用。这也是该开关默认 `off` 的原因 ——
+  开启前必须在目标环境逐个引擎验证。
 - **真正的容器层仍未做。** 命名空间路径覆盖了「无网络」与「只读文件系统」两件事，
   但没有覆盖 cgroup 资源限制与镜像级的最小化；生产若跑容器，容器层仍应作为**外层**
   防御（纵深防御，不是二选一）。
@@ -998,10 +1026,12 @@ worker 的消费 span 上带 `scidirector.trace_continued=true`。这个标记�
 - ✅ 定期比对 Go 的 Redis 状态与 LangGraph checkpoint，并修复双写不一致
       （已验：周期扫描真实检出并修复一个"卡住"的任务、只读模式只报不改、
        修复幂等且写事件；**只自动修一类**，详见上文）
-- 🟡 沙盒在无网络条件下仍能完成渲染（证明没有隐式外联）
+- ✅ 沙盒在无网络条件下仍能完成渲染（证明没有隐式外联）
       （已验：外联与 DNS 被挡住、**同一台机器不隔离时能连出去**这个反向对照成立、
-       隔离下 ffmpeg 真实出片；只读根已实现并有反向对照与变异验证。
-       未做：**seccomp 白名单**；HTML 引擎的 Chromium 不经 runner，**未被隔离**）
+       隔离下 ffmpeg 真实出片；只读根与 seccomp 均有反向对照与变异验证；
+       三层全开时真实任务照常出片。
+       **未做**：真正的容器/cgroup 层；HTML 引擎的 Chromium 不经 runner，**未被隔离**；
+       seccomp 只在 stock/ffmpeg 上验证过）
 
 ---
 
@@ -1013,4 +1043,4 @@ worker 的消费 span 上带 `scidirector.trace_continued=true`。这个标记�
 | 二 · 多智能体核心 | ✅ 已完成 | 368 → 377 个 Python 单测通过；5 个 RPC 全部实现并经 Go 侧 gRPC 打通 |
 | 三 · 编排与媒体 | ✅ 已完成 | FFmpeg 并发收敛为全局有界 Worker Pool、转场与统一调色、字幕与软字幕封装、局部重渲染、产物归档、队列可观测；Go 测试 media 包 68 项 / archive 包 27 项 / queue 包 6 项。B4/B5 已补自动化验证（B4 共 6 项、B5 共 2 项；其中「执行中断线」是 `make test-failover` 显式运行的慢用例）。**全片 TTS 配音待办**（无可用引擎） |
 | 四 · 反馈闭环与前端 | ✅ 已完成 | React 审核台、打回/放行/成分镜编辑、断线重连与快照重放；C4/C5 已用真实服务端到端验证，C1/C3 的浏览器人工目视验证待做 |
-| 五 · 生产加固 | ⏳ 进行中 | 沙盒加固 🟡（网络隔离 + 只读根；**seccomp 未做**）； 状态对账 ✅（周期扫描 + 按需接口；**只自动修「卡住」一类**）； 多租户 ✅（归属 + 隔离 + 按租户配额；**身份来源仍是请求头，不是认证**）； 可观测性 ✅（一次生成请求 = 跨 scid-api/scid-worker/scidirector-ai 的 25 个 span，浏览器里验证过 Grafana 能看到跨服务 span 与耗时；**业务指标未导出**、嵌套瀑布图未自动化断言）；成本核算 ✅（`GET /jobs/:id/cost` + 详情内 `cost`；真实任务端到端复验，推导项与分镜原文逐项一致）；沙盒网络隔离 🟡（`unshare -r -n` + 反向对照验证「外联确实被挡住」；**HTML 引擎的 Chromium 未被覆盖**、容器层与 seccomp 未做）。**未做**：真实 token 链路实测（本机 mock LLM 不产生用量）、配额与限流、可观测性、多租户、状态对账 |
+| 五 · 生产加固 | ✅ 五项均已完成（各有「未做到」的诚实边界） | 沙盒加固 🟡（网络隔离 + 只读根；**seccomp 未做**）； 状态对账 ✅（周期扫描 + 按需接口；**只自动修「卡住」一类**）； 多租户 ✅（归属 + 隔离 + 按租户配额；**身份来源仍是请求头，不是认证**）； 可观测性 ✅（一次生成请求 = 跨 scid-api/scid-worker/scidirector-ai 的 25 个 span，浏览器里验证过 Grafana 能看到跨服务 span 与耗时；**业务指标未导出**、嵌套瀑布图未自动化断言）；成本核算 ✅（`GET /jobs/:id/cost` + 详情内 `cost`；真实任务端到端复验，推导项与分镜原文逐项一致）；沙盒网络隔离 🟡（`unshare -r -n` + 反向对照验证「外联确实被挡住」；**HTML 引擎的 Chromium 未被覆盖**、容器层与 seccomp 未做）。**未做**：真实 token 链路实测（本机 mock LLM 不产生用量）、配额与限流、可观测性、多租户、状态对账 |

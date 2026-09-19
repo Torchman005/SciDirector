@@ -250,6 +250,29 @@ Python 图只负责"产出并审查每一个镜头片段"。
 且不生效时打警告日志。**默认 `off`**：只读根与 `$HOME` 缓存（matplotlib/LaTeX）冲突，
 开启前需逐个引擎验证。
 
+#### seccomp 系统调用过滤（v0.5.9）
+
+**实现的是拒绝名单，不是需求措辞里的白名单** —— 理由见下。安装点是 `exec_guard`
+（必须在只读设置**之后**：seccomp 不可逆，而只读要用 `mount`，`mount` 正在名单里）。
+只需要 seccomp 时**不必经过 `unshare`**：它是 per-process 属性，少一层就少一处会坏的地方。
+
+拦截内容（39 条）与依据：
+
+| 组 | 代表 | 为什么必须显式拦 |
+| --- | --- | --- |
+| 内核/命名空间 | `mount` `umount2` `pivot_root` `setns` `unshare` `init_module` `kexec_load` `reboot` … | 在用户命名空间里我们**就是 root**，这些并非天然不可达 |
+| 进程注入 | `ptrace` `process_vm_*` `kcmp` `perf_event_open` `userfaultfd` | 沙盒里没有正当用途 |
+| 密钥环 | `keyctl` `add_key` `request_key` | 可把宿主机密钥读出去 |
+| bpf / io_uring / 句柄 | `bpf` `io_uring_*` `open_by_handle_at` | 攻击面大，且历史上出现过绕过 seccomp 的路径 |
+
+默认动作 `ALLOW`；被拦的返回 **EPERM**（不杀进程）—— 意外的调用得到一个普通错误，
+程序往往还能降级继续。若真的被 SIGSYS 终止，`killed_reason` 会归成 `"seccomp"`：
+`returncode=-31` 没人认得出，否则现象就是"渲染莫名失败"。
+
+**为什么不做白名单**：白名单要求把目标程序的每个系统调用都列全，而 manim/LaTeX/Chromium
+在多数环境（包括本机）装不起来，那份名单**无法被验证** —— 漏一个就让渲染静默失败，
+原因极难反推。**没验证过的白名单比不加更危险。** 开关默认 `off`，开启前需逐个引擎验证。
+
 > **覆盖边界（重要）**：本层隔离的是**经 `SandboxRunner` 跑的子进程**（manim、ffmpeg/ffprobe）。
 > **HTML 引擎（d3 / echarts / code_anim）不在其中** —— `HtmlRenderer._capture` 是在
 > AI 服务进程里直接 `sync_playwright()` 起 Chromium，不经过 runner。

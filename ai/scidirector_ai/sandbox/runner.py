@@ -40,10 +40,16 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from ..logging import get_logger
-from .isolation import Isolator, ReadOnlyMode, ReadOnlyUnavailable
+from .isolation import (
+    Isolator,
+    ReadOnlyMode,
+    ReadOnlyUnavailable,
+    SeccompMode,
+    SeccompUnavailable,
+)
 from .netns import IsolationMode, NetworkIsolationUnavailable
 
 logger = get_logger(__name__)
@@ -65,6 +71,16 @@ KILL_GRACE_SEC = 5.0
 #: 写成模块级常量会让整个模块在 Windows 上导入失败。
 _RESOURCE_KILL_SIGNALS = frozenset(
     sig for sig in (getattr(signal, "SIGXCPU", None),) if sig is not None
+)
+
+#: seccomp 违规导致的终止信号。
+#:
+#: 我们的过滤器默认返回 EPERM（不杀进程），因此正常不会走到这里。但把它单独
+#: 归类仍然必要：一旦**真的**出现，`returncode` 会是 -31，而"信号 31 是什么"
+#: 没人能一眼认出来 —— 现象会变成"渲染莫名失败"。归类成 "seccomp" 之后，
+#: 上层与日志能直接指出"是沙盒系统调用策略拦下了它"。
+_SECCOMP_KILL_SIGNALS = frozenset(
+    sig for sig in (getattr(signal, "SIGSYS", None),) if sig is not None
 )
 
 
@@ -93,6 +109,8 @@ def _classify_resource_exit(returncode: int | None) -> str:
     """
     if returncode is None or returncode >= 0:
         return ""
+    if -returncode in _SECCOMP_KILL_SIGNALS:
+        return "seccomp"
     if -returncode not in _RESOURCE_KILL_SIGNALS:
         return ""
     return "timeout"
@@ -165,6 +183,13 @@ class ExecResult:
     read_only_enforced: bool = False
     #: 没能变成只读的挂载点（含原因）。空列表 + enforced=true 才算真的只读。
     read_only_gaps: list[str] = field(default_factory=list)
+    #: seccomp 过滤器是否**确实装载成功**（同样取自子进程写回的报告）。
+    seccomp_enforced: bool = False
+    #: 实际拦下的系统调用条数。
+    seccomp_denied: int = 0
+    #: 名单里**没能装上**的条目（例如内核不认识该系统调用）。
+    #: 只报"拦了 39 条"而不报未解析项，会让人以为名单里每一条都生效了。
+    seccomp_unresolved: list[str] = field(default_factory=list)
     #: 使用的超时值（便于错误信息里给出确切数字）。
     timeout_sec: float = 0.0
 
@@ -186,6 +211,8 @@ class ExecResult:
         """一行式摘要，用于日志与事件消息。"""
         if self.killed_reason == "timeout":
             return f"超时（>{self.timeout_sec:g}s）被强制终止"
+        if self.killed_reason == "seccomp":
+            return "被沙盒的系统调用策略终止（SIGSYS）"
         if self.killed_reason == "memory":
             limit = f"{self.peak_memory_mb:.0f}MB" if self.peak_memory_mb else "超限"
             return f"内存超限（{limit}）被强制终止"
@@ -469,11 +496,12 @@ class SandboxRunner:
         self,
         network_isolation: IsolationMode = "auto",
         read_only: ReadOnlyMode = "off",
+        seccomp: SeccompMode = "off",
     ) -> None:
         #: 网络隔离默认 auto：能用就用，不能用则如实上报而不是假装隔离。
         #: 只读默认 **off**：它会让 $HOME 下的缓存不可写（matplotlib/LaTeX 依赖），
         #: 开启前必须逐个引擎验证，不能替使用者默认打开。
-        self.isolator = Isolator(network_isolation, read_only)
+        self.isolator = Isolator(network_isolation, read_only, seccomp)
 
     #: 允许子进程继承的环境变量白名单。
     #: 用白名单而不是黑名单：黑名单永远会漏（新增一个 *_KEY 就泄露了）。
@@ -527,7 +555,7 @@ class SandboxRunner:
         try:
             mechanism = self.isolator.network_mechanism()
             spawn_argv, status_path = self.isolator.wrap(argv, str(cwd))
-        except (NetworkIsolationUnavailable, ReadOnlyUnavailable) as exc:
+        except (NetworkIsolationUnavailable, ReadOnlyUnavailable, SeccompUnavailable) as exc:
             # 这是**部署配置**问题而不是渲染问题，但仍返回结果而不是抛异常：
             # 与本方法对「找不到可执行文件」的处理保持一致 —— 让上层统一按渲染失败
             # 处理并把原因写进事件流。抛异常会穿透到图外层，把单个镜头的失败升级成
@@ -636,16 +664,24 @@ class SandboxRunner:
         )
         # 只读报告由子进程写回：逐次执行才知道某个挂载点有没有保护上。
         if status_path != "":
-            enforced, gaps = read_readonly_report(status_path)
-            result.read_only_enforced = enforced
-            result.read_only_gaps = gaps
-            if not enforced:
-                # **必须让人看见**：配置要求只读、而某个挂载点没保护上，
-                # 这是"以为加固了其实没有"的典型场景。不打日志的话，
-                # 它只会体现在一个没人看的字段里。
+            report = read_isolation_report(status_path)
+            result.read_only_enforced = report["read_only_enforced"]
+            result.read_only_gaps = report["read_only_gaps"]
+            result.seccomp_enforced = report["seccomp_enforced"]
+            result.seccomp_denied = report["seccomp_denied"]
+            result.seccomp_unresolved = report["seccomp_unresolved"]
+            # **必须让人看见**：配置要求了加固、而某一层没生效，这是
+            # "以为加固了其实没有"的典型场景。不打日志的话，
+            # 它只会体现在一个没人看的字段里。
+            if self.isolator.read_only_mechanism() != "none" and not result.read_only_enforced:
                 logger.warning(
                     "沙盒只读未生效",
-                    extra={"command": argv[0], "gaps": gaps, "workdir": str(cwd)},
+                    extra={"command": argv[0], "gaps": result.read_only_gaps, "workdir": str(cwd)},
+                )
+            if self.isolator.seccomp_mechanism() != "none" and not result.seccomp_enforced:
+                logger.warning(
+                    "沙盒 seccomp 未生效",
+                    extra={"command": argv[0], "gaps": result.read_only_gaps, "workdir": str(cwd)},
                 )
 
         if job:
@@ -865,21 +901,29 @@ def _decode(raw: bytes | None) -> str:
         return text[:MAX_OUTPUT_BYTES] + "\n…（输出已截断）"
     return text
 
-def read_readonly_report(status_path: str) -> tuple[bool, list[str]]:
-    """读子进程写回的只读状态报告并删除它。
+def read_isolation_report(status_path: str) -> dict[str, Any]:
+    """读子进程写回的隔离状态报告并删除它。
 
-    **读不到就返回 (False, [...])** —— 保守失败：拿不到证据就不声称已只读。
-    反过来（读不到就当成功）会让这一层在报告机制坏掉时静默失效。
+    **读不到就返回"都没生效"** —— 保守失败：拿不到证据就不声称已加固。
+    反过来（读不到就当成功）会让这些机制在报告链路坏掉时静默失效，而那正是
+    "以为加固了其实没有"的典型场景。
     """
     import json
     from pathlib import Path
 
+    empty = {
+        "read_only_enforced": False,
+        "read_only_gaps": ["未取到隔离状态报告 —— 按未生效处理"],
+        "seccomp_enforced": False,
+        "seccomp_denied": 0,
+        "seccomp_unresolved": [],
+    }
     path = Path(status_path)
     try:
         with path.open("r", encoding="utf-8") as fh:
             data = json.load(fh)
-    except (OSError, ValueError) as exc:
-        return False, [f"未取到只读状态报告（{exc.__class__.__name__}）——按未生效处理"]
+    except (OSError, ValueError):
+        return empty
     finally:
         # 状态文件写在工作目录里，读完即删，避免污染产物目录。
         try:
@@ -887,8 +931,15 @@ def read_readonly_report(status_path: str) -> tuple[bool, list[str]]:
         except OSError:
             pass
 
-    enforced = bool(data.get("readonly_enforced", False))
     gaps = [str(g) for g in (data.get("readonly_gaps") or [])]
     if err := data.get("error"):
         gaps.append(str(err))
-    return enforced, gaps
+    if msg := data.get("seccomp_error"):
+        gaps.append(str(msg))
+    return {
+        "read_only_enforced": bool(data.get("readonly_enforced", False)),
+        "read_only_gaps": gaps,
+        "seccomp_enforced": bool(data.get("seccomp_enforced", False)),
+        "seccomp_denied": int(data.get("seccomp_denied", 0) or 0),
+        "seccomp_unresolved": [str(u) for u in (data.get("seccomp_unresolved") or [])],
+    }

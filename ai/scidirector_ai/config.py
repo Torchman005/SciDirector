@@ -154,6 +154,19 @@ class Settings(BaseSettings):
     #: - ``auto``：能用就用，不能用则如实上报（报告里的 ``read_only_gaps``）。
     #: - ``require``：必须生效，否则拒绝执行（fail closed）。
     sandbox_read_only: Literal["off", "auto", "require"] = "off"
+    #: 沙盒的 **seccomp 系统调用过滤**（阶段五·沙盒加固）。
+    #:
+    #: 实现的是**拒绝名单**（`exec_guard.DENY_SYSCALLS`）而不是允许名单，
+    #: 理由见 `exec_guard.py` 的模块文档：允许名单要求把目标程序用到的每个系统调用
+    #: 都列全，而本机只装得起 ffmpeg（manim/LaTeX/Chromium 都不可用），
+    #: 那份名单**无法被验证** —— 没验证过的允许名单比不加更危险，
+    #: 它会让渲染失败变成生产事故而原因极难反推。
+    #:
+    #: - ``off``（缺省）：不启用。
+    #: - ``deny``：安装拒绝名单。被拦的调用返回 EPERM（不杀进程），
+    #:   因此意料之外的调用往往还能降级继续。
+    #: - ``require``：必须装上，装不上就拒绝执行。
+    sandbox_seccomp: Literal["off", "deny", "require"] = "off"
     # Manim 渲染质量：l=480p 草稿（快，用于先验证再高清重渲）, m=720p, h=1080p
     sandbox_manim_quality: Literal["l", "m", "h", "k"] = "l"
     # 沙盒工作目录根；每个 job 在其下建独立子目录。
