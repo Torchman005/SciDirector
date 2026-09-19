@@ -33,6 +33,16 @@ type JobResponse struct {
 	Job      *domain.Job    `json:"job"`
 	Stat     domain.JobStat `json:"stat"`
 	Progress float64        `json:"progress"`
+	// Cost 是成本快照，读取时现算（见 domain.CostSnapshot）。
+	// 放在顶层而不是只靠 job 里的字段：job 里持久化的只有 LLM 用量，
+	// 调用方想要的「这个任务花了多少」必须包含推导出来的渲染与配音。
+	Cost domain.Cost `json:"cost"`
+}
+
+// CostResponse 是成本查询端点的响应体。
+type CostResponse struct {
+	JobID string      `json:"job_id"`
+	Cost  domain.Cost `json:"cost"`
 }
 
 // ShotsResponse 只返回分镜数组（审核台的高频轮询端点，避免重复传整份脚本）。

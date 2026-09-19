@@ -280,10 +280,15 @@ def _fatal_event(job_id: str, message: str) -> dict[str, Any]:
 
 
 def _final_event(job_id: str, llm: LLMClient) -> dict[str, Any]:
-    """构造收尾事件，附带本次运行的 token 成本摘要。
+    """构造收尾事件，附带本次运行的成本摘要。
 
     成本可观测是刻意的：token 是这套系统最直接的可变成本，
     不把它放进事件流，就没法在后端做成本核算（阶段五的输入）。
+
+    **只报「只有 Python 知道」的那部分**：LLM 的 token 与调用次数。
+    渲染时长与配音字符数都能从任务状态里推导（产物自带 `render_cost_sec`、
+    有配音的镜头就是合成过的那几个），由 Go 侧自己算 ——
+    两边各报一份迟早会对不上，而「两处口径不一致」在成本这种数字上格外难查。
     """
     return {
         "job_id": job_id,
@@ -300,7 +305,18 @@ def _final_event(job_id: str, llm: LLMClient) -> dict[str, Any]:
         "feedback": None,
         "ts_unix_ms": int(time.time() * 1000),
         "payload_json": json.dumps(
-            {"summary": {"total_tokens": llm.usage.total_tokens, "calls": llm.usage.calls}},
+            {
+                # summary 保留：已有的事件消费方可能在看它，改结构要有理由。
+                "summary": {"total_tokens": llm.usage.total_tokens, "calls": llm.usage.calls},
+                # cost 是阶段五成本核算的输入。键名用 snake_case、值全是数字 ——
+                # 与 §9 对 payload_json 的约定一致，Go 侧直接反序列化不会变成零值。
+                "cost": {
+                    "llm_prompt_tokens": llm.usage.prompt_tokens,
+                    "llm_completion_tokens": llm.usage.completion_tokens,
+                    "llm_total_tokens": llm.usage.total_tokens,
+                    "llm_calls": llm.usage.calls,
+                },
+            },
             ensure_ascii=False,
         ),
     }

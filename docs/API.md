@@ -139,10 +139,47 @@ curl -X POST http://localhost:8080/api/v1/generate \
                    "feedbacks": [] } ]
     },
     "stat": { "total": 4, "approved": 1, "failed": 0, "awaiting_human": 0, "in_progress": 3 },
-    "progress": 0.25
+    "progress": 0.25,
+    "cost": {
+      "llm": { "prompt_tokens": 1200, "completion_tokens": 3400, "total_tokens": 4600, "calls": 9 },
+      "render_sec": 12.48, "tts_chars": 96, "tts_shots": 3,
+      "shots": 4, "approved": 1
+    }
   }
 }
 ```
+
+`cost` 在**详情里也返回**，免得前端为了一个数字再发一次请求。
+
+#### `GET /api/v1/jobs/:jobID/cost`
+
+单独查询成本快照（审计 / 容量规划视角，不必拉整份分镜表）：
+
+```json
+{
+  "ok": true,
+  "data": {
+    "job_id": "job-9f3a…",
+    "cost": {
+      "llm": { "prompt_tokens": 1200, "completion_tokens": 3400, "total_tokens": 4600, "calls": 9 },
+      "render_sec": 12.48, "tts_chars": 96, "tts_shots": 3,
+      "shots": 4, "approved": 1
+    }
+  }
+}
+```
+
+字段语义与口径（**重要**）：
+
+- 统计的是**资源用量**，不是金额。换算成钱需要单价表，而单价随服务商/模型/时段变化，
+  写死在代码里等于制造一个「看起来很精确但已过时」的数字。
+- `llm.*` 由 Python 上报（只有它持有 LLM 客户端）并随任务持久化，落在任务的
+  `llm_usage` 字段里；未上报时该字段为 `null`，此处如实给 0，**不会**编一个用量出来。
+- `render_sec` / `tts_chars` / `tts_shots` 由 Go 在读取时**从任务状态推导**：
+  前者是各产物 `render_cost_sec` 之和，后者只统计**真的产出了配音**（`artifact.audio_path`
+  非空）的镜头 —— 没配上音的镜头不计入，否则 TTS 整体失败时成本看起来照样正常。
+- `tts_chars` 按**字符**计（中文一个字算 1），不是字节。
+- 推导项不进持久化状态，因此**与分镜表永远一致**，不存在两处口径不一致的问题。
 
 #### `GET /api/v1/jobs/:jobID/shots`
 

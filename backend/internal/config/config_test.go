@@ -23,6 +23,10 @@ import (
 func clearArchiveEnv(t *testing.T) {
 	t.Helper()
 	for _, k := range []string{
+		// SCID_ARCHIVE_BACKEND 必须在列：漏了它，用例就会去读**开发者当前 shell** 的
+		// 配置。本地 source 过 .env（ARCHIVE_BACKEND=s3）时这条「缺省值」用例必然失败，
+		// 而在干净环境里又是绿的 —— 一个只在别人机器上红的测试，比没有测试更浪费时间。
+		"SCID_ARCHIVE_BACKEND",
 		"SCID_S3_ENDPOINT", "SCID_S3_ACCESS_KEY", "SCID_S3_SECRET_KEY",
 		"SCID_S3_BUCKET", "SCID_S3_USE_SSL", "SCID_S3_REGION",
 		"SCID_MINIO_ENDPOINT", "SCID_MINIO_ACCESS_KEY", "SCID_MINIO_SECRET_KEY",

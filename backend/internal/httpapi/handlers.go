@@ -213,7 +213,23 @@ func (s *Server) HandleGetJob(c *gin.Context) {
 		mapError(c, err)
 		return
 	}
-	respondOK(c, JobResponse{Job: job, Stat: job.Stat(), Progress: job.ProgressRatio()})
+	respondOK(c, JobResponse{
+		Job: job, Stat: job.Stat(), Progress: job.ProgressRatio(), Cost: job.CostSnapshot(),
+	})
+}
+
+// HandleGetJobCost 返回任务的成本快照。
+//
+// 单独开一个端点而不是只在任务详情里带：成本是**审计与容量规划**的视角，
+// 它要能被单独查询、单独采集（例如定时把开销异常的任务捞出来），
+// 而不必每次都把整份分镜表拉下来。
+func (s *Server) HandleGetJobCost(c *gin.Context) {
+	job, err := s.deps.Store.GetJob(c.Request.Context(), c.Param("jobID"))
+	if err != nil {
+		mapError(c, err)
+		return
+	}
+	respondOK(c, CostResponse{JobID: job.JobID, Cost: job.CostSnapshot()})
 }
 
 // HandleListShots 只返回分镜数组。

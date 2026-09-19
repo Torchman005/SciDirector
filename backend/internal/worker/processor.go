@@ -216,6 +216,12 @@ func (p *Processor) applyPipelineEvent(ctx context.Context, jobID string, ev *pb
 			}
 		}
 
+		// 成本是**任务级**数据（不挂在某个镜头上），因此必须放在 shot_id 的
+		// 提前返回之前 —— 否则只有带镜头的 final 事件才会被记账，任务级事件里的成本会被丢掉。
+		if u, ok := domainEvent.Payload["llm_usage"].(domain.LLMUsage); ok {
+			j.ApplyLLMUsage(u)
+		}
+
 		// 没有 shot_id 的事件是任务级事件（例如全片进度），只更新任务状态。
 		if ev.GetShotId() == "" {
 			j.UpdatedAt = time.Now().UTC()

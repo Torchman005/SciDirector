@@ -3,7 +3,7 @@
 > 本文件是本仓库的**唯一权威协作契约**。任何人类开发者或 AI 编码智能体在修改本仓库前，
 > 必须先读本文件；修改架构、契约、状态机、目录职责后，**必须在同一次提交中更新本文件**。
 >
-> 版本：v0.5.2 · 阶段：阶段五（生产加固）· 最后更新：见文末「迭代日志」
+> 版本：v0.5.3 · 阶段：阶段五（生产加固）· 最后更新：见文末「迭代日志」
 
 ---
 
@@ -152,8 +152,14 @@ SciDirector/
   - [x] **人工放行**：熔断镜头的 approve 出口（含「全部通过即入队合成」）
   - [x] **成分镜编辑**：`PATCH /jobs/:id/shots/:id` 改文案并可立即重做
 - [ ] **阶段五 · 生产加固**（后续）
+  - [x] **成本核算**：`GET /api/v1/jobs/:jobID/cost` + 任务详情内 `cost`。
+        口径：报**用量**不报金额；`llm.*` 由 Python 上报并持久化，`render_sec`/`tts_chars`
+        由 Go 读取时现算（见 `docs/ROADMAP.md`「成本核算：已完成的部分与口径」）
+  - [ ] 配额与限流 —— **待办**：验收只要求「可查询」，且限额要按归属算，与多租户耦合
   - [ ] OpenTelemetry 链路追踪、Prometheus 指标、Grafana 看板
-  - [ ] 多租户与配额、成本核算（token/渲染时长）
+  - [ ] 多租户（任务归属与隔离）
+  - [ ] 状态对账（Redis 与 LangGraph checkpoint 的双写一致性）
+  - [ ] 沙盒加固（`--network=none --read-only`、seccomp 白名单）
 
 > 各阶段的**验收命令与预期输出**见 `docs/ROADMAP.md`。
 > 阶段二结束后 `RunPipeline` / `GenerateShot` / `CritiqueShot` / `ReviseShot` 均已实现；
@@ -340,6 +346,14 @@ make up / make down   # docker compose 全栈
 | 实时推送不含的字段，必须由**实时信号**触发回源 | `onNeedJobRefresh` 原先只在**断线**时触发，而事件里不含分镜明细、快照又是在「刚提交、还没拆解」那一刻生成的 ⇒ 分镜表**永远空着**，连接指示器却一路显示「实时」。更糟的是：一旦 WS 因配置问题全 403，`onclose` 反而会反复触发回源，界面**看起来是好的** —— 「通道坏掉」掩盖了「通道没被正确消费」 |
 | 回源要合并**整个信封**（job + stat + progress），不能只合并 job | `deriveStat` 优先用服务端 `stat`（它确实是权威的），但 `stat` 只在快照里到达过 —— 于是界面长期显示「表格 4 行、统计写着共 0 个分镜、进度 0%」。这种自相矛盾的界面比单纯的空白更伤信任：`stream.ts` 的注释早就警告过它，而它恰恰由「只合并一半」制造出来 |
 | HTTP 客户端的 Endpoint 约定必须与文档一致，否则「照着文档配」等于服务起不来 | `minio-go` 的 `Endpoint` **不接受带 scheme 的 URL**，而 `.env.example` 与 compose 都写 `http://host:9000` ⇒ worker 启动即报「归档配置非法: Endpoint url cannot have fully qualified paths」而**退出**。这类问题只在真正启动的那一刻才暴露，代价远高于在适配层多写十行归一化代码 |
+| `payload_json` 是两侧唯一**没有 proto 约束**的通道，字段名写错不会有任何报错 | 它只表现为「那个功能一直是 0」——本次成本核算的真实经历：Python 改了字段、Go 仍读旧名，两侧单测全绿而线上成本恒为 0。因此：解析失败**不得**让整条事件失败（那会丢状态迁移），但必须把错误放进 payload（`raw_parse_error`）随事件流可见，绝不静默吞掉 |
+| 成本的**推导项**（渲染时长/配音字数）不进持久化状态，一律读取时现算 | 存起来就得同步，而「两个口径不一致」在成本数字上格外难查：没有报错、没有告警，只是一个数字悄悄偏了。现算则天然与分镜表一致。为此用**两个类型**分开：`LLMUsage`（Python 上报、持久化）与 `Cost`（面向调用方的快照）。合成一个「部分字段有值」的类型，就等于让某处顺手把推导值写回存储 —— 两个来源的开端；分成两个类型，编译器替我们守住「谁能写进存储」 |
+| 任务级数据（如成本）在事件处理里必须放在 `shot_id` 的**提前返回之前** | 否则只有带镜头的事件才会被记账，任务级事件里的数据被静默丢弃。成本这类数据不挂在任何镜头上，很容易写错位置，且写错后表现为「有时记得上、有时记不上」 |
+| TTS 成本必须按**字符数**统计，且只算**真的产出了配音**的镜头 | 一是中文一个字 3 字节，用 `len()` 会把成本算成三倍；二是若把「所有镜头」都计入，TTS 整体失败时成本看起来照样正常，正好掩盖了真正的问题 —— 而「没配上音」恰恰是最该被看见的那件事 |
+| **改了 Python 代码必须重启 AI 服务**，否则 Go 侧只会看到旧格式 | 本次真实踩到：`cost` 字段加好后跑真任务，final 事件里**根本没有 `cost` 键**，看起来像 Go 侧解析坏了。真实原因是 AI 服务进程启动于改动之前。观测手段是看事件流里的 `payload_json` 原文 —— 它一眼就能区分「上游没发」和「下游没解」 |
+| `config.AIConfig.StreamTimeout` 的**零值**会让 `RunPipeline` 立刻报 `DeadlineExceeded` | `context.WithTimeout(ctx, 0)` 立即到期，报出来的是「ai: Python 大脑不可达 … DeadlineExceeded」—— 与真实原因（配置缺字段）毫无关系，排查方向被完全带偏。手写 `Config` 的测试与部署都必须显式给值 |
+| 集成测试里构造的跨语言 payload 必须**照抄真实形状**，尤其是数字枚举 | 分镜表里 `tag`/`engine` 是**数字**；写成 `"MATH"` 会让 `encoding/json` 整体反序列化失败，表现为「导演跑完了但一个镜头都没有」，而两侧单测都还是绿的（`pbconv` 对 `ShotSpec` 的解析是 all-or-nothing）。构造这类 payload 时先去看 `processor_test.go` 里固化的真实样例 |
+| 用例必须**自己清理**它依赖的环境变量 | `TestArchiveEnvDefaultsWhenUnset` 漏清 `SCID_ARCHIVE_BACKEND`，于是它读的是**开发者当前 shell** 的配置：本地 `source .env`（`ARCHIVE_BACKEND=s3`）时必然失败，干净 CI 上却是绿的。只在别人机器上红的测试比没有测试更浪费时间 —— 「缺省值」类用例必须把所有相关变量显式清空 |
 | `context.set_offline(True)` **不会**断开已经建立的 WebSocket | 做「断网演练」时实测断网期间连接指示器仍是「实时」，演练等于没做。要真正切断实时通道，用「停掉 api 进程 N 秒再拉起」更可靠，而且顺带覆盖了「服务端重启」这个代码里明确设计过的场景。**脚本必须如实报告「本次演练其实没断线」**，而不是假装通过 |
 | 就绪探测必须检查**二进制/可执行文件**，不能只看包能否 import | `playwright` 是两步安装：`pip install playwright` 只装 Python 包，浏览器要另跑 `playwright install chromium`。只做第一步时「导入探测」会报可用，健康检查于是宣称 d3/echarts/code_anim 都就绪 —— 一个会说谎的就绪探测比没有探测更糟，它把「环境没准备好」伪装成「内容不达标」，而两者该做的处置完全不同 |
 | 同一件事的判定**只能有一份实现** | 「这个引擎能不能渲染」原先在 `config.toolchain_report()`（健康检查读它）与 `renderer.HtmlRenderer.available()`（渲染前自检）各写了一套，于是必然各说各话。现在共用 `config.browser_ready()` |
@@ -379,3 +393,4 @@ make up / make down   # docker compose 全栈
 | v0.5.0 | 阶段三（TTS 接入完成） | **把 TTS 接进流水线并用真实 Edge TTS 端到端验证**。渲染节点对每个镜头合成配音、写进 `RenderArtifact.audio_path` 并落句级时间戳 sidecar；失败**只降级不抛出**（画面才是主体，没旁白的镜头仍是可用产物），但一定留 warning —— 「成片没声音」是可见的质量差异，静默降级会让人误判方向。缺省 `SCID_TTS_PROVIDER` 为空 ⇒ 不合成、不产生额外文件，与接入前逐字节一致。**真实任务实测**（`job-d71b2f4265d6b760`）：镜头拿到 3.768s/4.344s 的真实配音；整片 `narration.m4a` 由两段拼成；**成片音轨 -22.5 dB（配音轨 -23.1 dB）证明真的不是静音**；**第二条字幕结束于 7.944s = 3.6 + 4.344（该镜头配音时长），而不是窗口末尾 8.5s** —— 也就是「声音停了字幕就停」，末尾留白不再被字幕占满；任务终态如实为 `PARTIAL`（两个无产物镜头被放行）。**踩到并修掉一个只有端到端才会暴露的坑**：ai 服务跑在 `ai/`、worker 跑在 `backend/`，Python 侧最初把 `audio_path` 报成**相对路径**，worker 那边就是「文件不存在」，而 worker 只降级不报错（成片照出、只是没声音），极易误判成「TTS 没配好」；修在写入方（统一 `write_audio` 做 resolve 并返回绝对路径），四个适配器一起受保护，补了 2 条回归用例。**仍待办（增量）**：句级时间戳 sidecar 已写出并落盘，但 Go 侧尚未消费 —— 当前字幕按「镜头真实音频时长」对齐，镜头内部仍按文本比例分配；再进一步需在 Go 侧读 sidecar。Python 侧 411 → **413 passed / 3 skipped**。 |
 | v0.5.1 | 阶段三（句级时间戳对齐） | **Go 侧开始消费句级时间戳**，字幕从「按镜头时长比例分配」升级为「按真实句子起止」：`media.ReadNarrationMarks`（读 sidecar，**区分「没有」与「用不了」**：前者静默回退、后者返回 error 让调用方记 warn）、`media.PlanCuesWithMarks`（句数与时间戳条数一致时按句锚定，对不上退回比例分配）、`HandleComposeJob` 逐镜头读 marks 并在命中时记日志。价值在于**句间停顿不再被均摊**：比例分配下语音停一秒、字幕仍匀速推进，越往后越偏；用例 `TestPlanCuesWithMarksKeepsPauseBetweenSentences` 钉住「停 1.5s 时第二条字幕必须在 3.5s 出现，而不是比例算出的约 2.75s」。刻意**不做** `mergeToAtMost` —— 合并等于丢掉刚拿到的精度，短句一闪而过本就是语音的真实形态。**跨语言契约用 Python 真实产出的 sidecar 作为测试 fixture**，因为契约坏掉时是**静默降级**（成片照样出、只是字幕退回旧精度），不会有任何报错。Go 侧 153 → **165 PASS / 0 FAIL / 1 SKIP**（唯一 SKIP 是显式门控的慢用例 B5）。另：本轮机器重启过一次，`/dev/shm` 里的临时环境（venv、日志、解包的 redis）全丢，容器靠 `restart:unless-stopped` 自行恢复；重新拉取了 redis 二进制以让 B5 用例继续真跑。 |
 | v0.5.2 | 阶段三（TTS 重试 + 真实复验） | **修掉「TTS 瞬时失败直接降级」**：实测本机访问 Edge TTS 会「第一次成功、紧接着连接被 reset」（`Connection reset by peer`，分类为可重试），而流水线原先**只试一次** ⇒ 第一个镜头直接失去配音；更糟的是失去配音**只降级不报错**，成片是「莫名没声音」，排查方向完全跑偏。新增 `synthesize_with_retry`（四个适配器共用）：只重试**可重试**错误、指数退避带 **±30% 抖动**（同批镜头同时失败时不至于一起重试成惊群）、**次数有限**（TTS 是增强，不该拖住任务）；新增 `tts_max_attempts`/`tts_retry_backoff_sec` 配置。修复后同一条流水线上两个镜头都拿到了配音。**真实任务复验**（`job-b754208870947990`）：两个镜头都命中句级时间戳，字幕起点都是 **0.100**（即 sidecar 里的 start_sec），镜头 3 的 cue 结束于 **7.938** = 3.6 + 4.3375（与 sidecar 逐项对上），成片音轨 -22.5 dB（确有声音）。另：本轮机器重启过一次，`/dev/shm` 临时环境全丢（容器靠 `restart:unless-stopped` 自行恢复），我重建了 venv 与日志目录、重新拉取 redis 二进制，并**重建了两个 Go 二进制**（否则跑的仍是旧版本 —— 上一轮就因此误判过一次「功能没生效」）。Python 侧 **415 passed / 5 skipped**；Go 侧 **165 PASS / 0 FAIL / 1 SKIP**。 |
+| v0.5.3 | 阶段五（成本核算） | **按任务核算资源用量**：新增 `GET /api/v1/jobs/:jobID/cost`，任务详情里也带 `cost`。口径上有一条主线决策 —— **报用量不报金额**（换算成钱要单价表，而单价随服务商/模型/时段变，写死在代码里等于制造一个「看起来精确但已过时」的数字），以及**该谁报就谁报**：`llm.*` 只有 Python 知道（它持有 LLM 客户端）故由它上报并持久化，`render_sec`/`tts_chars` 能从事务状态推导故由 Go **读取时现算**。现算是刻意的：存起来就要同步，而「两处口径不一致」在成本数字上没有报错、没有告警，只是一个数字悄悄偏了。为把「谁能写进存储」变成编译期约束，用**两个类型**分开 —— `domain.LLMUsage`（上报、持久化）与 `domain.Cost`（面向调用方的快照）；合成一个「部分字段有值」的类型就等于给「某处顺手把推导值写回存储」留了门。另两处口径细节：TTS 只统计**真的产出配音**的镜头（否则 TTS 整体失败时成本看起来照样正常，正好掩盖真正的问题），中文按**字符**计而非字节（一个汉字 3 字节，用字节数会把成本算成三倍）。**测试 23 项新增**：domain 9（含反向控制：无产物时推导项为 0、重复上报是覆盖而非累加 —— 断点续跑会重放 final 事件）、pbconv 4（照抄 Python 线上格式的 `payload_json` 断言 `cost`→`llm_usage`；坏 JSON 必须让事件照常迁移并留下 `raw_parse_error`）、Python 侧对称的 4 项（`tests/test_final_event_cost.py`，用字面量逐字钉住键名与「值必须是数字」——**补这组用例的原因正是契约测试的不对称**：`payload_json` 两侧都没有 proto 约束，若只有 Go 侧钉着，改 `builder.py` 的键名会让两侧单测全绿而线上成本恒为 0；已做变异验证：把 `llm_total_tokens` 改名后该用例确实变红）、worker 4（真 Redis；**专门覆盖「任务级事件无 shot_id」** —— 记账若写在提前返回之后就会被吞掉，并对该实现做过**变异验证**：短路记账后用例确实变红）、worker 传输层 2（起真实 gRPC server 经 `RunPipeline` 发真实形状 payload 再由 Go 真实客户端接收落库）、httpapi 4。**真实任务端到端复验**（`job-db02acefed80f53d`）：接口返回 `render_sec=2.549 / tts_chars=40 / tts_shots=2 / shots=4 / approved=2`，从分镜原文独立重算**逐项一致**；两个 `AWAITING_HUMAN` 镜头贡献 0（反向控制在实际数据上成立），`tts_chars=40` 对应两份真实存在的配音文件（各带 marks sidecar）。**踩坑三处**：①「改了 Python 必须重启 AI 服务」再次应验 —— `cost` 字段加好后跑真任务，final 事件里**根本没有该键**，看起来像 Go 侧解析坏了，真因是 AI 服务进程启动于改动之前（看事件流里 `payload_json` 的原文能一眼区分「上游没发」与「下游没解」）；②`config.AIConfig.StreamTimeout` 的零值让 `RunPipeline` 立刻报 `DeadlineExceeded`，错误信息是「Python 大脑不可达」——与真因（配置缺字段）毫无关系；③修掉一处我上一轮自己引入的测试缺陷：`TestArchiveEnvDefaultsWhenUnset` 漏清 `SCID_ARCHIVE_BACKEND`，于是它读的是开发者当前 shell 的配置，本地 `source .env` 时必然失败而干净 CI 上却是绿的。**未验证**：真实 token 数走完全链路（本机 mock LLM **不产生用量**，故真实任务 `llm.*` 恒为 0；已用「usage 累加路径单测」+「非零数字过真实 gRPC 通道」两条证据补缺，但接上真 LLM 后仍需一次带 key 的实测）；**配额与限流未做**（验收只要求可查询，且它与多租户耦合）。Python **421 passed / 3 skipped**；Go **188 PASS / 0 FAIL / 1 SKIP**（另有 2 项 B5 故障注入用例经 `make test-failover` 显式跑通，含 62s 的「执行中任务」恢复用例）。踩坑记录见 §9 |

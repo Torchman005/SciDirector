@@ -7,6 +7,7 @@
 package pbconv
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -321,8 +322,50 @@ func EventFromPipeline(ev *pb.PipelineEvent) domain.Event {
 			e.Payload = map[string]any{}
 		}
 		e.Payload["raw"] = pj
+		if err := applyPipelinePayload(e.Payload, pj); err != nil {
+			// payload_json 是「快变结构」的逃生口，解析失败不该让整条事件失败
+			// （那会丢状态迁移）；但也绝不能静默 —— 否则 Python 改了字段名，
+			// 这边只会表现为「成本一直是 0」，没有任何报错可查。
+			// 因此把错误放进 payload，它会随事件流落进日志与 WS 推送。
+			e.Payload["raw_parse_error"] = err.Error()
+		}
 	}
 	return e
+}
+
+// pipelinePayload 是 Python 侧 payload_json 的**结构化视图**。
+//
+// 只声明真正被消费的字段：payload_json 的契约就是「结构可以快速演进」（Agent.md §9），
+// 把它整个反序列化成 map[string]any 会让下游开始依赖它的内部形状，
+// 等于把一个刻意留松的接口又焊死。这里的每个字段都对应一个明确的下游消费者。
+type pipelinePayload struct {
+	// 字段名照抄 Python 的线上格式（cost.llm_*），不为了好看而改名：
+	// 两侧各用各的命名，只会让「哪边写错了」变成一个需要猜的问题。
+	Cost *struct {
+		LLMPromptTokens     int `json:"llm_prompt_tokens"`
+		LLMCompletionTokens int `json:"llm_completion_tokens"`
+		LLMTotalTokens      int `json:"llm_total_tokens"`
+		LLMCalls            int `json:"llm_calls"`
+	} `json:"cost"`
+}
+
+// applyPipelinePayload 把 payload_json 里我们认识的字段转成领域类型放进 payload。
+func applyPipelinePayload(dst map[string]any, raw string) error {
+	var p pipelinePayload
+	if err := json.Unmarshal([]byte(raw), &p); err != nil {
+		return err
+	}
+	if p.Cost != nil {
+		// 转成 domain.LLMUsage 而不是匿名结构：worker 侧可直接取用，
+		// 且类型上就区分了「上报的用量」与「读取时现算的成本快照」。
+		dst["llm_usage"] = domain.LLMUsage{
+			PromptTokens:     p.Cost.LLMPromptTokens,
+			CompletionTokens: p.Cost.LLMCompletionTokens,
+			TotalTokens:      p.Cost.LLMTotalTokens,
+			Calls:            p.Cost.LLMCalls,
+		}
+	}
+	return nil
 }
 
 // JobProgressToPB 供 REST 或未来的 gRPC 查询复用。

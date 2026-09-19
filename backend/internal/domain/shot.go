@@ -194,8 +194,11 @@ type Job struct {
 	Progress          float64        `json:"progress"`
 	FinalVideoPath    string         `json:"final_video_path,omitempty"`
 	Error             string         `json:"error,omitempty"`
-	CreatedAt         time.Time      `json:"created_at"`
-	UpdatedAt         time.Time      `json:"updated_at"`
+	// LLMUsage 是 Python 上报的 LLM 用量（Go 推不出来，所以必须持久化）。
+	// 渲染/配音等可推导项不存这里，读取时由 CostSnapshot 现算，见 cost.go。
+	LLMUsage  *LLMUsage `json:"llm_usage,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // Event 是状态迁移事件，写入 Redis 事件流并推送给 WebSocket 客户端。

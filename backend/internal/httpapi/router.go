@@ -57,6 +57,8 @@ func NewRouter(s *Server, deps Deps) *gin.Engine {
 			jobs.GET("", s.HandleGetJob)
 			jobs.GET("/shots", s.HandleListShots)
 			jobs.GET("/events", s.HandleListEvents)
+			// 成本单独成端点：审计视角，见 HandleGetJobCost 的说明。
+			jobs.GET("/cost", s.HandleGetJobCost)
 			jobs.POST("/shots/:shotID/reject", s.HandleRejectShot)
 			jobs.POST("/shots/:shotID/approve", s.HandleApproveShot)
 			// PATCH 而不是 PUT：只改给出的字段，
