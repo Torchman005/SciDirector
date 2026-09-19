@@ -191,10 +191,49 @@ Python 图只负责"产出并审查每一个镜头片段"。
 2. **进程隔离**：独立子进程 + 资源限制（CPU 时间、内存上限 `SCID_SANDBOX_MAX_MEMORY_MB`）。
 3. **超时熔断**：`SCID_MANIM_TIMEOUT_SEC`（默认 **30 秒**）到点强杀**整棵进程树**，
    判定该次渲染失败（计入 attempt）。
-4. **容器加固**（生产）：`--network=none --read-only`，只挂载一个临时输出目录。
-5. **输出校验**：产物必须存在、非空、可被 ffprobe 解析，否则视为渲染失败。
+4. **网络隔离**（v0.5.4 起在 `SandboxRunner` 内实现）：`unshare -r -n`，见下。
+5. **容器加固**（生产）：`--network=none --read-only`，只挂载一个临时输出目录。
+6. **输出校验**：产物必须存在、非空、可被 ffprobe 解析，否则视为渲染失败。
 
 > 明确认知：沙盒是**纵深防御**，不是绝对安全边界。生产环境必须跑在无网络容器内。
+
+#### 网络隔离：第 4 层现在真的生效了（v0.5.4）
+
+静态白名单（第 1 层）可以被绕过（拼接字符串构造危险名字），所以必须假设「代码已经
+绕过了检查」，再问一句：它此刻能做什么？能做的事里**外联**最危险 —— 把工作目录里的
+脚本/密钥发出去、打内网服务、把机器当跳板，而这些只需要一个 `socket.connect`，
+不需要写文件也不需要提权。
+
+实现是 `unshare -r -n -- <原命令>`（`scidirector_ai/sandbox/netns.py`）：
+`-n` 建新网络命名空间（只有一张未启用的 loopback，无路由、无 DNS）；
+`-r` 同时建用户命名空间并把当前 uid 映射成里面的 root —— 非 root 用户本来无权建
+网络命名空间，这是让普通用户也能用上的关键。
+
+三条必须知道的事实：
+
+- **本机 `unshare -n` 不可用，`unshare -rn` 可用。** 因此可用性必须**实跑一条最小命令
+  来探测**，不能只检查 `unshare` 是否存在、也不能看到 Linux 就假定可用。探测结果缓存。
+- **`unshare` 默认用 `exec` 换成目标命令（同一 PID）**，所以内存探针（读
+  `/proc/<pid>/status` 的 `VmHWM`）与杀进程树都仍然指向真进程。
+  **绝不能加 `--fork`** —— 那会多一个父进程，让峰值内存变成读 unshare 自己（小到离谱
+  且没有任何报错）。
+- **新命名空间里 loopback 是 DOWN 的**，但这**不影响现有引擎**：Playwright 用
+  `--remote-debugging-pipe`（管道而非 TCP）与 Chromium 通信，隔离前后截图逐字节相同。
+  因此刻意**不**去折腾 loopback —— 多一步就多一处会坏的地方。
+
+**诚实汇报，而不是想当然的「已隔离」**（与 `memory_limit_enforced_by` 同一条原则）：
+`ExecResult.network_isolation` 如实上报实际生效的机制（`netns` / `none`），
+`GET /healthz` 的 `capabilities` 里报 `sandbox:network=<实际机制>`。
+配置 `SCID_SANDBOX_NETWORK_ISOLATION=require` 时探测失败会**拒绝执行**（fail closed）：
+「要了隔离却静默降级成不隔离」是安全代码里最危险的失败形态。
+
+> **覆盖边界（重要）**：本层隔离的是**经 `SandboxRunner` 跑的子进程**（manim、ffmpeg/ffprobe）。
+> **HTML 引擎（d3 / echarts / code_anim）不在其中** —— `HtmlRenderer._capture` 是在
+> AI 服务进程里直接 `sync_playwright()` 起 Chromium，不经过 runner。
+> 这是当前的真实缺口，见 `docs/ROADMAP.md` 阶段五。
+> 顺带一个实测结论：Chromium **能**在无网络命名空间里正常渲染（截图逐字节相同），
+> 真正拦住「把 Chromium 也塞进 runner」的是 runner 的 `RLIMIT_AS` 兜底
+> （见下文 ② 与 `Agent.md` §9）。
 
 #### 实现时的三个关键决策
 
@@ -223,6 +262,24 @@ Windows 的 Job Object 直接在分配时失败，进程被内核杀掉，看不
 > 同理，**同一平台内的多条限制路径也要归一化**：`RLIMIT_CPU` 到点发 SIGXCPU，
 > 而墙钟兜底的截止是「超时 + 宽限期」，两者可能在同一瞬间开火，走哪条路取决于调度。
 > 只有把它们映射到同一个 `killed_reason`，上层才不必关心「是谁先到的」。
+>
+> **`RLIMIT_AS` 这个「兜底」对浏览器进程是致命的**（v0.5.4 实测，逐项二分确认）：
+> Chromium 会预留极大的虚拟地址空间，即使把兜底放宽到 32GB 也会瞬间
+> **SIGTRAP 崩溃**（`exitCode=null, signal=SIGTRAP`），而 `RLIMIT_DATA` 给到 2GB / 8GB
+> 都正常。逐项对照：
+
+| 单独施加的限制 | Chromium 启动 |
+| --- | --- |
+| 无 preexec_fn | ✅ |
+| `RLIMIT_DATA` = 2GB / 8GB | ✅ |
+| `RLIMIT_NPROC` = 256 | ✅ |
+| 仅 `setsid`（`start_new_session`） | ✅ |
+| **`RLIMIT_AS` = 8GB / 32GB** | ❌ **SIGTRAP** |
+
+> 这条现在不构成线上故障，因为 **HTML 引擎的 Chromium 不经过 `SandboxRunner`**
+> （在服务进程内直接起，见上面的覆盖边界）。但它是一个确切的陷阱：
+> 谁要是为了「把浏览器也沙盒化」而把 Chromium 交给 runner，就会遇到一个
+> **看起来像浏览器崩溃、实际是资源限制**的失败。记在这里，省下一次二分排查。
 
 **③ 30 秒是**故意**紧的。**
 LaTeX 首次编译（无预热缓存）单次就可能吃掉 20~30 秒，正常动画很容易撞线。

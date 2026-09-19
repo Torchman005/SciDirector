@@ -125,7 +125,7 @@ class PipelineService:
     @property
     def runner(self) -> SandboxRunner:
         if self._sandbox is None:
-            self._sandbox = SandboxRunner()
+            self._sandbox = SandboxRunner(self.settings.sandbox_network_isolation)
         return self._sandbox
 
     @property
@@ -171,6 +171,11 @@ class PipelineService:
         # 「阶段一预期 UNIMPLEMENTED」与「阶段二预期真实结果」。
         capabilities.append("pipeline")
         capabilities.append("mock-llm" if self.llm.is_mock else "vlm")
+        # 网络隔离：报**实际生效**的机制，而不是配置里写的模式。
+        # 两者必须分开暴露 —— 配置写 require 不等于隔离真的生效，
+        # 而「以为隔离了其实没有」是这里最危险的误解。
+        isolation = self.runner.isolator.mechanism()
+        capabilities.append(f"sandbox:network={isolation}")
 
         checkpoint_backend = "memory"
         if self._runner is not None:

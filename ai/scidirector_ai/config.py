@@ -124,6 +124,14 @@ class Settings(BaseSettings):
     sandbox_max_memory_mb: int = Field(default=2048, ge=128, le=32768)
     sandbox_max_cpu_sec: int = Field(default=240, ge=5, le=3600)
     sandbox_python_bin: str = "python"
+    #: 沙盒的网络隔离策略（阶段五·沙盒加固）。
+    #:
+    #: - ``auto``（默认）：本机支持用户命名空间就启用，不支持则**如实上报**为未隔离
+    #:   并继续跑 —— 本地开发友好。
+    #: - ``require``：必须隔离，拿不到就**拒绝渲染**。生产环境应当用这个：
+    #:   沙盒执行的是 LLM 生成的代码，"要了隔离却静默降级成不隔离"是最危险的失败形态。
+    #: - ``off``：明确不用（例如已经由容器提供隔离）。
+    sandbox_network_isolation: Literal["auto", "require", "off"] = "auto"
     # Manim 渲染质量：l=480p 草稿（快，用于先验证再高清重渲）, m=720p, h=1080p
     sandbox_manim_quality: Literal["l", "m", "h", "k"] = "l"
     # 沙盒工作目录根；每个 job 在其下建独立子目录。
@@ -233,6 +241,7 @@ class Settings(BaseSettings):
             "openai_api_key": "***" if self.openai_api_key else "(未配置)",
             "openai_base_url": self.openai_base_url or "(默认)",
             "sandbox_timeout_sec": self.sandbox_timeout_sec,
+            "sandbox_network_isolation": self.sandbox_network_isolation,
             "manim_timeout_sec": self.manim_timeout_sec,
             "manim_max_memory_mb": self.manim_max_memory_mb,
             "manim_quality": self.sandbox_manim_quality,

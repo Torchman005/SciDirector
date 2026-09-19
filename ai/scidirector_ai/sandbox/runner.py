@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -42,6 +43,7 @@ from pathlib import Path
 from typing import Protocol
 
 from ..logging import get_logger
+from .netns import IsolationMode, NetworkIsolator, NetworkIsolationUnavailable
 
 logger = get_logger(__name__)
 
@@ -151,6 +153,9 @@ class ExecResult:
     peak_memory_mb: float | None = None
     #: 内存限制实际由谁执行：rlimit / job-object / monitor / none。
     memory_limit_enforced_by: str = "none"
+    #: 网络隔离实际由谁执行：netns / none。**如实上报** ——
+    #: 与内存那项同理，谎报"已隔离"比没有隔离更危险（见 netns.py 的说明）。
+    network_isolation: str = "none"
     #: 使用的超时值（便于错误信息里给出确切数字）。
     timeout_sec: float = 0.0
 
@@ -451,6 +456,11 @@ class _KillFlag:
 class SandboxRunner:
     """受控子进程执行器。无共享可变状态，可被多线程共用。"""
 
+    def __init__(self, network_isolation: IsolationMode = "auto") -> None:
+        #: 网络隔离策略。默认 auto：能用就用，不能用则如实上报而不是假装隔离。
+        #: 生产应配 require（见 netns.py）。
+        self.isolator = NetworkIsolator(network_isolation)
+
     #: 允许子进程继承的环境变量白名单。
     #: 用白名单而不是黑名单：黑名单永远会漏（新增一个 *_KEY 就泄露了）。
     ENV_ALLOWLIST: tuple[str, ...] = (
@@ -478,6 +488,48 @@ class SandboxRunner:
         limits = limits or ResourceLimits()
         env = self._build_env(env_extra)
 
+        # 先确认可执行文件真的能找到，**再**考虑网络隔离包裹。
+        #
+        # 为什么必须前置：一旦命令被包进 `unshare`，找不到的就是 unshare 的子命令，
+        # 于是报错变成 `unshare: failed to execute X: No such file or directory`、
+        # 退出码 127 —— 而本方法对「可执行文件不存在」的既有约定是**返回 -1 与
+        # 一句中文说明**（上层据此把「部署缺工具链」与「渲染真的失败」区分开）。
+        # 不前置的话，这个约定会在开启隔离后**静默改变**：退出码从 -1 变成 127，
+        # 依赖它的判断全部失灵。用子进程将要看到的 PATH 去解析，结果才与真实一致。
+        if not self._executable_available(argv[0], env.get("PATH")):
+            return ExecResult(
+                command=argv,
+                returncode=-1,
+                stderr=f"找不到可执行文件：{argv[0]}",
+                duration_sec=0.0,
+                timeout_sec=limits.timeout_sec,
+                memory_limit_enforced_by="none",
+                network_isolation="none",
+            )
+
+        # 网络隔离在最外层包裹：先建命名空间，再在里面跑真正的命令。
+        # 顺序很重要 —— rlimit 由 preexec_fn 在 fork 后设置，命名空间由 unshare
+        # 在 exec 前建立，两者作用于同一个进程（以及它的后代），互不干扰。
+        try:
+            mechanism = self.isolator.mechanism()
+            spawn_argv = self.isolator.wrap(argv)
+        except NetworkIsolationUnavailable as exc:
+            # 这是**部署配置**问题而不是渲染问题，但仍返回结果而不是抛异常：
+            # 与本方法对「找不到可执行文件」的处理保持一致 —— 让上层统一按渲染失败
+            # 处理并把原因写进事件流。抛异常会穿透到图外层，把单个镜头的失败升级成
+            # 整个任务崩掉（本项目已经因为这类穿透踩过一次）。
+            # 真正的「快速失败」由启动期检查负责（见 service 的健康报告）。
+            logger.error("沙盒网络隔离不可用，拒绝执行：%s", exc)
+            return ExecResult(
+                command=argv,
+                returncode=-1,
+                stderr=str(exc),
+                duration_sec=0.0,
+                timeout_sec=limits.timeout_sec,
+                memory_limit_enforced_by="none",
+                network_isolation="none",
+            )
+
         job = None
         if WINDOWS:
             job = _windows_create_job(limits.max_memory_mb, limits.max_processes)
@@ -498,7 +550,7 @@ class SandboxRunner:
 
         started = time.monotonic()
         try:
-            proc = subprocess.Popen(argv, **popen_kwargs)  # type: ignore[arg-type]
+            proc = subprocess.Popen(spawn_argv, **popen_kwargs)  # type: ignore[arg-type]
         except FileNotFoundError as exc:
             # 可执行文件不存在属于部署问题：返回结果而不是抛异常，
             # 让上层统一按"渲染失败"处理并记入 attempt。
@@ -510,6 +562,7 @@ class SandboxRunner:
                 duration_sec=time.monotonic() - started,
                 timeout_sec=limits.timeout_sec,
                 memory_limit_enforced_by="none",
+                network_isolation="none",
             )
 
         # --- 建立内存限制与探测 -------------------------------------------
@@ -564,6 +617,7 @@ class SandboxRunner:
             killed_reason=reason,
             peak_memory_mb=peak,
             memory_limit_enforced_by=enforced_by,
+            network_isolation=mechanism,
             timeout_sec=limits.timeout_sec,
         )
 
@@ -609,6 +663,17 @@ class SandboxRunner:
     # ------------------------------------------------------------------
     # 内部
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _executable_available(program: str, path: str | None) -> bool:
+        """按子进程将要看到的 PATH 判断可执行文件能否找到。
+
+        带路径分隔符的写法按路径直接判断（不查 PATH）——
+        与 `execvp` 的语义一致：含 `/` 时不搜索 PATH。
+        """
+        if os.sep in program or (os.altsep and os.altsep in program):
+            return os.path.isfile(program) and os.access(program, os.X_OK)
+        return shutil.which(program, path=path) is not None
 
     def _build_env(self, extra: dict[str, str] | None) -> dict[str, str]:
         """构造子进程环境：白名单继承 + 显式追加。
