@@ -272,6 +272,9 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 	// 这样字幕能拿到每个镜头的真实配音时长（见 PlanCuesWithNarration），
 	// 且某个镜头被打回重做时只需重做它那一段音频。
 	narrationSec := make([]float64, len(items))
+	// 句级时间戳（TTS 服务商给的，经 sidecar JSON 传来）。没有就是 nil，
+	// 字幕退回按配音时长比例分配 —— 两种情形在 PlanCuesWithMarks 里走同一个入口。
+	narrationMarks := make([][]media.NarrationMark, len(items))
 	narrationTrack := ""
 	{
 		anyNarration := false
@@ -287,6 +290,19 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 				continue
 			}
 			narrationSec[i] = sec
+
+			// 句级时间戳：拿到就用，拿不到（该服务商不给、或 sidecar 坏了）就回退。
+			// 注意区分「没有 sidecar」与「sidecar 用不了」—— 后者意味着
+			// 两侧契约已经对不上，必须留痕，否则会一直静默地用旧精度。
+			marks, merr := media.ReadNarrationMarks(items[i].audioPath)
+			if merr != nil {
+				lg.Warn("配音时间戳不可用，该镜头字幕回退到按配音时长对齐",
+					"shot", items[i].index, "path", items[i].audioPath, "error", merr.Error())
+			} else if len(marks) > 0 {
+				narrationMarks[i] = marks
+				lg.Info("使用句级时间戳对齐字幕",
+					"shot", items[i].index, "marks", len(marks))
+			}
 		}
 
 		if anyNarration {
@@ -322,7 +338,8 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 		// 有配音时按**真实配音时长**排布字幕：画面 8 秒而旁白只有 5 秒时，
 		// 最后一句不该被拉伸着挂满那多出来的 3 秒。
 		// 没有配音的镜头填 0，PlanCuesWithNarration 会按窗口铺满（原行为）。
-		cues := media.PlanCuesWithNarration(windows, narrations, narrationSec, p.subtitleOptions())
+		cues := media.PlanCuesWithMarks(
+			windows, narrations, narrationSec, narrationMarks, p.subtitleOptions())
 
 		// 用**探测到的**成片真实时长裁剪字幕，而不是用方案预测值 ——
 		// 两者会有毫秒级差异，而越界字幕是观众能直接看到的错误。

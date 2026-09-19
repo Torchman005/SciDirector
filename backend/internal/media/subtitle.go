@@ -292,43 +292,143 @@ func planCues(
 	}
 
 	for i := 0; i < n; i++ {
-		w := windows[i]
-		text := strings.TrimSpace(narrations[i])
-		if text == "" || w.Duration() <= 0 {
-			continue
+		var sec float64
+		if i < len(narrationSec) {
+			sec = narrationSec[i]
 		}
-
-		// 字幕真正排布的区间：有配音就只覆盖配音那一段，末尾留白。
-		span := w
-		if i < len(narrationSec) && narrationSec[i] > 0 {
-			end := w.Start + narrationSec[i]
-			if end > w.End {
-				end = w.End // 配音超出画面：夹到窗口末尾，不侵占下一个镜头
-			}
-			if end > span.Start {
-				span.End = end
-			}
-		}
-
-		var segs []string
-		for _, s := range splitSentences(text) {
-			segs = append(segs, splitLongSegment(s, opt.MaxCharsPerCue)...)
-		}
-		if len(segs) == 0 {
-			continue
-		}
-
-		// 条数上限：这段时间能容纳的字幕条数（受最短显示时长约束）。
-		// 例如 2 秒的窗口、最短 0.8 秒，最多放 2 条。
-		maxCues := int(span.Duration() / opt.MinCueSec)
-		if maxCues < 1 {
-			maxCues = 1
-		}
-		segs = mergeToAtMost(segs, maxCues)
-
-		cues = append(cues, allocate(span, segs)...)
+		cues = append(cues, planCuesForShot(windows[i], narrations[i], sec, opt)...)
 	}
 
+	return cues
+}
+
+// planCuesForShot 是「没有句级时间戳」时的单镜头排布：
+// 先按配音时长把区间收窄，再按文本权重把区间分给各分句。
+func planCuesForShot(w Window, narration string, narrationSec float64, opt SubtitleOptions) []Cue {
+	text := strings.TrimSpace(narration)
+	if text == "" || w.Duration() <= 0 {
+		return nil
+	}
+
+	// 字幕真正排布的区间：有配音就只覆盖配音那一段，末尾留白。
+	span := w
+	if narrationSec > 0 {
+		end := w.Start + narrationSec
+		if end > w.End {
+			end = w.End // 配音超出画面：夹到窗口末尾，不侵占下一个镜头
+		}
+		if end > span.Start {
+			span.End = end
+		}
+	}
+
+	var segs []string
+	for _, seg := range splitSentences(text) {
+		segs = append(segs, splitLongSegment(seg, opt.MaxCharsPerCue)...)
+	}
+	if len(segs) == 0 {
+		return nil
+	}
+
+	// 条数上限：这段时间能容纳的字幕条数（受最短显示时长约束）。
+	// 例如 2 秒的窗口、最短 0.8 秒，最多放 2 条。
+	maxCues := int(span.Duration() / opt.MinCueSec)
+	if maxCues < 1 {
+		maxCues = 1
+	}
+	segs = mergeToAtMost(segs, maxCues)
+
+	return allocate(span, segs)
+}
+
+// PlanCuesWithMarks 用**句级时间戳**排布字幕，是 PlanCuesWithNarration 的下一步细化。
+//
+// marks[i] 是第 i 个镜头配音里每句话的起止时间（来自 TTS 服务商，经 sidecar JSON 传入，
+// 见 narration_marks.go）。
+//
+//	镜头内句数与时间戳条数一致 → 每句话都落在它**真实被念出来的那段时间**里；
+//	对不上（或没有时间戳）       → 该镜头退回 PlanCuesWithNarration 的比例分配。
+//
+// 为什么要按句锚定：按镜头时长比例分配时，句与句之间的**停顿**会被均摊掉 ——
+// 语音停了一秒，字幕却仍在匀速推进，于是越往后越偏。
+// 句级时间戳把这个误差从「整镜累积」压到「句内可忽略」。
+//
+// 刻意**不做** mergeToAtMost：句级时间戳来自真实语音，把它合并等于丢掉刚拿到的精度。
+// 代价是极短的句子会一闪而过 —— 那本来就是语音的真实形态，不该由字幕粉饰。
+func PlanCuesWithMarks(
+	windows []Window,
+	narrations []string,
+	narrationSec []float64,
+	marks [][]NarrationMark,
+	opt SubtitleOptions,
+) []Cue {
+	if opt.MaxCharsPerCue <= 0 || opt.MinCueSec <= 0 || opt.MaxCueSec <= 0 {
+		opt = DefaultSubtitleOptions()
+	}
+
+	var cues []Cue
+	n := len(windows)
+	if len(narrations) < n {
+		n = len(narrations)
+	}
+
+	for i := 0; i < n; i++ {
+		var sec float64
+		if i < len(narrationSec) {
+			sec = narrationSec[i]
+		}
+		var shotMarks []NarrationMark
+		if i < len(marks) {
+			shotMarks = marks[i]
+		}
+
+		if aligned := planCuesFromMarks(windows[i], narrations[i], shotMarks, opt); aligned != nil {
+			cues = append(cues, aligned...)
+			continue
+		}
+		// 时间戳用不上（没有 / 条数对不上 / 数据是坏的）→ 退回比例分配。
+		cues = append(cues, planCuesForShot(windows[i], narrations[i], sec, opt)...)
+	}
+
+	return cues
+}
+
+// planCuesFromMarks 尝试按句级时间戳排布；数据对不上时返回 nil，交给调用方回退。
+func planCuesFromMarks(w Window, narration string, marks []NarrationMark, opt SubtitleOptions) []Cue {
+	text := strings.TrimSpace(narration)
+	if text == "" || w.Duration() <= 0 || len(marks) == 0 {
+		return nil
+	}
+
+	sentences := splitSentences(text)
+	// 句数对不上就不用：硬凑会把 A 句的时间安到 B 句头上，
+	// 那比「按比例分配」更糟 —— 后者至少整体是单调的。
+	if len(sentences) != len(marks) {
+		return nil
+	}
+
+	cues := make([]Cue, 0, len(sentences))
+	for i, sentence := range sentences {
+		start := w.Start + marks[i].StartSec
+		end := w.Start + marks[i].EndSec()
+		// 夹到窗口：时间戳来自音频，而窗口来自画面，两者可能略有出入。
+		if start < w.Start {
+			start = w.Start
+		}
+		if end > w.End {
+			end = w.End
+		}
+		if end <= start {
+			// 坏数据（或该句完全在窗口之外）：跳过这一句，不产出零长字幕。
+			continue
+		}
+		// 单句过长时仍要按长度上限拆分，但**只在它自己的真实时间片内**拆。
+		segs := splitLongSegment(sentence, opt.MaxCharsPerCue)
+		cues = append(cues, allocate(Window{Start: start, End: end}, segs)...)
+	}
+	if len(cues) == 0 {
+		return nil
+	}
 	return cues
 }
 

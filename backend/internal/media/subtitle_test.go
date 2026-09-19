@@ -544,3 +544,130 @@ func TestPlanCuesWithNarrationShortNarrationMerges(t *testing.T) {
 		t.Errorf("字幕不应超过配音结束处，实际 %.3f", cues[0].End)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// 句级时间戳对齐（TTS 服务商给了时间戳时走这条）
+// ---------------------------------------------------------------------------
+
+// TestPlanCuesWithMarksKeepsPauseBetweenSentences 是本组最核心的一条。
+//
+// 两句之间有一段**停顿**：第一句念到 2.0s 停，第二句 3.5s 才开口。
+// 按「镜头时长比例分配」会把这段停顿均摊掉，第二条字幕大约 2.75s 就冒出来 ——
+// 而那时还没有人说话。句级时间戳的作用正是把这段误差消掉。
+func TestPlanCuesWithMarksKeepsPauseBetweenSentences(t *testing.T) {
+	windows := []Window{{Start: 0, End: 6}}
+	narrations := []string{"第一句话。第二句话。"}
+	// 真实语音：句1 [0.1, 2.0]，停顿 1.5s，句2 [3.5, 5.2]
+	marks := [][]NarrationMark{{
+		{Text: "第一句话。", StartSec: 0.1, DurationSec: 1.9},
+		{Text: "第二句话。", StartSec: 3.5, DurationSec: 1.7},
+	}}
+	opt := SubtitleOptions{MaxCharsPerCue: 50, MinCueSec: 0.1, MaxCueSec: 100}
+
+	cues := PlanCuesWithMarks(windows, narrations, []float64{5.2}, marks, opt)
+	if len(cues) != 2 {
+		t.Fatalf("期望 2 条字幕，实际 %d 条：%+v", len(cues), cues)
+	}
+	if cues[0].Start != 0.1 || cues[0].End != 2.0 {
+		t.Errorf("第一条应落在 [0.100, 2.000]，实际 [%.3f, %.3f]", cues[0].Start, cues[0].End)
+	}
+	if cues[1].Start != 3.5 {
+		t.Errorf("第二条应当等听众**真正听到**第二句时再出现（3.500s），实际 %.3f —— "+
+			"提前出现说明停顿被均摊掉了", cues[1].Start)
+	}
+	if cues[1].End != 5.2 {
+		t.Errorf("第二条应结束于 %.3f，实际 %.3f", 5.2, cues[1].End)
+	}
+}
+
+// TestPlanCuesWithMarksFallsBackWhenCountMismatch 句数与时间戳条数对不上时必须回退。
+//
+// 硬凑会把 A 句的时间安到 B 句头上 —— 那比比例分配更糟，后者至少整体单调。
+func TestPlanCuesWithMarksFallsBackWhenCountMismatch(t *testing.T) {
+	windows := []Window{{Start: 0, End: 6}}
+	narrations := []string{"第一句。第二句。第三句。"}
+	// 只给了 2 条，而文本有 3 句
+	marks := [][]NarrationMark{{
+		{Text: "x", StartSec: 0.1, DurationSec: 1.0},
+		{Text: "y", StartSec: 3.0, DurationSec: 1.0},
+	}}
+
+	got := PlanCuesWithMarks(windows, narrations, []float64{4.0}, marks, DefaultSubtitleOptions())
+	want := PlanCuesWithNarration(windows, narrations, []float64{4.0}, DefaultSubtitleOptions())
+
+	if len(got) != len(want) {
+		t.Fatalf("对不上时应退回比例分配：期望 %d 条，实际 %d 条", len(want), len(got))
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			t.Errorf("第 %d 条与比例分配的结果不一致：%+v vs %+v", i, got[i], want[i])
+		}
+	}
+}
+
+// TestPlanCuesWithMarksClampsToWindow 时间戳来自音频、窗口来自画面，两者可能不一致；
+// 越界的时间必须夹回窗口，否则字幕会跑到相邻镜头的地盘上。
+func TestPlanCuesWithMarksClampsToWindow(t *testing.T) {
+	windows := []Window{{Start: 0, End: 4}, {Start: 4, End: 8}}
+	narrations := []string{"第一句。", "第二句。"}
+	marks := [][]NarrationMark{
+		{{Text: "第一句。", StartSec: 0.0, DurationSec: 9.0}},  // 远超窗口
+		{{Text: "第二句。", StartSec: -1.0, DurationSec: 2.0}}, // 起点早于窗口
+	}
+
+	cues := PlanCuesWithMarks(windows, narrations, []float64{9.0, 2.0}, marks, DefaultSubtitleOptions())
+	for i, c := range cues {
+		if c.Start < 0 {
+			t.Errorf("cue %d 起点为负：%.3f", i, c.Start)
+		}
+		if c.End > 8.0+1e-9 {
+			t.Errorf("cue %d 越出成片时长：%.3f", i, c.End)
+		}
+		if c.End <= c.Start {
+			t.Errorf("cue %d 时长非正：[%.3f, %.3f]", i, c.Start, c.End)
+		}
+	}
+}
+
+// TestPlanCuesWithMarksEmptyMarksFallsBack 没有时间戳时与 PlanCuesWithNarration 完全一致。
+func TestPlanCuesWithMarksEmptyMarksFallsBack(t *testing.T) {
+	windows := []Window{{Start: 0, End: 8}}
+	narrations := []string{"第一句。第二句。"}
+	marks := make([][]NarrationMark, 1) // 有空位但没有内容
+
+	got := PlanCuesWithMarks(windows, narrations, []float64{5.0}, marks, DefaultSubtitleOptions())
+	want := PlanCuesWithNarration(windows, narrations, []float64{5.0}, DefaultSubtitleOptions())
+
+	if len(got) != len(want) {
+		t.Fatalf("期望与比例分配一致：%d vs %d", len(want), len(got))
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			t.Errorf("第 %d 条不一致：%+v vs %+v", i, got[i], want[i])
+		}
+	}
+}
+
+// TestPlanCuesWithMarksSplitsLongSentenceWithinItsOwnSpan 单句过长时仍按上限拆分，
+// 但只在该句**自己的真实时间片内**拆。
+func TestPlanCuesWithMarksSplitsLongSentenceWithinItsOwnSpan(t *testing.T) {
+	windows := []Window{{Start: 0, End: 10}}
+	long := "这是一句特别长的画外音内容需要在字数上限处被拆成两条字幕显示。"
+	narrations := []string{long}
+	marks := [][]NarrationMark{{
+		{Text: long, StartSec: 1.0, DurationSec: 4.0},
+	}}
+	opt := SubtitleOptions{MaxCharsPerCue: 12, MinCueSec: 0.1, MaxCueSec: 100}
+
+	cues := PlanCuesWithMarks(windows, narrations, []float64{5.0}, marks, opt)
+	if len(cues) < 2 {
+		t.Fatalf("超过上限的长句应被拆开，实际 %d 条", len(cues))
+	}
+	if cues[0].Start < 1.0-1e-9 {
+		t.Errorf("拆分后的第一条不应早于该句真实起点 1.000，实际 %.3f", cues[0].Start)
+	}
+	last := cues[len(cues)-1]
+	if last.End > 5.0+1e-9 {
+		t.Errorf("拆分后的最后一条不应晚于该句真实结束 5.000，实际 %.3f", last.End)
+	}
+}
