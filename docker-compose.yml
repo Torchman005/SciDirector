@@ -51,6 +51,40 @@ x-common-env: &common-env
   SCID_OTEL_SAMPLE_RATIO: ${SCID_OTEL_SAMPLE_RATIO:-1.0}
   SCID_METRICS_PATH: ${SCID_METRICS_PATH:-/metrics}
 
+  # ---------------------------------------------------------------------------
+  # 阶段五的运行时开关。
+  #
+  # **为什么必须写在这里**：Compose 只把本文件里**显式列出的**变量注入容器；
+  # `.env` 里的值只参与 `${...}` 插值。只在 `.env.example` 里写、却不在这里透传，
+  # 结果是"照文档配了但完全不生效"，而且没有任何报错 —— 本项目已因同类问题踩过
+  # 一次（`SCID_S3_*` 与 `SCID_MINIO_*` 各写一套、代码只读其中一套）。
+  # 三个应用服务共用这个锚点，因此加在这里 = 一次配置、处处生效。
+  # ---------------------------------------------------------------------------
+  # 多租户：header（缺省，缺失回落到 default）/ required（缺失即 400）。
+  # **多租户部署必须用 required**：否则网关漏配时所有租户会一起落进 default。
+  SCID_TENANT_MODE: ${SCID_TENANT_MODE:-header}
+  SCID_TENANT_HEADER: ${SCID_TENANT_HEADER:-X-Tenant-ID}
+  # 每租户在跑任务数上限；0 = 不限制。超出返回 429（消息含确切数字）。
+  SCID_TENANT_MAX_ACTIVE_JOBS: ${SCID_TENANT_MAX_ACTIVE_JOBS:-0}
+  # 状态对账扫描间隔；0 = 关闭。建议 5m~30m（兜底机制，不需要秒级响应）。
+  SCID_RECONCILE_INTERVAL: ${SCID_RECONCILE_INTERVAL:-0}
+  # 沙盒加固（阶段五）：取值与理由见 .env.example 与 docs/ROADMAP.md。
+  SCID_SANDBOX_NETWORK_ISOLATION: ${SCID_SANDBOX_NETWORK_ISOLATION:-auto}
+  SCID_SANDBOX_READ_ONLY: ${SCID_SANDBOX_READ_ONLY:-off}
+  SCID_SANDBOX_SECCOMP: ${SCID_SANDBOX_SECCOMP:-off}
+  SCID_SANDBOX_PYTHON_BIN: ${SCID_SANDBOX_PYTHON_BIN:-python}
+  # 显式指定浏览器可执行文件（Playwright 的 build 号与当前包不匹配时用）。
+  SCID_CHROME: ${SCID_CHROME:-}
+  #
+  # 在**容器里**启用沙盒的网络/只读隔离需要额外的容器配置：
+  #   `unshare` 是 Docker 默认 seccomp 配置明确拦截的系统调用，容器内调用会得到
+  #   EPERM（`unshare: Operation not permitted`），于是开关"配了也不生效"。
+  #   需要放宽容器（如 security_opt: ["seccomp=unconfined"] 或 privileged）——
+  #   但那等于用**容器层**的安全性去换**进程层**的隔离，是一笔要想清楚的交易。
+  #   本文件**刻意不默认放宽**：单机开发直接跑进程（make dev-*）时命名空间本就可用；
+  #   容器部署则应明确选一条路，而不是两边都以为对方在保护。
+  #   验证方式：`docker compose exec ai unshare -rn true`（返回 0 即可用）。
+
 services:
   # ---------------------------------------------------------------------------
   # Redis：Asynq 任务队列 + 分镜状态缓存 + 分布式锁
