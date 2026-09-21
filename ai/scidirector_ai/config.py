@@ -22,6 +22,8 @@ from typing import Literal
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from .providers import PROVIDERS, LLMTarget, resolve_target
+
 # 允许的日志级别，与 Go 侧保持一致。
 LogLevel = Literal["debug", "info", "warning", "error"]
 
@@ -106,16 +108,46 @@ class Settings(BaseSettings):
     # OpenAI TTS（复用 openai_api_key / openai_base_url）。
     openai_tts_model: str = "gpt-4o-mini-tts"
 
-    llm_provider: Literal["openai", "azure", "mock"] = "openai"
-    llm_model: str = "gpt-4o"
-    vlm_model: str = "gpt-4o"
+    # ------------------------------------------------------------------
+    # 模型服务商（多服务商支持，见 providers.py）
+    # ------------------------------------------------------------------
+    #: 文本/结构化模型的服务商。**非法值会在启动时被 pydantic 拦下**（而不是
+    #: 悄悄退回 mock）—— 写错服务商名却继续跑，会得到"看起来在用真模型、
+    #: 其实是占位内容"的结果，那是本项目最忌讳的一类静默失败。
+    #:
+    #: 注：旧的 "azure" 取值已移除 —— 它一直只是个未被实现的字面量
+    #: （Azure 需要 api-version 与部署名，与 OpenAI 协议不同），
+    #: 留着它等于让配置看起来支持一件做不到的事。
+    llm_provider: Literal["openai", "deepseek", "bailian", "mock"] = "openai"
+    #: 视觉（VLM 审查）的服务商。**空串 = 跟随 llm_provider**。
+    #:
+    #: 单独配的理由很实际：DeepSeek 没有视觉模型，而它做文本很划算 ——
+    #: 于是"DeepSeek 写代码 + 百炼审画面"是一个正常且推荐的组合。
+    vlm_provider: Literal["", "openai", "deepseek", "bailian", "mock"] = ""
+    #: 模型名。**留空 = 用该服务商的出厂默认**（见 providers.py）。
+    #: 各家模型名迭代很快，因此这两个值永远优先于出厂默认。
+    llm_model: str = ""
+    vlm_model: str = ""
+    #: 通用覆盖：自建网关/代理时填这里，任何服务商都适用。
+    #: 留空 = 用该服务商的官方兼容端点。
+    llm_base_url: str = ""
+    #: 通用密钥覆盖（优先于各服务商自己的变量）。留空 = 用该服务商的变量。
+    llm_api_key: str = ""
+
     llm_temperature: float = Field(default=0.2, ge=0.0, le=2.0)
     llm_max_tokens: int = Field(default=4096, ge=256, le=128_000)
     llm_timeout_sec: int = Field(default=120, ge=5, le=1800)
     llm_max_retries: int = Field(default=3, ge=0, le=10)
 
+    #: OpenAI 密钥。除文本/视觉外，OpenAI TTS 也复用它。
     openai_api_key: str = ""
+    #: OpenAI 专用 base_url（兼容旧配置，也被 OpenAI TTS 复用）。
+    #: 其它服务商请用通用的 SCID_LLM_BASE_URL。
     openai_base_url: str = ""
+    #: DeepSeek 密钥（provider=deepseek 时使用）。
+    deepseek_api_key: str = ""
+    #: 阿里云百炼 / DashScope 密钥（provider=bailian 时使用）。
+    dashscope_api_key: str = ""
 
     # ------------------------------------------------------------------
     # 沙盒与渲染
@@ -232,6 +264,54 @@ class Settings(BaseSettings):
         if self.prompts_dir:
             return Path(self.prompts_dir)
         return Path(__file__).parent / "agents" / "prompts"
+
+    # ------------------------------------------------------------------
+    # 模型服务商的解析
+    # ------------------------------------------------------------------
+
+    def provider_api_key(self, provider: str) -> str:
+        """取某服务商的密钥，通用覆盖优先。"""
+        if self.llm_api_key:
+            return self.llm_api_key
+        spec = PROVIDERS.get(provider)
+        if spec is None or not spec.api_key_env:
+            return ""
+        # 环境变量名 -> 字段名：SCID_OPENAI_API_KEY -> openai_api_key
+        field = spec.api_key_env.removeprefix("SCID_").lower()
+        return str(getattr(self, field, "") or "")
+
+    def _provider_base_url(self, provider: str) -> str:
+        """取某服务商的 base_url，通用覆盖优先。
+
+        `openai_base_url` 是 OpenAI 的**旧专用**开关，继续生效（老部署 + TTS 复用）；
+        其它服务商一律走通用覆盖，避免为每家再加一个开关。
+        """
+        if self.llm_base_url:
+            return self.llm_base_url
+        if provider == "openai" and self.openai_base_url:
+            return self.openai_base_url
+        return ""
+
+    def text_target(self) -> LLMTarget:
+        """文本/结构化调用的目标。"""
+        return resolve_target(
+            kind="text",
+            provider=self.llm_provider,
+            model=self.llm_model,
+            base_url=self._provider_base_url(self.llm_provider),
+            api_key=self.provider_api_key(self.llm_provider),
+        )
+
+    def vision_target(self) -> LLMTarget:
+        """视觉审查（VLM）的目标。`vlm_provider` 为空时跟随文本服务商。"""
+        provider = self.vlm_provider or self.llm_provider
+        return resolve_target(
+            kind="vision",
+            provider=provider,
+            model=self.vlm_model,
+            base_url=self._provider_base_url(provider),
+            api_key=self.provider_api_key(provider),
+        )
 
     def toolchain_report(self) -> dict[str, bool]:
         """探测外部工具链可用性，用于 /readyz 与启动日志。

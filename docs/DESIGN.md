@@ -472,6 +472,50 @@ LangGraph 的条件边最容易写坏的方式，是把判断逻辑散在边函�
 
 ---
 
+## 五、九、模型服务商（v0.6.2）
+
+### 三家都走 OpenAI 兼容协议
+
+| 服务商 | base_url | 默认文本 | 默认视觉 |
+| --- | --- | --- | --- |
+| `openai` | `https://api.openai.com/v1` | gpt-4o | gpt-4o |
+| `deepseek` | `https://api.deepseek.com/v1` | deepseek-chat | **无** |
+| `bailian`（阿里云百炼） | `https://dashscope.aliyuncs.com/compatible-mode/v1` | qwen-plus | qwen-vl-max |
+| `mock` | — | 占位 | 占位 |
+
+三家都提供 OpenAI 兼容端点，因此**只需要一份客户端实现**，差别只在
+base_url / model / key。自建一套 SDK 抽象只会增加要维护的面。
+
+> 百炼的兼容端点是 `/compatible-mode/v1` 而**不是**根域名（根域名返回 404）。
+> 默认模型名只代表"当时可用"，`SCID_LLM_MODEL` / `SCID_VLM_MODEL` 永远优先 ——
+> 不要把 `providers.py` 里的默认当成契约。
+
+### 文本与视觉可以分开选
+
+`SCID_LLM_PROVIDER` 与 `SCID_VLM_PROVIDER`（留空 = 跟随文本）。单独一个开关的
+理由很实际：**DeepSeek 没有视觉模型**，而它做文本很划算。于是推荐组合是
+
+    SCID_LLM_PROVIDER=deepseek    # 写代码
+    SCID_VLM_PROVIDER=bailian     # 审画面（Critic 依赖视觉）
+
+### 两条不可让步的规则
+
+1. **真文本 + 未配视觉时绝不退回 mock 审查。** mock 审查返回的是**伪造的
+   "审查通过"** —— 未经审查的画面进成片且没有任何报错，比"审查失败"危险得多。
+   规则：只有**整体** mock（文本目标本身即 mock）才用 mock 响应；否则视觉不可用
+   一律抛错，由 Critic 降级转人工（它从不伪造通过）。
+2. **配置类错误不重试。** 401/403/404/400 重试没有意义，只会让失败晚 7 秒出现；
+   而"改配置才能好"与"网络抖一下"必须能被区分，否则错误信息会把人引向错误方向。
+
+### 健康检查分开报文本与视觉
+
+`llm:text=deepseek/deepseek-chat`、`llm:vision=bailian/qwen-vl-max`，
+视觉不可用时报 `llm:vision=none` —— 合成一个字段就看不出"文本是某家、视觉没配"
+这种会产生严重后果的组合。mock 时报 `llm:text=mock(配置为 openai)`，
+不冒充实服务商。
+
+---
+
 ## 六、Go 侧：编排、状态与媒体
 
 ### 6.1 任务模型

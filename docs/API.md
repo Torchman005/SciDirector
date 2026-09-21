@@ -446,15 +446,23 @@ ws://localhost:8080/ws/jobs/{jobID}
 ```jsonc
 {
   "healthy": true, "version": "0.1.0",
-  "llm_provider": "mock", "vlm_model": "gpt-4o",
+  "llm_provider": "deepseek", "vlm_model": "qwen-vl-max",
   "sandbox_ready": true,
   "capabilities": ["plan", "manim", "compose", "vlm", "tool:ffmpeg=ok", "tool:latex=missing"],
+
   "uptime_sec": 3600
 }
 ```
 
 `capabilities` 中带 `tool:<name>=ok|missing` 的条目用于让编排层**提前知道哪些标签不可渲染**，
 而不是等任务跑到那一步才失败。
+
+`llm_provider` 与 `vlm_model` 报的是**实际生效**的服务商与模型（可能来自服务商的出厂默认，
+而不是配置里那个空串）。`capabilities` 里另有 `llm:text=<provider>/<model>` 与
+`llm:vision=<provider>/<model>`（视觉不可用时为 `llm:vision=none`）——
+文本与视觉可以选**不同**服务商（如 DeepSeek 写代码 + 百炼审画面），
+合成一个字段就看不出这种组合。模型处于 mock 时会报 `llm:text=mock(配置为 xxx)`，
+不冒充实服务商。
 
 #### `RunPipeline`
 

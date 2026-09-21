@@ -240,7 +240,6 @@ class CoderAgent(Agent):
                 system_prompt,
                 user_prompt,
                 _RawCode,
-                model=self.settings.llm_model,
                 # 显式声明任务类型：mock 模式据此返回确定的结构，
                 # 而不是从提示词里嗅探关键词（那曾导致返回错误结构并被静默解析）。
                 task=Task.CODE,

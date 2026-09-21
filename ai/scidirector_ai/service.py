@@ -174,7 +174,24 @@ class PipelineService:
         # "pipeline" 表示 run_pipeline 已实现 —— 冒烟脚本据此自动切换
         # 「阶段一预期 UNIMPLEMENTED」与「阶段二预期真实结果」。
         capabilities.append("pipeline")
-        capabilities.append("mock-llm" if self.llm.is_mock else "vlm")
+        # 文本与视觉**分开报**：它们可以是不同的服务商，而且"文本是某家、
+        # 视觉没配"会产生完全不同的后果（每个镜头都转人工）。合成一个字段
+        # 就看不出来了。
+        text_t, vision_t = self.llm.text, self.llm.vision
+        if self.llm.is_mock:
+            # mock 时**不能**报成真实服务商：那会让人以为"已经接上 OpenAI 了"，
+            # 而实际上一次真实调用都没有。括号里保留"配置成了哪家"，
+            # 便于判断是"故意 mock"还是"忘了配密钥"。
+            capabilities.append(f"llm:text=mock(配置为 {text_t.provider})")
+            capabilities.append("mock-llm")
+        else:
+            capabilities.append(f"llm:text={text_t.provider}/{text_t.model}")
+        if vision_t.supports_vision and vision_t.usable:
+            capabilities.append(f"llm:vision={vision_t.provider}/{vision_t.model}")
+        else:
+            # 明确报"没有视觉"，而不是省掉这一项 —— 省掉的话，
+            # 运维只能从"每个镜头都转人工"这个现象去反推。
+            capabilities.append("llm:vision=none")
         # 网络隔离：报**实际生效**的机制，而不是配置里写的模式。
         # 两者必须分开暴露 —— 配置写 require 不等于隔离真的生效，
         # 而「以为隔离了其实没有」是这里最危险的误解。
@@ -194,8 +211,14 @@ class PipelineService:
         return HealthStatus(
             healthy=True,
             version=__version__,
-            llm_provider="mock" if self.llm.is_mock else self.settings.llm_provider,
-            vlm_model=self.settings.vlm_model,
+            # 报**实际生效**的 provider 与模型（可能来自服务商默认值，
+            # 而不是配置里那个空串）。
+            llm_provider="mock" if self.llm.is_mock else self.llm.text.provider,
+            vlm_model=(
+                self.llm.vision.model
+                if self.llm.vision.supports_vision and self.llm.vision.usable
+                else ""
+            ),
             sandbox_ready=any(engines.values()),
             capabilities=capabilities,
             uptime_sec=int(time.time() - _STARTED_AT),

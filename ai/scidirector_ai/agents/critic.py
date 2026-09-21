@@ -179,7 +179,6 @@ class CriticAgent(Agent):
                 user_prompt,
                 _RawCritique,
                 images=frames,
-                model=self.settings.vlm_model,
                 task=Task.CRITIQUE,
             )
         except (LLMError, LLMParseError) as exc:
@@ -286,7 +285,7 @@ class CriticAgent(Agent):
             # 通过时不给建议：下游若按"有建议即重做"处理，
             # 带着建议的通过会导致无限重做已经合格的镜头。
             suggestions=suggestions if not passed else [],
-            model=self.settings.vlm_model,
+            model=self.settings.vision_target().model,
             source=FeedbackSource.VLM,
             attempt=attempt,
             **dims,
@@ -312,7 +311,7 @@ class CriticAgent(Agent):
             score=0.0,
             issues=[reason],
             suggestions=[f"请人工复核该镜头：{reason}"],
-            model=self.settings.vlm_model,
+            model=self.settings.vision_target().model,
             source=FeedbackSource.SYSTEM,
             attempt=attempt,
         )

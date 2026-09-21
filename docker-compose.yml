@@ -183,9 +183,27 @@ services:
       <<: *common-env
       SCID_AI_GRPC_PORT: "50051"
       SCID_AI_HTTP_PORT: "8000"
+      # --- 模型服务商（多服务商支持，见 ai/scidirector_ai/providers.py）---
+      # 取值：openai / deepseek / bailian / mock。非法值启动即报错。
       SCID_LLM_PROVIDER: ${SCID_LLM_PROVIDER:-openai}
-      SCID_LLM_MODEL: ${SCID_LLM_MODEL:-gpt-4o}
-      SCID_VLM_MODEL: ${SCID_VLM_MODEL:-gpt-4o}
+      # **模型名留空 = 用该服务商的出厂默认。**
+      # 这里原先写死成 `:-gpt-4o`，于是选 deepseek 时会把 gpt-4o 发给 DeepSeek，
+      # 报"模型不存在"—— 而错误信息看起来像模型下线了。各家默认值见 providers.py。
+      SCID_LLM_MODEL: ${SCID_LLM_MODEL:-}
+      SCID_VLM_MODEL: ${SCID_VLM_MODEL:-}
+      # 视觉服务商留空 = 跟随文本服务商。DeepSeek 没有视觉模型，
+      # 因此"deepseek 写代码 + bailian 审画面"需要显式设置这一项。
+      SCID_VLM_PROVIDER: ${SCID_VLM_PROVIDER:-}
+      SCID_LLM_BASE_URL: ${SCID_LLM_BASE_URL:-}
+      SCID_LLM_API_KEY: ${SCID_LLM_API_KEY:-}
+      # **带 SCID_ 前缀的才是本项目读的**（Python 侧 env_prefix="SCID_"）。
+      # 原先这里只设了不带前缀的 OPENAI_API_KEY/OPENAI_BASE_URL，
+      # 而代码读的是 SCID_OPENAI_API_KEY ⇒ 容器部署**永远进 mock 模式**，
+      # 且没有任何报错。不带前缀的两个继续保留：OpenAI SDK 自身会读它们。
+      SCID_OPENAI_API_KEY: ${SCID_OPENAI_API_KEY:-}
+      SCID_OPENAI_BASE_URL: ${SCID_OPENAI_BASE_URL:-}
+      SCID_DEEPSEEK_API_KEY: ${SCID_DEEPSEEK_API_KEY:-}
+      SCID_DASHSCOPE_API_KEY: ${SCID_DASHSCOPE_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
       SCID_SANDBOX_TIMEOUT_SEC: "180"

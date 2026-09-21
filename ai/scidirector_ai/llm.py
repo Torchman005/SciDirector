@@ -30,6 +30,7 @@ from pydantic import BaseModel, ValidationError
 
 from .config import Settings
 from .logging import get_logger
+from .providers import LLMTarget
 
 logger = get_logger(__name__)
 
@@ -154,27 +155,80 @@ def encode_image(path: str) -> tuple[str, str]:
 
 
 class LLMClient:
-    """文本与视觉模型的统一入口。线程安全（每次调用独立构造请求）。"""
+    """文本与视觉模型的统一入口。线程安全（每次调用独立构造请求）。
+
+    ## 多服务商
+
+    文本与视觉各自解析成一个「目标」（见 `providers.py`），因此
+    **可以使用不同的服务商** —— 这很实用：DeepSeek 没有视觉模型，
+    但它做文本很划算，于是"DeepSeek 写代码 + 百炼审画面"是正常组合。
+
+    两者都走 OpenAI 兼容协议，所以只需要一份实现，差别只在 base_url/model/key。
+
+    ## 一条关键的安全规则：**不允许"真文本 + 假审查"**
+
+    无密钥时整体降级为 mock 是既有行为（保证离线能跑通全流程），
+    但那只在**整个系统都是占位**时成立。若文本用的是真模型、而视觉没配密钥，
+    悄悄退回 mock 视觉就会返回**伪造的"审查通过"** —— 未经审查的画面被批准进成片，
+    而且没有任何报错。这比"审查失败"危险得多。
+
+    因此：全局 mock 才用 mock 响应；否则视觉不可用一律**抛错**，
+    由 Critic 按既有设计降级转人工（它绝不会伪造通过）。
+    """
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self.usage = Usage()
-        self._client: Any = None
-        # mock 模式：无密钥或显式指定时启用，保证离线可跑通全流程。
-        self._mock = settings.llm_provider == "mock" or not settings.openai_api_key
+
+        self.text = settings.text_target()
+        self.vision = settings.vision_target()
+
+        # 全局 mock：文本目标本身就是 mock（provider=mock 或没配密钥）。
+        self._mock = self.text.is_mock
+        self._text_client: Any = None
+        self._vision_client: Any = None
 
         if self._mock:
             logger.warning(
-                "LLM 处于 mock 模式（未配置 OPENAI_API_KEY 或 provider=mock）："
-                "将返回确定性的占位结果，仅用于本地联调与测试"
+                "LLM 处于 mock 模式：将返回确定性的占位结果，仅用于本地联调与测试",
+                extra={
+                    "provider": self.text.provider,
+                    "reason": self.text.problem or "provider=mock",
+                },
             )
         else:
-            self._build_client()
+            self._text_client = self._build_client(self.text, role="text")
 
-    def _build_client(self) -> None:
-        """延迟构造 OpenAI 客户端。
+            # **先判断"视觉到底能不能用"，再决定要不要建客户端。**
+            # 我第一版先做了"同源就复用"，而"同源"恰恰包括
+            # "文本是 DeepSeek、视觉也跟随 DeepSeek"这种**没有视觉能力**的组合 ——
+            # 于是 _vision_client 非空，后面的可用性检查被绕过，
+            # 请求带着空模型名发了出去。可用性必须先于复用判断。
+            can_use_vision = (not self.vision.is_mock) and self.vision.usable
+            if can_use_vision and (
+                self.vision.provider == self.text.provider
+                and self.vision.base_url == self.text.base_url
+                and self.vision.api_key == self.text.api_key
+            ):
+                # 同源时复用同一个客户端：省一个连接池，也少一处配置分叉。
+                self._vision_client = self._text_client
+            elif can_use_vision:
+                self._vision_client = self._build_client(self.vision, role="vision")
 
-        延迟的原因：没有密钥时不应因为缺少依赖/构造失败而让进程起不来 ——
+            if not self.vision.usable:
+                # 启动就说清楚，别让运维在"每个镜头都转人工"之后才反应过来。
+                logger.warning(
+                    "视觉审查不可用，Critic 将降级转人工",
+                    extra={
+                        "vlm_provider": self.vision.provider,
+                        "reason": self.vision.problem,
+                    },
+                )
+
+    def _build_client(self, target: LLMTarget, *, role: str) -> Any:
+        """构造 OpenAI 兼容客户端。
+
+        延迟导入 openai：没有密钥时不该因为缺少依赖而让进程起不来 ——
         mock 模式必须能在「什么都没配」的环境下运行。
         """
         try:
@@ -183,21 +237,23 @@ class LLMClient:
             raise LLMError("未安装 openai 包，无法使用真实模型；请 pip install openai") from exc
 
         kwargs: dict[str, Any] = {
-            "api_key": self.settings.openai_api_key,
+            "api_key": target.api_key,
             "timeout": float(self.settings.llm_timeout_sec),
             "max_retries": 0,  # 重试由本模块统一控制，避免双重退避导致等待过久
         }
-        if self.settings.openai_base_url:
-            kwargs["base_url"] = self.settings.openai_base_url
+        if target.base_url:
+            kwargs["base_url"] = target.base_url
 
-        self._client = OpenAI(**kwargs)
         logger.info(
             "LLM 客户端已初始化",
             extra={
-                "provider": self.settings.llm_provider,
-                "base_url": self.settings.openai_base_url or "(官方)",
+                "role": role,
+                "provider": target.provider,
+                "model": target.model,
+                "base_url": target.base_url or "(官方)",
             },
         )
+        return OpenAI(**kwargs)
 
     # ------------------------------------------------------------------
     # 对外接口
@@ -220,7 +276,7 @@ class LLMClient:
         """纯文本对话，返回字符串。"""
         return self._call(
             messages=[Message(role="system", text=system), Message(role="user", text=user)],
-            model=model or self.settings.llm_model,
+            model=model or self.text.model,
             temperature=temperature,
             max_tokens=max_tokens,
             json_mode=False,
@@ -238,13 +294,18 @@ class LLMClient:
         max_tokens: int | None = None,
         images: Sequence[str] = (),
         task: str = Task.FREE,
+        role: str = "text",
     ) -> BaseModel:
         """结构化对话：要求模型返回 JSON 并解析为给定 Pydantic 模型。
 
         解析或校验失败时**重试一次**（附带错误信息），再失败则抛出
         ``LLMParseError``，由调用方决定降级策略（通常是转人工）。
         """
-        model_name = model or self.settings.llm_model
+        # **按 role 选默认模型**，而不是一律用文本模型。
+        # 我第一版这里写的是 `model or self.text.model`，于是
+        # `chat_json(..., role="vision")` 会带着**文本模型**去请求视觉服务 ——
+        # 参数各自看都对，组合起来是错的，而且服务端只会报"模型不支持图片"。
+        model_name = model or (self.vision.model if role == "vision" else self.text.model)
         base_user = user
         attempt = 0
         max_parse_attempts = 2
@@ -262,6 +323,7 @@ class LLMClient:
                 max_tokens=max_tokens,
                 json_mode=True,
                 task=task,
+                role=role,
             )
             try:
                 payload = extract_json(raw)
@@ -301,14 +363,25 @@ class LLMClient:
         if not usable:
             raise LLMError("没有任何可用的抽帧图片，无法进行视觉审查")
 
+        # **在发请求之前**就把"视觉不可用"说清楚。放在这里而不是靠调用失败，
+        # 是因为原因完全不同：调用失败看起来像"VLM 服务抖了"（会重试、会怀疑网络），
+        # 而实际是"配置里根本没有视觉能力"（重试一万次也没用）。
+        if not self._mock:
+            if not self.vision.supports_vision or not self.vision.usable:
+                raise LLMError(
+                    f"视觉审查不可用（provider={self.vision.provider}）："
+                    f"{self.vision.problem or '该服务商没有视觉模型'}"
+                )
+
         return self.chat_json(
             system,
             user,
             schema,
-            model=model or self.settings.vlm_model,
+            model=model or self.vision.model,
             temperature=0.0,  # 审查要求可复现，温度必须为 0
             images=usable,
             task=task,
+            role="vision",
         )
 
     # ------------------------------------------------------------------
@@ -324,9 +397,19 @@ class LLMClient:
         max_tokens: int | None,
         json_mode: bool,
         task: str,
+        role: str = "text",
     ) -> str:
         if self._mock:
             return _mock_response(messages, json_mode=json_mode, task=task)
+
+        client = self._vision_client if role == "vision" else self._text_client
+        if client is None:
+            # 走到这里说明"文本是真的、视觉没配"。**不能**退回 mock：
+            # 那会返回伪造的"审查通过"，让未审查的画面进成片（见类文档）。
+            target = self.vision if role == "vision" else self.text
+            raise LLMError(
+                f"{role} 调用不可用（provider={target.provider}）：{target.problem or '未配置'}"
+            )
 
         payload = [self._to_openai_message(m) for m in messages]
 
@@ -341,10 +424,13 @@ class LLMClient:
             body["response_format"] = {"type": "json_object"}
 
         last_error: Exception | None = None
+        attempts = 0
+        permanent = False
         for attempt in range(1, self.settings.llm_max_retries + 2):
+            attempts = attempt
             start = time.monotonic()
             try:
-                resp = self._client.chat.completions.create(**body)
+                resp = client.chat.completions.create(**body)
                 elapsed = time.monotonic() - start
                 content = (resp.choices[0].message.content or "").strip()
 
@@ -369,6 +455,15 @@ class LLMClient:
 
             except Exception as exc:  # noqa: BLE001 - 需要兜住 SDK 的各种异常类型
                 last_error = exc
+                if _is_permanent_error(exc):
+                    # 配置类错误重试没有意义：401 密钥错、404 模型名错、400 参数错 ——
+                    # 重试三次只会让失败晚 7 秒出现，并把日志刷满同样的信息。
+                    permanent = True
+                    logger.error(
+                        "LLM 调用失败且不可重试（配置类错误）",
+                        extra={"model": model, "role": role, "error": str(exc)[:300]},
+                    )
+                    break
                 if attempt > self.settings.llm_max_retries:
                     break
                 # 指数退避 + 抖动：避免大量并发任务在同一时刻重试造成惊群。
@@ -379,7 +474,15 @@ class LLMClient:
                 )
                 time.sleep(delay)
 
-        raise LLMError(f"LLM 调用失败（已重试 {self.settings.llm_max_retries} 次）：{last_error}")
+        # **如实报告实际尝试次数**。原先这里写死的是配置里的上限
+        # （"已重试 3 次"），而在加了"配置类错误不重试"之后，实际可能只发了
+        # 一次请求 —— 一条谎报次数的错误信息会让人去查网络抖动/限流，
+        # 而真正的原因是密钥或模型名写错了。
+        if permanent:
+            raise LLMError(
+                f"LLM 调用失败（配置类错误，未重试）：{last_error}"
+            )
+        raise LLMError(f"LLM 调用失败（已尝试 {attempts} 次）：{last_error}")
 
     def _to_openai_message(self, msg: Message) -> dict[str, Any]:
         """把内部 Message 转为 OpenAI 的多模态消息格式。"""
@@ -395,6 +498,24 @@ class LLMClient:
                 continue
             parts.append({"type": "image_url", "image_url": {"url": data_url, "detail": "high"}})
         return {"role": msg.role, "content": parts}
+
+
+#: 重试没有意义的 HTTP 状态码（配置类错误）。
+#:
+#: 401/403 密钥或权限、404 模型名不存在、400/422 参数非法 ——
+#: 这些都是"改配置才能好"的错误。把它们和 5xx/超时区分开，
+#: 是因为一次任务里可能调用几十次模型，每次都白等 7 秒退避会显著拖慢失败反馈。
+_PERMANENT_STATUS = frozenset({400, 401, 403, 404, 422})
+
+
+def _is_permanent_error(exc: Exception) -> bool:
+    """判断是否是"改配置才能好"的错误。
+
+    读 `status_code` 属性而不是判断 SDK 的异常类名：这样不依赖 openai 包的具体
+    版本（类名在版本间变过），而且任何兼容客户端只要带上这个属性都能被正确分类。
+    """
+    status = getattr(exc, "status_code", None)
+    return isinstance(status, int) and status in _PERMANENT_STATUS
 
 
 def _validate(schema: type[BaseModel], payload: Any) -> BaseModel:

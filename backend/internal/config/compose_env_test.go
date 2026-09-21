@@ -39,6 +39,18 @@ var stageFiveSwitches = []string{
 	// 可观测性（本轮之前就已透传，一起钉住防止回退）
 	"SCID_OTEL_ENDPOINT",
 	"SCID_METRICS_PATH",
+	// 模型服务商（多服务商支持）：容器部署必须能选服务商、配密钥。
+	// 这几项曾经只透传了不带 SCID_ 前缀的 OPENAI_API_KEY，
+	// 而 Python 侧读的是 SCID_OPENAI_API_KEY ⇒ 容器里**永远进 mock 模式**且无报错。
+	"SCID_LLM_PROVIDER",
+	"SCID_LLM_MODEL",
+	"SCID_VLM_PROVIDER",
+	"SCID_VLM_MODEL",
+	"SCID_LLM_BASE_URL",
+	"SCID_LLM_API_KEY",
+	"SCID_OPENAI_API_KEY",
+	"SCID_DEEPSEEK_API_KEY",
+	"SCID_DASHSCOPE_API_KEY",
 }
 
 func repoRoot(t *testing.T) string {
