@@ -135,12 +135,21 @@ make dev-api            # Go：REST + WebSocket (8080)
 make dev-web
 ```
 
-> ⚠️ **本地进程模式下根目录的 `.env` 不会被读到。**
+> 💡 **先跑一次 `make doctor`**：它打印本机解析到的 make / go / python（含解释器路径与
+> 依赖是否就绪）/ node / docker / ffmpeg / protoc / 浏览器。`make` 目标报错时，
+> 十有八九这一屏就能看出原因（最常见的是解释器名字或缺少 Python 依赖）。
+
+> 💡 没有 Python 环境时执行 `make venv`：它在仓库内建 `.venv` 并安装 `ai/requirements.txt`，
+> 之后 `make dev-ai` / `make test-python` 会**自动使用它**，不必每次指定 `PYTHON=`。
+
+> ⚠️ **本地进程模式下根目录的 `.env` 原本不会被读到 —— 现已由 `make dev-*` 自动加载。**
 > `make dev-api` 实际在 `backend/` 下运行（Go 根本不读 `.env` 文件，只读进程环境变量），
 > `make dev-ai` 在 `ai/` 下运行（Python 的 `.env` 是**相对当前目录**解析的，找的是 `ai/.env`）。
 > 根目录 `.env` 只在 `docker compose` 插值时生效。
-> 因此本地跑要么先 `set -a && source .env && set +a`，要么直接 export 变量。
-> 少配变量的表现是**静默进入 mock 模式**（内容全是占位），不会有报错。
+> 四个 `dev-*` 目标现在会先加载根目录 `.env`（`scripts/load-env.sh`），
+> 语义与 dotenv/compose 一致：**显式环境变量优先于文件**，因此
+> `make dev-ai SCID_AI_HTTP_PORT=18000` 这类覆盖依然生效。
+> 若变量一个都没配，表现是**静默进入 mock 模式**（内容全是占位），不会有报错。
 
 Windows 环境先执行一次（把 Go 缓存与 Python 依赖固定在仓库内）：
 
