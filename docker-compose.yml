@@ -19,6 +19,12 @@
 #   docker pull <mirror>/library/redis:7.4-alpine   && docker tag ... redis:7.4-alpine
 #   docker pull <mirror>/library/postgres:17-alpine && docker tag ... postgres:17-alpine
 #   docker pull <mirror>/rustfs/rustfs:latest       && docker tag ... rustfs/rustfs:latest
+# 观测栈（--profile observability）同理：
+#   docker pull <mirror>/grafana/grafana:11.4.0 && docker tag ... grafana/grafana:11.4.0
+#   docker pull <mirror>/grafana/tempo:2.6.1 && docker tag ... grafana/tempo:2.6.1
+#   docker pull <mirror>/prom/prometheus:v3.1.0 && docker tag ... prom/prometheus:v3.1.0
+#   docker pull <mirror>/otel/opentelemetry-collector-contrib:0.115.1 \
+#     && docker tag ... otel/opentelemetry-collector-contrib:0.115.1
 # 先用显式镜像站主机名拉下来、再打成本文件引用的名字，
 # 这样不必改 daemon.json（改它要重启 Docker）。
 # =============================================================================

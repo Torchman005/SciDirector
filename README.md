@@ -66,7 +66,7 @@ SciDirector 的做法是把自然语言意图**编译**为确定性图形程序�
 | 任务调度、重试、并发、状态机、媒体合成 | **Go** | Python 侧不得直接调 ffmpeg 做最终合成 |
 | 语义理解、代码生成、VLM 审查、RAG | **Python** | Go 侧不得内嵌 LLM SDK 做推理 |
 | 跨语言数据契约 | `proto/scidirector/v1/*.proto` | 任何一侧私自改字段不加 proto 版本 |
-| 大文件（MP4/PNG） | MinIO / 共享卷，proto 只传**路径与元数据** | 禁止通过 gRPC 传输视频二进制 |
+| 大文件（MP4/PNG） | S3 兼容对象存储（RustFS）/ 共享卷，proto 只传**路径与元数据** | 禁止通过 gRPC 传输视频二进制 |
 
 ---
 
@@ -97,14 +97,14 @@ SciDirector 的做法是把自然语言意图**编译**为确定性图形程序�
 | Go | ≥ 1.23 | 编译 api / worker |
 | Python | ≥ 3.11 | AI 大脑（Manim 需要 LaTeX，见 `ai/Dockerfile`） |
 | Node.js | ≥ 20 | 前端审核台 |
-| Docker | ≥ 24 | 本地中间件（Redis / Postgres / MinIO） |
+| Docker | ≥ 24 | 本地中间件（Redis / Postgres / RustFS） |
 | ffmpeg | ≥ 6 | 抽帧与合成（本地开发需在 PATH 中） |
 | protoc | ≥ 3.20 | 仅在修改 proto 后需要 |
 
 ### 方式一：容器全栈（推荐）
 
 ```bash
-cp .env.example .env          # 按需填入 OPENAI_API_KEY；不填则自动进入 mock 模式
+cp .env.example .env          # 至少填一个模型服务商的密钥；一个都不填则进入 mock 模式
 docker compose up -d --build  # 首次构建会拉取 Manim/LaTeX，耗时较长
 docker compose ps
 ```
@@ -117,13 +117,14 @@ docker compose ps
 | api | http://localhost:8080 | REST + WebSocket |
 | ai (HTTP) | http://localhost:8000/healthz | 健康与能力探测 |
 | ai (gRPC) | localhost:50051 | Go ↔ Python |
-| minio console | http://localhost:9001 | 产物对象存储 |
+| Grafana | http://localhost:3000 | 链路与指标看板（需 `--profile observability`） |
+| rustfs console | http://localhost:9001 | 产物对象存储（S3 兼容） |
 
 ### 方式二：本地进程（迭代更快）
 
 ```bash
 # 1) 只起中间件
-make dev-infra          # 或 docker compose up -d redis postgres minio minio-init
+make dev-infra          # = docker compose up -d redis postgres rustfs
 
 # 2) 三个进程分别开三个终端
 make dev-ai             # Python：FastAPI(8000) + gRPC(50051)
@@ -133,6 +134,13 @@ make dev-api            # Go：REST + WebSocket (8080)
 # 3) 前端
 make dev-web
 ```
+
+> ⚠️ **本地进程模式下根目录的 `.env` 不会被读到。**
+> `make dev-api` 实际在 `backend/` 下运行（Go 根本不读 `.env` 文件，只读进程环境变量），
+> `make dev-ai` 在 `ai/` 下运行（Python 的 `.env` 是**相对当前目录**解析的，找的是 `ai/.env`）。
+> 根目录 `.env` 只在 `docker compose` 插值时生效。
+> 因此本地跑要么先 `set -a && source .env && set +a`，要么直接 export 变量。
+> 少配变量的表现是**静默进入 mock 模式**（内容全是占位），不会有报错。
 
 Windows 环境先执行一次（把 Go 缓存与 Python 依赖固定在仓库内）：
 
@@ -178,7 +186,7 @@ curl -X POST http://localhost:8080/api/v1/generate \
 
 ```bash
 # 方式 A（推荐）：容器起中间件
-docker compose up -d redis postgres minio minio-init
+docker compose up -d redis postgres rustfs   # 注意：不是 minio（已于 v0.4.4 换成 RustFS）
 
 # 方式 B：已有本机 Redis，直接起（Windows 原生 Redis 需要一份自己的配置）
 redis-server .tmp/redis-manual.conf

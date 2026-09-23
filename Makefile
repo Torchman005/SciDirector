@@ -82,17 +82,30 @@ build-web: ## 构建前端产物
 dev-infra: ## 仅启动依赖中间件（redis / postgres / rustfs）
 	docker compose up -d redis postgres rustfs
 
-dev-api: ## 本地运行 Go API
-	cd backend && $(GO) run ./cmd/api
+# 本地开发时**先加载根目录 .env**。
+#
+# 为什么必须显式做这件事：`make dev-api` 实际在 `backend/` 下运行，而 **Go 根本不读
+# `.env` 文件**（只读进程环境变量）；`make dev-ai` 在 `ai/` 下运行，而 Python 的
+# `env_file=".env"` 是**相对当前目录**解析的，找的是 `ai/.env`。
+# 于是根目录那个 `.env` 在本地模式下**完全不起作用** —— 表现是"照着文档配了、却
+# 静默进了 mock 模式"（内容全是占位，没有任何报错）。
+#
+# 用 shell 的 `.` 而不是 make 的 `include`：make 会把值里的 ` #` 当注释、
+# 也不支持多行值，而 `.env` 是给 shell/docker 用的格式。`set -a` 让读进来的变量
+# 自动导出给子进程。文件不存在时安静跳过（CI 里就没有 .env）。
+LOAD_ENV = set -a; if [ -f .env ]; then . ./.env; fi; set +a;
 
-dev-worker: ## 本地运行 Go Worker
-	cd backend && $(GO) run ./cmd/worker
+dev-api: ## 本地运行 Go API（自动加载根目录 .env）
+	@$(LOAD_ENV) cd backend && $(GO) run ./cmd/api
 
-dev-ai: ## 本地运行 Python AI 服务（HTTP + gRPC 双栈）
-	cd ai && $(PYTHON) -m scidirector_ai.main
+dev-worker: ## 本地运行 Go Worker（自动加载根目录 .env）
+	@$(LOAD_ENV) cd backend && $(GO) run ./cmd/worker
+
+dev-ai: ## 本地运行 Python AI 服务（自动加载根目录 .env）
+	@$(LOAD_ENV) cd ai && $(PYTHON) -m scidirector_ai.main
 
 dev-web: ## 本地运行前端
-	cd web && npm run dev
+	@$(LOAD_ENV) cd web && npm run dev
 
 # ===========================================================================
 # 冒烟测试（手动联调）
