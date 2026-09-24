@@ -181,6 +181,32 @@ Windows 环境先执行一次（把 Go 缓存与 Python 依赖固定在仓库内
 . .\scripts\dev-env.ps1
 ```
 
+### Windows 原生启动（不用 make / 不用 Docker）
+
+Windows 上 `make` 通常跑不起来 —— Makefile 的配方用了 `sh -c` 与 `. ./scripts/load-env.sh`，
+而原生环境一般**没有 `sh`**，会以 `make (e=2): 系统找不到指定的文件` 失败。
+`scripts\dev.bat` 提供了等价命令，并处理了几处 Windows 特有的坑：
+
+```cmd
+scripts\dev.bat check     环境自检（工具链 / Python 依赖 / protobuf 大版本 / 端口）
+scripts\dev.bat build     构建 Go 的 api / worker
+scripts\dev.bat start     启动全部服务（每个服务一个窗口）
+scripts\dev.bat stop      停止全部服务
+scripts\dev.bat status    查看端口状态
+scripts\dev.bat run <服务>   在前台单独运行一个服务
+```
+
+> **无 Docker 也能跑**：整个系统唯一的硬依赖是 **Redis**。
+> Postgres 缺失时 LangGraph checkpointer 会显式降级为内存实现（只告警不崩）；
+> 对象存储默认 `SCID_ARCHIVE_BACKEND=none`；观测栈未配置端点时是 no-op。
+> 脚本已把这些设成默认值，因此不需要任何额外组件。
+>
+> 可用 `set SCID_REDIS_BIN=<路径>` 指定本机的 redis-server，
+> 用 `set PYTHON=<解释器>` 切换 conda / venv。
+>
+> `start` 会弹出独立窗口；若你的终端不支持（或在管道/远程会话里），
+> 改用 `run <服务>` 开多个终端，两者等价。
+
 ### 冒烟验证
 
 ```bash

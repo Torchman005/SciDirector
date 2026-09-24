@@ -13,6 +13,19 @@
 
 * text=auto eol=lf
 
+# ---- Windows 批处理：必须是 CRLF，不能跟随全局的 eol=lf ----
+#
+# cmd.exe 对 **LF-only 的 .bat/.cmd 存在已知的处理缺陷**：它会吃掉某些行的
+# 行首字符，报出完全看不懂的错（本项目实测到 `setlocal` 变成 `etlocal`、
+# `echo` 变成 `cho`、`set "A=B"` 里的键名丢首字母）。
+#
+# 这类故障的排查成本极高 —— 报错指向的字符和真正的原因毫无关系，
+# 而且同一份脚本在记事本里"看起来完全正常"。
+#
+# 因此这里显式覆盖：仓库内按 CRLF 存储，检出时也是 CRLF。
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
 # ---- 二进制：不参与任何换行转换 ----
 *.png  binary
 *.jpg  binary
