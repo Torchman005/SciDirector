@@ -114,17 +114,9 @@ build-web: ## 构建前端产物
 # ===========================================================================
 .PHONY: doctor venv
 doctor: ## 检查本机工具链（make 目标报错时先跑这个）
-	@echo "仓库根目录: $(ROOT)"
-	@printf "%-12s %s\n" "make:"   "$$(command -v make || echo '!! 缺失')"
-	@printf "%-12s %s\n" "go:"     "$$($(GO) version 2>/dev/null || echo '!! 缺失（build-go / test-go 会失败）')"
-	@printf "%-12s %s\n" "PYTHON:" "$(PYTHON)  $$($(PYTHON) -V 2>&1 | head -1)"
-	@$(PYTHON) -c "import $(PY_DEPS)" 2>/dev/null && echo "             └ 项目依赖: 已就绪" \
-		|| echo "             └ 项目依赖: **缺失**（跑 make venv，或 make <目标> PYTHON=...）"
-	@printf "%-12s %s\n" "node:"   "$$(command -v node || echo '!! 缺失（dev-web / build-web 会失败）')"
-	@printf "%-12s %s\n" "docker:" "$$(docker compose version 2>/dev/null | head -1 || echo '!! 缺失（dev-infra / up 会失败）')"
-	@printf "%-12s %s\n" "ffmpeg:" "$$(command -v ffmpeg || echo '!! 缺失（渲染与合成会失败）')"
-	@printf "%-12s %s\n" "protoc:" "$$(command -v $(PROTOC) || echo '未装（make proto-go 会自动回退到 grpc_tools 自带的 protoc）')"
-	@printf "%-12s %s\n" "浏览器:" "$$([ -n "$$SCID_CHROME" ] && echo "$$SCID_CHROME" || echo '未设置 SCID_CHROME（HTML 引擎走 Playwright 默认路径）')"
+# 逻辑在 scripts/doctor.sh 里，纯 sh 实现 —— 因为**最常见的 make 报错就是没有 make**，
+# 而 `make doctor` 在那种情况下自己就跑不起来。`sh scripts/doctor.sh` 等价。
+	@sh scripts/doctor.sh
 
 venv: ## 创建仓库内 .venv 并安装 Python 依赖
 	@if [ -x .venv/bin/python ]; then echo "已存在 .venv，跳过创建"; \

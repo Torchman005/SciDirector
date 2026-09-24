@@ -151,6 +151,30 @@ make dev-web
 > `make dev-ai SCID_AI_HTTP_PORT=18000` 这类覆盖依然生效。
 > 若变量一个都没配，表现是**静默进入 mock 模式**（内容全是占位），不会有报错。
 
+### 不想用（或没有）make
+
+`make` 不是必须的 —— 每个目标都对应一条直接命令，实测等价。**容器里没有 make**
+（三个镜像都没装，它是开发机上的工具），`bash: make: command not found` 就是这个原因；
+诊断工具也刻意做成了纯 sh（`scripts/doctor.sh`），因为"没有 make"正是最需要它的场景。
+
+| 想做的事 | 不用 make 的命令 |
+| --- | --- |
+| 环境自检 | `sh scripts/doctor.sh` |
+| 起中间件 | `docker compose up -d redis postgres rustfs` |
+| AI 服务 | `sh -c '. ./scripts/load-env.sh; cd ai && python -m scidirector_ai.main'` |
+| worker | `sh -c '. ./scripts/load-env.sh; cd backend && go run ./cmd/worker'` |
+| api | `sh -c '. ./scripts/load-env.sh; cd backend && go run ./cmd/api'` |
+| 前端 | `cd web && npm run dev` |
+| Python 测试 | `cd ai && python -m pytest -q` |
+| Go 测试 | `cd backend && go test ./internal/...` |
+| 全栈容器 | `docker compose up -d --build` / `docker compose down` |
+| 看日志 | `docker compose logs -f --tail=100` |
+| 观测栈 | `docker compose --profile observability up -d` |
+| 链路验证 | `python scripts/verify-observability.py --out-dir .tmp/obs-shots` |
+| 建 Python 环境 | `python3 -m venv .venv && .venv/bin/pip install -r ai/requirements.txt` |
+
+`make` 确实没装时：Debian/Ubuntu `apt-get install -y make`，Alpine `apk add make`。
+
 Windows 环境先执行一次（把 Go 缓存与 Python 依赖固定在仓库内）：
 
 ```powershell
