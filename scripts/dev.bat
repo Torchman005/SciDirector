@@ -1,15 +1,22 @@
 @echo off
-rem ============================================================================
-rem 注意：chcp 必须排在**任何中文之前**。
-rem   cmd.exe 是按当前码页**边解析边执行**的，而中文注释在 GBK 码页下会被
-rem   错误解码，进而破坏语法（本项目实测：报出的错误指向的字符与真正的原因
-rem   毫无关系）。所以这一行之后才允许出现非 ASCII 字符。
-rem
-rem 同时本文件必须是 **CRLF** 换行（见 .gitattributes 里的 *.cmd 规则）——
-rem   LF-only 的批处理会让 cmd.exe 吃掉行首字符。
-rem ============================================================================
 chcp 65001 >nul 2>&1
 setlocal EnableExtensions EnableDelayedExpansion
+
+rem ============================================================================
+rem 上面两行必须紧跟在 @echo off 之后，**不能有任何中文排在它们前面**。
+rem
+rem 原因：cmd.exe 按当前码页**边解析边执行**。中文系统上初始码页是 GBK，
+rem 此时若先出现中文注释，UTF-8 字节会被按 GBK 解码、产生游离字符并破坏语法，
+rem 而报出的错误与真正的原因毫无关系。
+rem
+rem 本项目真实踩过，而且很讽刺：曾经把这段说明**放在 chcp 之前**，
+rem 于是"解释为什么 chcp 要放最前"的注释本身成了故障源。
+rem 更迷惑的是它只在**全新控制台**（GBK 码页）下暴露 ——
+rem 从已切到 UTF-8 的终端里调用时一切正常。
+rem
+rem 另外本文件必须是 **CRLF** 换行（见 .gitattributes 的 *.cmd/*.bat 规则）：
+rem LF-only 的批处理会让 cmd.exe 吃掉行首字符。
+rem ============================================================================
 
 rem ============================================================================
 rem SciDirector —— Windows 原生启动脚本
@@ -22,17 +29,19 @@ rem     scripts\dev.bat build     构建 Go 的 api / worker
 rem     scripts\dev.bat start     启动全部（Redis + AI + API + worker + 前端）
 rem     scripts\dev.bat stop      停止全部
 rem     scripts\dev.bat status    查看各端口状态
+rem     scripts\dev.bat run <服务>   在前台单独运行一个服务
 rem
 rem 为什么需要它：
 rem   README 推荐的路径是 `make dev-*`，而 Makefile 的配方用了 `sh -c` 与
 rem   `. ./scripts/load-env.sh` —— Windows 原生环境通常**没有 sh**，
 rem   于是 `make dev-ai` 会以 `make (e=2): 系统找不到指定的文件` 失败。
-rem   本脚本把等价命令用纯 cmd 实现，并顺手处理了三件容易踩坑的事：
+rem   本脚本把等价命令用纯 cmd 实现，并顺手处理了几件容易踩坑的事：
 rem     1. 把 Go 缓存与 Python 依赖固定在仓库内（对应 dev-env.ps1 的作用）；
-rem     2. 显式设置 SCID_POSTGRES_DSN / SCID_ARCHIVE_BACKEND 等，
-rem        使"没有 Docker"成为一条**正常路径**而不是报错路径；
-rem     3. 检查 protobuf 运行时与生成物是否同大版本，不一致就自动补装 ——
-rem        这一条不做的话，AI 服务会以 VersionError 直接起不来。
+rem     2. 加载根目录 .env（Windows 侧此前没有对应实现，见 scripts\load-env.ps1）；
+rem     3. 把工作目录解析成绝对路径，避免产物随 cwd 分裂成两棵树；
+rem     4. 让"没有 Docker"成为一条正常路径而不是报错路径；
+rem     5. 检查 protobuf 大版本，不一致就自动补装 ——
+rem        不做这一步的话 AI 服务会以 VersionError 直接起不来。
 rem ============================================================================
 
 rem 仓库根目录 = 本脚本所在目录的上一级。
