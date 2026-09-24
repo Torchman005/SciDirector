@@ -84,22 +84,52 @@ if not exist "%REPO%\.tmp" mkdir "%REPO%\.tmp" >nul 2>&1
 set "TEMP=%REPO%\.tmp"
 set "TMP=%REPO%\.tmp"
 
-set "SCID_ENV=dev"
-if not defined SCID_LOG_LEVEL set "SCID_LOG_LEVEL=info"
-set "SCID_REDIS_ADDR=localhost:%PORT_REDIS%"
-set "SCID_AI_GRPC_ADDR=localhost:%PORT_AI_GRPC%"
-set "SCID_MEDIA_WORK_DIR=%REPO%\.data\work"
+rem ---------------------------------------------------------------------------
+rem 顺序很关键：**先加载根目录 .env，再补默认值**。
+rem
+rem 为什么必须加载 .env：它只在 `docker compose` 插值时生效 ——
+rem Go 不读 .env 文件，Python 的 env_file 又是相对当前目录解析的（找的是 ai\.env）。
+rem 不加载的话，"照着 .env.example 配好密钥再跑本地进程"会**静默进入 mock 模式**，
+rem 内容全是占位，且没有任何报错。
+rem
+rem 解析复用 scripts\load-env.ps1（语义与 POSIX 的 load-env.sh 对齐），
+rem 而不是在 .bat 里另写一套：多处各写一套解析必然分叉，而 .env 的行内注释
+rem 与引号规则恰恰是最容易写错的地方。
+rem ---------------------------------------------------------------------------
+call :load_env
 
-rem 以下三项让"不装 Docker"成为正常路径而不是错误路径：
-rem   Postgres 留空    -> LangGraph checkpointer 显式降级为 MemorySaver（只告警不崩）
-rem   归档设 none      -> 不需要对象存储；要本地留档可改成 local
-rem   OTLP 端点留空    -> 链路追踪 no-op（依赖也是惰性导入的）
-set "SCID_POSTGRES_DSN="
-set "SCID_ARCHIVE_BACKEND=none"
-set "SCID_OTEL_ENDPOINT="
+rem 以下一律"未设置才填"，因此 .env 与命令行显式设置都优先于这些默认值。
+if not defined SCID_ENV set "SCID_ENV=dev"
+if not defined SCID_LOG_LEVEL set "SCID_LOG_LEVEL=info"
+if not defined SCID_REDIS_ADDR set "SCID_REDIS_ADDR=localhost:%PORT_REDIS%"
+if not defined SCID_AI_GRPC_ADDR set "SCID_AI_GRPC_ADDR=localhost:%PORT_AI_GRPC%"
+
+rem 这三项让"不装 Docker"成为正常路径而不是错误路径：
+rem   Postgres 留空 -> LangGraph checkpointer 显式降级为 MemorySaver（只告警不崩）
+rem   归档设 none   -> 不需要对象存储；要本地留档可改成 local
+rem   OTLP 留空     -> 链路追踪 no-op（依赖也是惰性导入的）
+if not defined SCID_POSTGRES_DSN set "SCID_POSTGRES_DSN="
+if not defined SCID_ARCHIVE_BACKEND set "SCID_ARCHIVE_BACKEND=none"
+if not defined SCID_OTEL_ENDPOINT set "SCID_OTEL_ENDPOINT="
 
 rem 没有模型密钥就进 mock 模式，保证零配置能跑通全流程。
 if not defined SCID_LLM_PROVIDER set "SCID_LLM_PROVIDER=mock"
+
+rem 工作目录一律解析成**绝对路径**。
+rem
+rem 踩过的坑：Python 的 sandbox_work_dir 默认是相对路径 `./.data/sandbox`，
+rem 它跟着**启动时的 cwd** 走 —— 本脚本的 run/start 都会 cd 到 ai\，
+rem 于是产物落到 ai\.data\sandbox；而在仓库根手动启动时又落到 .data\sandbox。
+rem 结果产物分裂成两棵树，"这个任务的产物到底在哪"变得不可预测。
+rem
+rem 这里不是"无条件覆盖"：.env 或命令行显式配的值仍生效，
+rem 只是把**相对路径**按仓库根展开 —— 显式配置该被尊重，
+rem 但它不该因为 cwd 不同而指向不同的地方。
+call :abs_path SCID_MEDIA_WORK_DIR
+call :abs_path SCID_SANDBOX_WORK_DIR
+call :abs_path SCID_ARCHIVE_LOCAL_DIR
+if not defined SCID_MEDIA_WORK_DIR   set "SCID_MEDIA_WORK_DIR=%REPO%\.data\work"
+if not defined SCID_SANDBOX_WORK_DIR set "SCID_SANDBOX_WORK_DIR=%REPO%\.data\sandbox"
 
 rem 本机没有 manim / d3 工具链时，把渲染规格调低能显著加快联调。
 if not defined SCID_RENDER_WIDTH set "SCID_RENDER_WIDTH=320"
@@ -110,6 +140,35 @@ goto :eof
 rem ===========================================================================
 rem 子过程：辅助
 rem ===========================================================================
+
+rem load_env —— 加载根目录 .env。
+rem   解析交给 scripts\load-env.ps1（与 POSIX 的 load-env.sh 语义一致），
+rem   这里只负责把它打印出的 `set "K=V"` 行执行掉。
+rem   用 for /f 逐行执行而不是先解析再 set：值里的空格与特殊字符因此原样保留，
+rem   不受 .bat 自身的引号/分隔符规则影响。
+:load_env
+if not exist "%REPO%\.env" goto :eof
+for /f "usebackq delims=" %%L in (`powershell -NoProfile -ExecutionPolicy Bypass -File "%REPO%\scripts\load-env.ps1" -Format cmd`) do %%L
+goto :eof
+
+rem abs_path <变量名> —— 把相对路径按仓库根展开成绝对路径（已是绝对的则只规范化斜杠）。
+:abs_path
+call set "AP_VAL=%%%~1%%"
+if not defined AP_VAL goto :eof
+set "AP_REL=%AP_VAL:/=\%"
+rem 已是绝对路径（盘符 X: 或 UNC \\）就不再加前缀
+if "%AP_REL:~1,1%"==":" (
+    set "%~1=%AP_REL%"
+    goto :eof
+)
+if "%AP_REL:~0,2%"=="\\" (
+    set "%~1=%AP_REL%"
+    goto :eof
+)
+rem 去掉开头的 `.\`
+if "%AP_REL:~0,2%"==".\" set "AP_REL=%AP_REL:~2%"
+set "%~1=%REPO%\%AP_REL%"
+goto :eof
 
 rem port_busy <端口> —— 设置 BUSY=1/0。
 :port_busy
@@ -255,6 +314,22 @@ if exist "%SCID_REDIS_BIN%" (
     echo   [缺失] redis-server : %SCID_REDIS_BIN%
     echo          用 set SCID_REDIS_BIN=^<路径^> 覆盖
 )
+echo.
+echo --- 本脚本解析出的关键配置 ---
+if exist "%REPO%\.env" (
+    echo   .env             : 已加载 ^(显式环境变量优先^)
+) else (
+    echo   .env             : 不存在 —— 不填密钥则进 mock 模式
+)
+echo   LLM 服务商       : %SCID_LLM_PROVIDER%
+if defined SCID_POSTGRES_DSN (
+    echo   Postgres DSN     : %SCID_POSTGRES_DSN%
+) else (
+    echo   Postgres DSN     : 空 ^(checkpointer 降级为内存^)
+)
+echo   归档后端         : %SCID_ARCHIVE_BACKEND%
+echo   媒体工作目录     : %SCID_MEDIA_WORK_DIR%
+echo   沙盒工作目录     : %SCID_SANDBOX_WORK_DIR%
 echo.
 echo --- Python 依赖 ---
 call :check_python_deps
