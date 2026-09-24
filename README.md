@@ -94,7 +94,7 @@ SciDirector 的做法是把自然语言意图**编译**为确定性图形程序�
 
 | 依赖 | 版本 | 说明 |
 | --- | --- | --- |
-| Go | ≥ 1.23 | 编译 api / worker |
+| Go | ≥ 1.24 | 编译 api / worker（与 `backend/go.mod` 的 go 指令一致；镜像里的版本也必须满足它） |
 | Python | ≥ 3.11 | AI 大脑（Manim 需要 LaTeX，见 `ai/Dockerfile`） |
 | Node.js | ≥ 20 | 前端审核台 |
 | Docker | ≥ 24 | 本地中间件（Redis / Postgres / RustFS） |

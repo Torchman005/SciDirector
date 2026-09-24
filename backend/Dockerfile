@@ -12,7 +12,15 @@
 # ---------------------------------------------------------------------------
 # 构建阶段
 # ---------------------------------------------------------------------------
-FROM golang:1.23-alpine AS builder
+# Go 版本必须**满足 backend/go.mod 的 go 指令**。
+#
+# 这里曾经写 1.23，而 go.mod 在加入 OpenTelemetry（otel v1.34 要求 Go 1.24）后
+# 升到了 1.24 —— 于是 `go mod download` 直接失败：
+#   `go.mod requires go >= 1.24.0 (running go 1.23.12; GOTOOLCHAIN=local)`
+# 也就是说 **api/worker 镜像根本构建不出来**。
+# 这类问题只在真正 docker build 时才暴露（本地用宿主 Go 跑二进制是看不出来的），
+# 因此另加了一条用例钉住两者的关系（internal/config/dockerfile_go_test.go）。
+FROM golang:1.24-alpine AS builder
 
 # 国内构建加速；如需直连可覆盖此参数。
 ARG GOPROXY=https://goproxy.cn,direct

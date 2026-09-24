@@ -19,6 +19,14 @@
 #   docker pull <mirror>/library/redis:7.4-alpine   && docker tag ... redis:7.4-alpine
 #   docker pull <mirror>/library/postgres:17-alpine && docker tag ... postgres:17-alpine
 #   docker pull <mirror>/rustfs/rustfs:latest       && docker tag ... rustfs/rustfs:latest
+#
+# **构建镜像还需要五个基础镜像**（`docker compose build` 会去 load metadata，
+# 拉不到时报 `failed to resolve source metadata ... 401 Unauthorized`）：
+#   for i in python:3.11-slim nginx:1.27-alpine node:22-alpine alpine:3.20 golang:1.24-alpine; do
+#     docker pull <mirror>/library/$i && docker tag <mirror>/library/$i $i
+#   done
+# 注意 golang 的版本必须满足 backend/go.mod 的 go 指令（现为 1.24），
+# 否则构建会以 `go.mod requires go >= 1.24.0` 失败 —— 有用例钉住这一条。
 # 观测栈（--profile observability）同理：
 #   docker pull <mirror>/grafana/grafana:11.4.0 && docker tag ... grafana/grafana:11.4.0
 #   docker pull <mirror>/grafana/tempo:2.6.1 && docker tag ... grafana/tempo:2.6.1
