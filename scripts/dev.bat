@@ -49,6 +49,23 @@ for %%I in ("%~dp0..") do set "REPO=%%~fI"
 cd /d "%REPO%"
 
 rem ---------------------------------------------------------------------------
+rem 双击启动检测：决定结束时要不要暂停
+rem ---------------------------------------------------------------------------
+rem 从资源管理器**双击**运行 .bat 时，脚本跑完窗口会立刻关闭 ——
+rem 于是 `dev.bat`（无参数）打印的帮助、`check` 的自检结果都「一闪而过」看不见。
+rem 这是批处理的固有行为，不是脚本出错。
+rem
+rem 判定依据：双击时 cmd 的命令行（%cmdcmdline%）里会带上本脚本的名字；
+rem 从已经打开的终端里运行时则不会。因此**只有双击才暂停**，
+rem 在终端里用不会多出一次多余的「按任意键」。
+rem
+rem 已知限制：%cmdcmdline% 若含 `&`、`|` 之类字符会让 echo 的解析出错。
+rem 这里路径是仓库内的固定位置，实际不会出现；真出现也只是不暂停，不会报错。
+set "SCID_PAUSE_ON_EXIT="
+echo "%cmdcmdline%" | find /i "%~nx0" >nul 2>&1
+if not errorlevel 1 set "SCID_PAUSE_ON_EXIT=1"
+
+rem ---------------------------------------------------------------------------
 rem 可覆盖的外部路径（这些不在仓库里，每台机器可能不同）
 rem ---------------------------------------------------------------------------
 rem 原生 Redis：仓库不含二进制，用 SCID_REDIS_BIN 指定；未设置时用下面这个默认值。
@@ -149,6 +166,16 @@ goto :eof
 rem ===========================================================================
 rem 子过程：辅助
 rem ===========================================================================
+
+rem maybe_pause —— 双击启动时在退出前暂停，让输出能被看到。
+rem   终端里运行时什么都不做（避免每次都要多按一次键）。
+:maybe_pause
+if defined SCID_PAUSE_ON_EXIT (
+    echo.
+    echo 按任意键关闭窗口 ...
+    pause >nul
+)
+goto :eof
 
 rem load_env —— 加载根目录 .env。
 rem   解析交给 scripts\load-env.ps1（与 POSIX 的 load-env.sh 语义一致），
@@ -346,6 +373,7 @@ echo.
 echo --- 端口占用 ---
 call :status_ports
 echo.
+call :maybe_pause
 exit /b 0
 
 rem ---------------------------------------------------------------------------
@@ -360,16 +388,19 @@ go build -o bin\scid-api.exe ./cmd/api
 if errorlevel 1 (
     echo [build] api 编译失败
     popd
+    call :maybe_pause
     exit /b 1
 )
 go build -o bin\scid-worker.exe ./cmd/worker
 if errorlevel 1 (
     echo [build] worker 编译失败
     popd
+    call :maybe_pause
     exit /b 1
 )
 popd
 echo [build] 完成：backend\bin\scid-api.exe, scid-worker.exe
+call :maybe_pause
 exit /b 0
 
 rem ---------------------------------------------------------------------------
@@ -467,6 +498,7 @@ echo   网关    http://localhost:%PORT_API%
 echo   大脑    http://localhost:%PORT_AI_HTTP%/healthz
 echo.
 echo   停止：scripts\dev.bat stop
+call :maybe_pause
 exit /b 0
 
 rem ---------------------------------------------------------------------------
@@ -492,6 +524,7 @@ if "!BUSY!"=="1" (
     echo   [停止] Redis ^(:%PORT_REDIS%^)
 )
 echo [stop] 完成
+call :maybe_pause
 exit /b 0
 
 rem ---------------------------------------------------------------------------
@@ -501,6 +534,7 @@ rem ---------------------------------------------------------------------------
 call :setenv
 echo.
 call :status_ports
+call :maybe_pause
 exit /b 0
 
 rem ===========================================================================
@@ -520,6 +554,7 @@ if /i "%~2"=="worker" goto :run_worker
 if /i "%~2"=="web"    goto :run_web
 echo 未知服务：%~2
 echo 可选：redis / ai / api / worker / web
+call :maybe_pause
 exit /b 1
 
 :run_redis
@@ -557,6 +592,7 @@ goto :run_end
 echo.
 echo [服务已退出] 按任意键关闭窗口 ...
 pause >nul
+call :maybe_pause
 exit /b 0
 
 rem ===========================================================================
@@ -579,4 +615,5 @@ echo   SCID_REDIS_BIN     原生 redis-server.exe 路径
 echo   PYTHON             Python 解释器（conda / venv 均可）
 echo   SCID_LLM_PROVIDER  模型服务商；未设置则为 mock 模式
 echo.
+call :maybe_pause
 exit /b 1
