@@ -243,10 +243,17 @@ class SandboxRunnerStub:
         return ExecResult(command=list(argv), returncode=0)
 
 
-def make_shots(count: int = 2) -> list[ShotSpec]:
+def make_shots(count: int = 2, tag: SceneTag = SceneTag.MATH) -> list[ShotSpec]:
+    """构造分镜。
+
+    默认用 `MATH`（-> manim，属于**可重新生成代码**的引擎）。
+    这一点现在是关键：`revise` 只对可重新生成的引擎做重试 ——
+    程序化引擎（`AMBIENCE` -> stock）没有代码可改，重跑必然得到逐像素相同的画面，
+    因此判负后直接转人工。要验证那条分支请显式传 `tag=SceneTag.AMBIENCE`。
+    """
     return [
         ShotSpec(shot_id=f"job-x-s{i:03d}", index=i, narration=f"第 {i} 段",
-                 visual_brief="画面", tag=SceneTag.AMBIENCE, duration_sec=4.0)
+                 visual_brief="画面", tag=tag, duration_sec=4.0)
         for i in range(count)
     ]
 
@@ -332,6 +339,29 @@ class TestEndToEndWithStubs:
         assert "APPROVED" in statuses, "第二个镜头仍应正常通过"
         # 两个镜头都应当被处理到（第一个熔断后没有中断整条流水线）。
         assert len([e for e in events if e["node"] == "critique"]) == 4
+
+    def test_programmatic_engine_skips_retry(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """程序化引擎（AMBIENCE -> stock）判负后**不得重试**。
+
+        它的画面由固定参数决定、没有可修改的代码，重跑只会得到逐像素相同的结果。
+        实测中这曾表现为：同一句建议连续三轮、得分 0.27 / 0.27 / 0.28，
+        白烧三轮渲染 + 三次 VLM 调用，最后仍然转人工。
+        所以这里要求"第一次判负就转人工"，而不是走满 max_attempts。
+        """
+        deps, _, coder, critic, _ = make_deps(
+            tmp_path, shots=make_shots(1, tag=SceneTag.AMBIENCE), verdicts=[False]
+        )
+        events = run_graph(deps, max_attempts=3, monkeypatch=monkeypatch)
+
+        assert coder.calls == [1], f"程序化引擎不该重试，实际尝试 {coder.calls}"
+        assert critic.calls == 1, "不该把一模一样的画面重复送审"
+        assert not any(e["status"] == "RETRYING" for e in events)
+        assert any(e["status"] == "AWAITING_HUMAN" for e in events)
+        assert any(
+            "重试不会产生不同画面" in (e.get("message") or "") for e in events
+        ), "转人工时必须说明「重试无用」的原因，否则人工不知道该怎么办"
 
     def test_static_failure_skips_render(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

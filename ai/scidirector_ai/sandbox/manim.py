@@ -40,6 +40,19 @@ from ..media import MediaInfo, MediaToolError, probe
 
 logger = get_logger(__name__)
 
+#: manim 质量预设 -> (宽, 高, 帧率)。
+#:
+#: **只用于草稿渲染**（`draft=True`）：正式渲染一律使用配置里的
+#: `render_width/render_height/render_fps`，见 ``ManimSandbox.render``。
+#: 保留这张表是为了让草稿模式也能走 ``-r/--fps`` 这条路 ——
+#: 同一份代码只有一条设置分辨率的途径，才不会出现"正式渲染悄悄用了预设"这种事。
+QUALITY_PRESETS: dict[str, tuple[int, int, int]] = {
+    "l": (854, 480, 15),
+    "m": (1280, 720, 30),
+    "h": (1920, 1080, 60),
+    "k": (3840, 2160, 60),
+}
+
 
 class ManimSandboxError(RuntimeError):
     """Manim 渲染失败。
@@ -91,6 +104,10 @@ class ManimRenderRequest:
     output_dir: Path
     #: 期望时长（秒）。仅用于日志与后续审查，Manim 自身由代码里的动画决定。
     expected_duration_sec: float = 0.0
+    #: 目标分辨率与帧率。**必须显式传给 manim**，否则只能拿到 `-q` 预设值。
+    width: int = 1920
+    height: int = 1080
+    fps: int = 30
     #: 渲染质量：``l``/``m``/``h``/``k``。留空则用配置值。
     quality: str = ""
     #: 草稿模式：用最低质量快速验证，通过后再高清重渲（显著降低无效渲染成本）。
@@ -231,9 +248,23 @@ class ManimSandbox:
         if media_dir.exists() and not request.keep_previous_media:
             shutil.rmtree(media_dir, ignore_errors=True)
 
+        # 分辨率与帧率**显式传给 manim**，不再用 `-q` 预设。
+        #
+        # 为什么：`-q` 只有几档固定预设，`-ql` 就是 854x480。这里过去只传 `-q`，
+        # 于是成片永远是预设分辨率，配置里的 1920x1080 形同虚设 ——
+        # 表现为"画面糊"，而且从日志里完全看不出是哪一层丢的。
+        # 另外 `-r/--fps` 与 `-q` 都会设置分辨率，同时给出时谁生效取决于 manim
+        # 内部的参数回调顺序（跨版本会变），不能依赖，所以这里**只传 `-r/--fps`**；
+        # 草稿模式也用预设表换算成显式数值，两条路径完全一致。
+        if request.draft:
+            width, height, fps = QUALITY_PRESETS.get(quality, QUALITY_PRESETS["l"])
+        else:
+            width, height, fps = request.width, request.height, request.fps
+
         argv = [
             self.settings.sandbox_python_bin, "-m", "manim",
-            f"-q{quality}",
+            "-r", f"{width},{height}",
+            "--fps", str(fps),
             "--format=mp4",
             "--media_dir", str(media_dir),
             # 关闭缓存与交互式预览：沙盒里没有显示设备，缓存还会干扰"是否真的重渲"的判断。
@@ -256,6 +287,7 @@ class ManimSandbox:
             extra={
                 "scene_class": scene_class,
                 "quality": quality,
+                "resolution": f"{width}x{height}@{fps}",
                 "draft": request.draft,
                 "timeout_sec": limits.timeout_sec,
                 "max_memory_mb": limits.max_memory_mb,

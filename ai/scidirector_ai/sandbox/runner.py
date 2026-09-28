@@ -523,6 +523,17 @@ class SandboxRunner:
     ENV_ALLOWLIST: tuple[str, ...] = (
         "PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "TEMP", "TMP",
         "SYSTEMROOT", "WINDIR", "PATHEXT", "NUMBER_OF_PROCESSORS",  # Windows 必需
+        # Windows 的"家目录"三件套。
+        # `HOME` 是 POSIX 的写法；Windows 上 Python 的 Path.home() 只认
+        # USERPROFILE（其次是 HOMEDRIVE + HOMEPATH），`HOME` 对它完全无效。
+        # 少了它们，Path.home() 会**直接抛异常**，而 manim 在 import 阶段就要读
+        # ~/AppData/Roaming/Manim/manim.cfg —— 于是整个 manim 都 import 不了，
+        # 表现为 "python -m manim" 退出码 1，且 traceback 停在 runpy 里，
+        # 看上去像"manim 没装好"，几乎不可能往"环境变量被裁掉了"这个方向想。
+        # 这条和下面的 PLAYWRIGHT_BROWSERS_PATH 是同一类坑，别再删。
+        "USERPROFILE", "HOMEDRIVE", "HOMEPATH",
+        # 缓存/配置目录：matplotlib、Qt、字体缓存等都会读取。
+        "APPDATA", "LOCALAPPDATA",
         "SCID_RENDER_WIDTH", "SCID_RENDER_HEIGHT", "SCID_RENDER_FPS",
         # Playwright 的浏览器目录。它是一个**路径**配置而不是密钥，白名单里没有它
         # 会让沙盒里的浏览器找不到自己 —— 表现为截图全部失败，

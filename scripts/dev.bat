@@ -102,6 +102,9 @@ set "TMP=%REPO%\.tmp"
 
 call :load_env
 
+rem manim shells out to bare "latex"/"dvisvgm", so they must be on PATH.
+call :ensure_tex
+
 if not defined SCID_ENV set "SCID_ENV=dev"
 if not defined SCID_LOG_LEVEL set "SCID_LOG_LEVEL=info"
 if not defined SCID_REDIS_ADDR set "SCID_REDIS_ADDR=localhost:%PORT_REDIS%"
@@ -127,7 +130,10 @@ call :abs_path SCID_ARCHIVE_LOCAL_DIR
 if not defined SCID_MEDIA_WORK_DIR set "SCID_MEDIA_WORK_DIR=%REPO%\.data\work"
 if not defined SCID_SANDBOX_WORK_DIR set "SCID_SANDBOX_WORK_DIR=%REPO%\.data\sandbox"
 
-rem Lower render specs speed up local iteration (no manim/d3 on this machine).
+rem Fallback render specs, used ONLY when neither .env nor the environment
+rem sets them. They are deliberately small so a zero-config first run finishes
+rem fast - but that also makes the result look "blurry" if .env is missing.
+rem Real configs (.env.example ships 1920x1080) override these.
 if not defined SCID_RENDER_WIDTH set "SCID_RENDER_WIDTH=320"
 if not defined SCID_RENDER_HEIGHT set "SCID_RENDER_HEIGHT=240"
 if not defined SCID_RENDER_FPS set "SCID_RENDER_FPS=15"
@@ -140,6 +146,37 @@ rem   same semantics). This loop just executes the "set" lines it prints.
 :load_env
 if not exist "%REPO%\.env" goto :eof
 for /f "usebackq delims=" %%L in (`powershell -NoProfile -ExecutionPolicy Bypass -File "%REPO%\scripts\load-env.ps1" -Format cmd`) do %%L
+goto :eof
+
+rem ensure_tex - make latex.exe / dvisvgm.exe reachable on PATH.
+rem   Windows freezes a process environment block at launch. MiKTeX appends
+rem   itself to the User PATH in the registry, which an ALREADY OPEN terminal
+rem   (and every process it spawns) never sees. manim calls bare "latex" and
+rem   "dvisvgm", so without this the TeX step dies with a misleading
+rem     "does not support converting .dvi files to SVG"
+rem   that blames the dvisvgm version instead of a missing PATH entry.
+rem   Order: already on PATH > SCID_TEX_BIN > usual install locations.
+:ensure_tex
+where latex >nul 2>&1
+if not errorlevel 1 goto :eof
+
+if defined SCID_TEX_BIN if exist "%SCID_TEX_BIN%\latex.exe" goto :tex_use
+set "SCID_TEX_BIN="
+for %%P in (
+    "%LOCALAPPDATA%\Programs\MiKTeX\miktex\bin\x64"
+    "C:\Program Files\MiKTeX\miktex\bin\x64"
+    "C:\texlive\2025\bin\windows"
+    "C:\texlive\2024\bin\windows"
+) do if not defined SCID_TEX_BIN if exist "%%~P\latex.exe" set "SCID_TEX_BIN=%%~P"
+if not defined SCID_TEX_BIN goto :tex_missing
+
+:tex_use
+set "PATH=%SCID_TEX_BIN%;%PATH%"
+goto :eof
+
+:tex_missing
+echo   [warn] LaTeX not found - manim cannot render formulas (MathTex).
+echo          install MiKTeX, or point SCID_TEX_BIN at its bin directory.
 goto :eof
 
 rem abs_path <VARNAME> - root a relative path at the repo; keep absolute ones.
@@ -291,6 +328,8 @@ call :probe python  "%PYTHON% --version"
 call :probe node    "node --version"
 call :probe npm     "npm --version"
 call :probe ffmpeg  "ffmpeg -version"
+call :probe latex   "latex --version"
+call :probe dvisvgm "dvisvgm --version"
 call :probe protoc  "protoc --version"
 call :probe docker  "docker version --format {{.Server.Version}}"
 echo.
@@ -301,6 +340,9 @@ if exist "%SCID_REDIS_BIN%" (
     echo   [MISSING] redis-server : %SCID_REDIS_BIN%
     echo             override with: set SCID_REDIS_BIN=^<path^>
 )
+rem latex/dvisvgm are reported by the probes above; this shows WHICH tree was
+rem injected, which is what you need when two TeX installs disagree.
+if defined SCID_TEX_BIN echo   [OK]      LaTeX bin    : %SCID_TEX_BIN%
 echo.
 echo --- resolved configuration ---
 if exist "%REPO%\.env" (

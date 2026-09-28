@@ -380,6 +380,33 @@ class TestEnvironmentIsolation:
         assert result.ok
         assert "V=injected" in result.stdout
 
+    def test_home_directory_resolves_inside_the_sandbox(
+        self, runner: SandboxRunner, tmp_path: Path
+    ) -> None:
+        """沙箱里必须能解析出家目录 —— 这是 manim 能否 import 的前提。
+
+        manim 在 **import 阶段**就要读 ~/AppData/Roaming/Manim/manim.cfg，
+        而 Windows 上 ``Path.home()`` 只认 USERPROFILE（``HOME`` 对它无效）。
+        白名单里少了它，``Path.home()`` 直接抛异常，于是**整个 manim 都导入不了**，
+        表现为 "python -m manim" 退出码 1，且 traceback 停在 runpy 里 ——
+        看上去像"manim 没装好"，几乎不可能猜到是环境变量被裁掉了。
+
+        这里做端到端断言而不是只比对 ENV_ALLOWLIST 元组：
+        前者才能真正拦住回归（比如有人换一种方式构造子进程环境）。
+        """
+        script = _write(
+            tmp_path,
+            "home.py",
+            "from pathlib import Path\nprint('HOME=' + str(Path.home()))",
+        )
+        result = runner.run_python(
+            script, cwd=tmp_path, limits=ResourceLimits(timeout_sec=30, max_memory_mb=512)
+        )
+        assert result.ok, f"沙箱里 Path.home() 失败：{result.stderr[:300]}"
+        home = result.stdout.split("HOME=")[-1].strip()
+        assert home, "没有打印出家目录"
+        assert not home.startswith("~"), f"家目录没有被真正解析出来：{home!r}"
+
 
 # ===========================================================================
 # 结果对象

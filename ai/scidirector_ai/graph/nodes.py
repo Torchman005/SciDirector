@@ -36,7 +36,7 @@ from ..llm import LLMClient, LLMError
 from ..logging import get_logger
 from ..media import MediaToolError, extract_frames
 from ..pbconv import shots_payload_json
-from ..renderer import Renderer, RendererError, RenderRequest, build_renderer
+from ..renderer import LLM_ENGINES, Renderer, RendererError, RenderRequest, build_renderer
 from ..sandbox.runner import SandboxRunner
 from ..tts.base import synthesize_with_retry, write_marks_sidecar
 from ..schemas import CriticFeedback, RenderArtifact, ShotSpec, StyleGuide
@@ -606,6 +606,46 @@ class PipelineNodes:
 
         attempt = shot_attempt(state, shot.shot_id)
         max_attempts = int(state.get("max_attempts_per_shot", 3) or 3)
+
+        # 「评审判负」与「渲染报错」必须分开对待：
+        #   * 渲染报错通常是环境/瞬时问题，重试确实有机会好；
+        #   * 评审判负说明画面本身不合意，只有**换一段代码**才可能改变画面。
+        # 而程序化引擎（stock：ffmpeg 渐变 + 一行标题）压根没有代码，
+        # 它的输出由固定参数决定，重跑必然得到逐像素相同的画面。
+        # 对这种情况走重试是纯浪费：白烧 (max_attempts - 1) 轮渲染 + VLM 调用，
+        # 最后仍然落到人工。所以直接转人工，并把"重试无用"的原因写进事件里。
+        feedback = (state.get("feedback") or {}).get(shot.shot_id)
+        engine = shot.engine.value if shot.engine else ""
+        if (
+            feedback is not None
+            and not feedback.passed
+            and engine
+            and engine not in LLM_ENGINES
+        ):
+            issues = "；".join(feedback.issues[:3]) or "未给出具体原因"
+            logger.warning(
+                "程序化引擎的画面不会被重试改变，跳过重试直接转人工",
+                extra={
+                    "shot_id": shot.shot_id,
+                    "engine": engine,
+                    "attempt": attempt,
+                    "score": round(feedback.score, 3),
+                },
+            )
+            return {
+                "route_hint": HINT_HUMAN,
+                "events": [
+                    make_event(
+                        state, node=NODE_REVISE, shot=shot, attempt=attempt,
+                        message=(
+                            f"{engine} 引擎按固定参数程序化出图、没有可修改的代码，"
+                            f"重试不会产生不同画面，直接转人工（审查得分 {feedback.score:.2f}）"
+                        ),
+                        status="AWAITING_HUMAN",
+                        error=issues[:500],
+                    )
+                ],
+            }
 
         if attempt >= max_attempts:
             logger.warning(

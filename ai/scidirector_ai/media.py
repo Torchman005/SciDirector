@@ -147,6 +147,11 @@ def extract_frames(
     * 按 ``count`` 等间隔取中点，覆盖整体节奏；
     * **额外加首帧与末帧** —— 入场/收尾的字幕截断、元素溢出最容易出现在这两处，
       而均匀采样常常恰好漏掉它们。
+    * 返回的帧**严格按时间升序**，且首帧取一个极小偏移而非 0.0：
+      审查提示词声明「图像按时间先后排列，第一张是首帧、最后一张是末帧」，
+      抽取顺序一旦与这句话不符，VLM 会把顺序错乱读成「动画顺序有问题」；
+      而 t=0 对以 `Create`/`Write` 开场的镜头本来就是空帧，
+      会被 rubric 的「画面几乎全空」当成致命问题。两处理由见函数内注释。
 
     单帧失败只跳过该帧（不中断），只有一帧都抽不到才抛错。
     """
@@ -162,13 +167,40 @@ def extract_frames(
     duration_sec = max(duration_sec, 0.1)
     count = max(count, 2)
 
+    # 采样点必须**按时间排序**后再抽帧。
+    #
+    # 这一点曾经是错的，代价很大：这里过去直接产出
+    # `[中点采样..., 0.0, 末帧]`，实际时间顺序成了
+    # 「12.5% → 37.5% → 62.5% → 87.5% → 0% → 100%」。
+    # 而审查提示词明确告诉 VLM「图像按时间先后排列，第一张是首帧、
+    # 最后一张是末帧」—— 于是它看到的是「画面齐全 → 突然全空 → 又齐全」，
+    # **合理地**判定「动画顺序有问题」，连续多轮给出同一条建议，
+    # 整条重试链白烧（实测 0.65 → 0.59，三次 attempt 全部浪费）。
+    # 教训：喂给模型的样本，其**语义说明必须与实际排列一致**；
+    # 顺序错了比内容错了更隐蔽，因为画面每一张看起来都正常。
+    #
+    # 首帧不取 0.0，而取一个小偏移：以 `Create` / `Write` 开场的镜头在 t=0 时
+    # 第一个动画的进度是 0，画面**本来就是空的**，取在那里必然得到一张空白帧，
+    # 而 rubric 把「画面几乎全空」列为致命问题 —— 那是对正常镜头的误杀。
+    # 取 min(0.2s, 1/4 个采样间隔) 既能代表入场状态，又不会落在空帧上。
+    first_ts = min(0.2, duration_sec / (count * 4))
     timestamps: list[float] = [duration_sec * (i + 0.5) / count for i in range(count)]
-    timestamps.append(0.0)
+    timestamps.append(first_ts)
     timestamps.append(max(duration_sec - 0.05, 0.0))
+
+    # 排序 + 去重：极短的视频里中点可能与首/末帧落到同一时刻，
+    # 重复的采样点会把同一张图喂两遍，白白抬高上传成本。
+    ordered: list[float] = []
+    seen: set[str] = set()
+    for ts in sorted(timestamps):
+        key = f"{ts:.3f}"
+        if key not in seen:
+            seen.add(key)
+            ordered.append(ts)
 
     ffmpeg = _binary("ffmpeg")
     frames: list[str] = []
-    for index, ts in enumerate(timestamps):
+    for index, ts in enumerate(ordered):
         frame_path = out / f"frame_{index:02d}.png"
         result = runner.run(
             [
@@ -194,6 +226,23 @@ def extract_frames(
     return frames
 
 
+#: 氛围镜头标题字号相对输出高度的比例：标题约占画面高度的 1/12。
+_AMBIENT_TITLE_HEIGHT_RATIO = 12
+
+
+def ambient_font_size(height: int) -> int:
+    """按输出高度推算氛围镜头的标题字号。
+
+    **不能写死一个像素值**：64px 在 320x240 的年代是醒目的大标题，
+    到了 1920x1080 就只是个不起眼的小注脚 —— 实测审查智能体在 1080p 下
+    据此连续判「标题字号不足」。按高度取比例在两端都合适
+    （240p -> 20px，1080p -> 90px），也与「标题约占画面高度 1/12」的常识一致。
+
+    下限 16px 是给极小的草稿分辨率兜底，避免字号退化成看不清的个位数。
+    """
+    return max(16, round(height / _AMBIENT_TITLE_HEIGHT_RATIO))
+
+
 def render_ambient(
     out_path: str | Path,
     runner: SandboxRunner,
@@ -204,7 +253,7 @@ def render_ambient(
     fps: int,
     colors: tuple[str, str, str] = ("0x0B1020", "0x4F8CFF", "0xFF6B6B"),
     text: str = "",
-    font_size: int = 64,
+    font_size: int = 0,
     window_start_sec: float = 0.0,
     window_end_sec: float = 0.0,
 ) -> str:
@@ -221,7 +270,12 @@ def render_ambient(
       2. drawtext 滤镜在当前 ffmpeg 构建里不可用 -> **自动去掉文字重试**并缓存该结论；
       3. 仍失败 -> 抛错。
     缺字体/缺滤镜都是环境问题，不该让内容生产停摆。
+
+    ``font_size <= 0`` 表示**按输出高度自动推算**（见 :func:`ambient_font_size`），
+    这也是缺省值：字号与分辨率绑死会在某一端必然出错。
     """
+    font_size = font_size or ambient_font_size(height)
+
     target = Path(out_path).resolve()
     target.parent.mkdir(parents=True, exist_ok=True)
 
@@ -359,11 +413,18 @@ def _build_filtergraph(
 
     if font and text:
         fade_out_start = max(duration_sec - 0.8, 0)
+        # 描边宽度随字号缩放 —— 大字号下细描边等于没加。
+        border_w = max(2, round(font_size / 16))
         filters.append(
             "drawtext="
             f"fontfile={_escape_fontfile(font)}:"
             f"text='{_escape_drawtext(text)}':"
             f"fontcolor=white:fontsize={font_size}:"
+            # 深色描边 + 阴影：标题是白字，而渐变底色的中段是**明亮的蓝色**，
+            # 纯白字压在上面实测被判「对比度不足」。给字加一圈深色描边是标准做法，
+            # 而且对任何背景色都成立 —— 比反复调背景色更稳，也不牺牲渐变的观感。
+            f"borderw={border_w}:bordercolor=black@0.75:"
+            "shadowcolor=black@0.5:shadowx=2:shadowy=2:"
             # 居中 + 淡入淡出，让静态标题不至于太生硬。
             "x=(w-text_w)/2:y=(h-text_h)/2:"
             f"alpha='if(lt(t,0.8),t/0.8,if(gt(t,{fade_out_start:.3f}),"

@@ -77,6 +77,59 @@ if (-not $env:SCID_LLM_PROVIDER) { $env:SCID_LLM_PROVIDER = 'mock' }
 if (-not $env:SCID_REDIS_ADDR) { $env:SCID_REDIS_ADDR = 'localhost:6379' }
 if (-not $env:SCID_AI_GRPC_ADDR) { $env:SCID_AI_GRPC_ADDR = 'localhost:50051' }
 
+# ---------------------------------------------------------------------------
+# LaTeX（MiKTeX / TeX Live）：manim 渲染数学公式的硬依赖
+# ---------------------------------------------------------------------------
+# 为什么非要有这一段：
+# manim 用**裸命令名**调用 `latex` 与 `dvisvgm`（见 manim/utils/tex_file_writing.py
+# 的 convert_to_svg），完全靠 PATH 解析。而 Windows 在进程**启动那一刻**就把环境块
+# 固定住了 —— 装完 MiKTeX 往 User PATH 里写一行，**已经开着的终端**以及它的所有
+# 子进程都看不到。于是 manim 抛：
+#     "Your installation does not support converting .dvi files to SVG.
+#      Consider updating dvisvgm to at least version 2.4."
+# 这条信息把人和 AI 都往"dvisvgm 版本太老"的方向带，而真实原因只是 PATH 里没有它。
+# 本项目为此浪费了一整轮排查，所以在这里主动解析并注入：装完 MiKTeX 直接双击
+# dev.bat 就能跑，不需要重启终端、更不需要注销登录。
+#
+# 解析顺序：SCID_TEX_BIN（.env 或环境变量）> 注册表 PATH > 常见安装位置。
+$TexBin = $env:SCID_TEX_BIN
+if ($TexBin -and -not (Test-Path -LiteralPath (Join-Path $TexBin 'latex.exe'))) {
+    Write-Host "[dev-env] 警告：SCID_TEX_BIN=$TexBin 下没有 latex.exe，改为自动探测。" -ForegroundColor Yellow
+    $TexBin = $null
+}
+if (-not $TexBin) {
+    $texCandidates = @()
+    # 注册表里的 PATH 是"用户刚装好"最真实的记录：当前会话可能还是旧环境块，
+    # 但注册表已经被安装程序更新过了。
+    foreach ($scope in @(
+            'HKCU:\Environment',
+            'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment')) {
+        $regPath = (Get-ItemProperty -Path $scope -Name Path -ErrorAction SilentlyContinue).Path
+        if ($regPath) {
+            $texCandidates += @($regPath -split ';' | Where-Object { $_ -match 'MiKTeX|texlive' })
+        }
+    }
+    $texCandidates += @(
+        (Join-Path $env:LOCALAPPDATA 'Programs\MiKTeX\miktex\bin\x64'),
+        'C:\Program Files\MiKTeX\miktex\bin\x64',
+        'C:\texlive\2025\bin\windows',
+        'C:\texlive\2024\bin\windows'
+    )
+    foreach ($cand in $texCandidates) {
+        if ([string]::IsNullOrWhiteSpace($cand)) { continue }
+        $cand = $cand.Trim().TrimEnd('\')
+        if (Test-Path -LiteralPath (Join-Path $cand 'latex.exe')) { $TexBin = $cand; break }
+    }
+}
+if ($TexBin) {
+    # 回写环境变量：沙箱等子进程据此也能定位 TeX，不必重复探测。
+    $env:SCID_TEX_BIN = $TexBin
+    if (-not (($env:PATH -split ';') -contains $TexBin)) {
+        $env:PATH = $TexBin + ';' + $env:PATH
+    }
+}
+$script:ScidTexBin = $TexBin
+
 # 工作目录一律解析成**绝对路径**。
 #
 # 踩过的坑：Python 的 sandbox_work_dir 默认是相对路径 `./.data/sandbox`，
@@ -110,6 +163,11 @@ Write-Host "  RepoRoot   = $RepoRoot"
 Write-Host "  GOPATH     = $env:GOPATH"
 Write-Host "  PYTHONPATH = $env:PYTHONPATH"
 Write-Host "  LLM        = $env:SCID_LLM_PROVIDER"
+if ($script:ScidTexBin) {
+    Write-Host "  LaTeX      = $($script:ScidTexBin)" -ForegroundColor Green
+} else {
+    Write-Host '  LaTeX      = 未找到（manim 渲染公式会失败；装 MiKTeX 或设 SCID_TEX_BIN）' -ForegroundColor Yellow
+}
 if (Test-Path -LiteralPath (Join-Path $RepoRoot '.env')) {
     Write-Host "  .env       = 已加载（显式环境变量优先）" -ForegroundColor Green
 }

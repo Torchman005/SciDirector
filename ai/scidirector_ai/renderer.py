@@ -196,6 +196,11 @@ class ManimRenderer:
                     code=request.code,
                     output_dir=request.output_dir,
                     expected_duration_sec=request.duration_sec,
+                    # 分辨率/帧率必须一路透传到底：中间任何一层漏掉，manim 就会
+                    # 退回自己的 `-q` 预设（854x480），成片糊掉且极难定位。
+                    width=request.width,
+                    height=request.height,
+                    fps=request.fps,
                     draft=request.draft,
                     env_extra=request.env_extra,
                 )

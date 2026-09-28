@@ -101,6 +101,99 @@ class TestBlockedCalls:
         assert report.violations[0].severity == "warning"
 
 
+class TestLatexEscaping:
+    """LaTeX 反斜杠转义检查（正确性，不是安全）。
+
+    真实事故：模型生成了 ``MathTex(r"F", r"=", r"m", r"\\\\times", r"a")``。
+    raw string 里 ``\\\\`` 是两个真实反斜杠，LaTeX 当成换行，画面成了
+    "F = m ⏎ times a"，VLM 读成 "timesa" 并连续三轮给出同一条建议 ——
+    三轮渲染全部浪费。这条规则让编码智能体的自修复循环在**渲染之前**抓住它。
+    """
+
+    def test_blocks_double_backslash_command(self) -> None:
+        source = 'from manim import *\neq = MathTex(r"F", r"\\\\times", r"a")\n'
+        report = check_source(source)
+        assert not report.ok, "双反斜杠命令未被拦截"
+        assert any("双反斜杠" in v.reason for v in report.violations)
+
+    def test_blocks_tab_from_non_raw_latex(self) -> None:
+        """``"\\times"`` 里的 ``\\t`` 是制表符 —— 模型的本意显然不是制表符。"""
+        source = 'from manim import *\neq = MathTex("F = m \\times a")\n'
+        report = check_source(source)
+        assert not report.ok, "被转义成控制字符的 LaTeX 命令未被拦截"
+        assert any("控制字符" in v.reason for v in report.violations)
+
+    def test_allows_correct_single_backslash(self) -> None:
+        source = r'''
+from manim import *
+eq = MathTex(r"F", r"=", r"m", r"\times", r"a")
+'''
+        assert check_source(source).ok, "正确的单反斜杠写法被误判"
+
+    def test_allows_latex_line_break(self) -> None:
+        """``\\\\`` 作为 LaTeX 换行是合法的，不能一刀切。
+
+        这条是防"误报"的反向控制：限定成"双反斜杠 + 已知命令名"之后，
+        带空格的换行写法必须仍然通过。
+        """
+        source = r'''
+from manim import *
+eq = MathTex(r"a = b \\ c = d")
+'''
+        assert check_source(source).ok, "合法的 LaTeX 换行被误判为转义错误"
+
+
+class TestMissingImports:
+    """引用了**允许但没导入**的模块 —— 运行时必然 NameError。
+
+    真实事故：manim 提示词的「确定性」一节要求「用 `random` 必须
+    `random.seed(0)`」，模型于是**无条件**写下 `random.seed(0)`，却没有
+    `import random`（`from manim import *` 并不导出它 —— 已实测
+    `'random' in globals()` 为 False）。静态检查放行，渲染时第 7 行抛
+    `NameError`，白烧一轮渲染 + 一次模型调用；而重试的是同一份代码，
+    错误一模一样，整条重试链全部浪费。
+    """
+
+    def test_blocks_module_use_without_import(self) -> None:
+        source = (
+            "from manim import *\n"
+            "\n"
+            "\n"
+            "class SciShotScene(Scene):\n"
+            "    def construct(self):\n"
+            "        random.seed(0)\n"
+        )
+        report = check_source(source)
+        assert not report.ok, "用了 random 却连 import 都没有，应当被拦下"
+        assert any("没有导入" in v.reason for v in report.violations)
+        # 报错必须给出**可直接照做**的修法，否则模型只能猜。
+        assert any("import random" in v.reason for v in report.violations)
+
+    def test_allows_module_use_with_import(self) -> None:
+        source = (
+            "import random\n"
+            "from manim import *\n"
+            "\n"
+            "\n"
+            "class SciShotScene(Scene):\n"
+            "    def construct(self):\n"
+            "        random.seed(0)\n"
+        )
+        assert check_source(source).ok, "正常 import 之后不该被误判"
+
+    def test_allows_aliased_numpy(self) -> None:
+        """`import numpy as np` 之后写 `np.xxx` 是常规写法，不能被误报。"""
+        source = "import numpy as np\nvalue = np.array([1, 2, 3])\n"
+        assert check_source(source).ok, "取别名的常规写法被误判为缺 import"
+
+    def test_reports_each_missing_module_once(self) -> None:
+        """同一个缺失模块用多次，只报一条 —— 刷屏会淹没真正的问题。"""
+        source = "from manim import *\nmath.sqrt(2)\nmath.pi\n"
+        report = check_source(source)
+        missing = [v for v in report.violations if "没有导入" in v.reason]
+        assert len(missing) == 1, f"同一模块应只报一次，实际 {len(missing)} 条"
+
+
 class TestErrorReporting:
     """违规信息必须可用于回灌给编码智能体（含行号与可执行指令）。"""
 

@@ -215,7 +215,12 @@ class Settings(BaseSettings):
     #: （见 ai/Dockerfile），或用 SCID_MANIM_TIMEOUT_SEC 调大。
     #: 调太小会让合法但偏慢的场景被误杀，那比超时更糟 —— 因为它会静默地把
     #: 好镜头推给人工。
-    manim_timeout_sec: int = Field(default=30, ge=5, le=1800)
+    #:
+    #: 缺省从 30 提到 120 是**实测**结论，不是保守估计：本机一个 7 秒的镜头
+    #: 在 854x480@15 下要 19.2s、1920x1080@30 下要 12.2s（见 v0.6.4 迭代日志），
+    #: 元素更多的面积法镜头只会更久。30s 会把它们判成超时，而**重试的是同一份
+    #: 代码**，大概率继续超时 —— 三次 attempt 全废后转人工，代价远高于多等 90 秒。
+    manim_timeout_sec: int = Field(default=120, ge=5, le=1800)
     #: Manim 渲染沙盒的**内存上限**（MB）。超限即杀整棵进程树。
     #: LaTeX 是内存大户，且它由 Manim 派生 —— 因此限制必须覆盖整棵树
     #: （POSIX 靠 RLIMIT_AS 继承，Windows 靠 Job Object）。

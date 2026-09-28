@@ -33,7 +33,9 @@ from scidirector_ai.sandbox.manim import (
 )
 
 # --- 假 manim 包 -----------------------------------------------------------
-# 命令行接口与真实 Manim 保持一致：`python -m manim -ql --format=mp4 --media_dir D script.py Class`
+# 命令行接口与真实 Manim 保持一致：
+#   `python -m manim -r 1920,1080 --fps 30 --format=mp4 --media_dir D script.py Class`
+# 产物落在 `<media_dir>/videos/<script_stem>/<height>p<fps>/<Class>.mp4`。
 _FAKE_INIT = '__version__ = "0.0.0-fake"\n'
 
 _FAKE_MAIN = '''
@@ -47,6 +49,7 @@ def main() -> None:
     args = sys.argv[1:]
     media_dir = None
     quality = "l"
+    width, height, fps = 854, 480, 15
     positional = []
 
     i = 0
@@ -54,6 +57,18 @@ def main() -> None:
         arg = args[i]
         if arg == "--media_dir":
             media_dir = args[i + 1]
+            i += 2
+            continue
+        # 真实 manim 用 `-r W,H` 与 `--fps N` 设置分辨率/帧率；
+        # 产物目录名是 `{height}p{fps}`。假模块必须与之一致，
+        # 否则"分辨率没有透传"这类回归会被测试放过。
+        if arg in ("-r", "--resolution"):
+            w, _, h = args[i + 1].partition(",")
+            width, height = int(w), int(h)
+            i += 2
+            continue
+        if arg == "--fps":
+            fps = int(args[i + 1])
             i += 2
             continue
         if arg.startswith("-q"):
@@ -91,8 +106,11 @@ def main() -> None:
 
     script = positional[0]
     scene = positional[1]
-    out = pathlib.Path(media_dir) / "videos" / pathlib.Path(script).stem / quality / (scene + ".mp4")
+    out = pathlib.Path(media_dir) / "videos" / pathlib.Path(script).stem / f"{height}p{fps}" / (scene + ".mp4")
     out.parent.mkdir(parents=True, exist_ok=True)
+    # 把解析到的分辨率打出来：上层据此断言它确实传到了命令行，
+    # 而不是被某层悄悄丢掉、让 manim 退回自己的预设分辨率。
+    print(f"FakeManim: resolution={width}x{height}@{fps}")
 
     if behavior == "corrupt":
         # 产出非空但根本不是有效视频的文件，用于验证"产物校验"这一层。
@@ -132,6 +150,23 @@ def fake_manim_root(tmp_path_factory: pytest.TempPathFactory) -> Path:
     pkg.mkdir()
     (pkg / "__init__.py").write_text(_FAKE_INIT, encoding="utf-8")
     (pkg / "__main__.py").write_text(_FAKE_MAIN, encoding="utf-8")
+    return root
+
+
+@pytest.fixture(scope="module")
+def broken_manim_root(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """造出一个"一导入就报缺依赖"的 manim 包，返回其 PYTHONPATH 根目录。
+
+    用来**确定性**地复现"环境里没有 manim"，而不是指望测试机真的没装 ——
+    装好引擎之后那种写法会变成静默失效，正是最危险的一类测试。
+    """
+    root = tmp_path_factory.mktemp("brokenmanim")
+    pkg = root / "manim"
+    pkg.mkdir()
+    # 消息必须命中 sandbox/manim.py 的 _ENV_ERROR_MARKERS，否则会被判成可重试。
+    (pkg / "__init__.py").write_text(
+        "raise ImportError(\"No module named 'manim'\")\n", encoding="utf-8"
+    )
     return root
 
 
@@ -175,6 +210,24 @@ class TestSuccessfulRender:
         assert result.timeout_sec == 60
         assert "FakeManim: rendered" in result.stdout_tail
 
+    def test_passes_resolution_from_the_request(
+        self, tmp_path: Path, fake_manim_root: Path
+    ) -> None:
+        """分辨率/帧率必须真的出现在 manim 命令行里。
+
+        回归防护：``ManimRenderRequest`` 曾经丢掉宽高与帧率，manim 于是退回自己的
+        ``-q`` 预设（``-ql`` 就是 854x480），配置里写的 1920x1080 完全不生效。
+        表现是成片很糊，而任何一层日志里都看不出是谁丢的。
+        """
+        work = tmp_path / "work"
+        sandbox = make_sandbox(work, manim_timeout_sec=60)
+        request = make_request(work, fake_manim_root, "ok")
+        request.width, request.height, request.fps = 1920, 1080, 30
+
+        result = sandbox.render(request)
+
+        assert "resolution=1920x1080@30" in result.stdout_tail, result.stdout_tail
+
     def test_clears_previous_output(self, tmp_path: Path, fake_manim_root: Path) -> None:
         """上一轮的产物必须被清掉。
 
@@ -200,9 +253,9 @@ class TestSuccessfulRender:
 
 class TestTimeout:
     def test_dead_loop_is_killed_and_reported(self, tmp_path: Path, fake_manim_root: Path) -> None:
-        """死循环的 Manim 渲染必须在 30s 级别的超时点被杀死。
+        """死循环的 Manim 渲染必须在超时点被杀死。
 
-        这里把超时设成 5s 以保持测试快速；生产默认值是 30s
+        这里把超时设成 5s 以保持测试快速；生产默认值是 120s
         （见 config.manim_timeout_sec），走的是**同一条**代码路径。
         """
         work = tmp_path / "work"
@@ -224,8 +277,11 @@ class TestTimeout:
     def test_timeout_sec_comes_from_settings(self, tmp_path: Path) -> None:
         assert make_sandbox(tmp_path, manim_timeout_sec=30).timeout_sec == 30
         assert make_sandbox(tmp_path, manim_timeout_sec=120).timeout_sec == 120
-        # 默认值就是需求里的 30 秒。
-        assert ManimSandbox(Settings(env="test")).timeout_sec == 30
+        # 缺省值 120s（v0.6.4 起，此前是 30s）：实测本机一个 7 秒的镜头在
+        # 854x480@15 下要 19.2s、1920x1080@30 下要 12.2s，元素更多的场景更久。
+        # 而超时后重试的是**同一份代码**，大概率继续超时 —— 三次 attempt 全废
+        # 才转人工，代价远高于多等一会儿。
+        assert ManimSandbox(Settings(env="test")).timeout_sec == 120
 
 
 # ===========================================================================
@@ -282,15 +338,24 @@ class TestFailureClassification:
         # 细节必须带出来 —— 这是回灌给模型的唯一线索。
         assert "amsmath.sty" in err.detail
 
-    def test_missing_manim_is_not_retryable(self, tmp_path: Path) -> None:
+    def test_missing_manim_is_not_retryable(
+        self, tmp_path: Path, broken_manim_root: Path
+    ) -> None:
         """缺依赖属于**环境问题**：重试多少次都一样，必须转人工。
 
         判错方向的代价很不对称：把环境问题判成可重试会无限烧钱。
+
+        这里用"一导入就抛 ImportError"的假 manim **确定性**地模拟缺失，
+        而不是依赖"本机恰好没装 manim"：引擎一旦装好，那个前提就没了，
+        测试会静默失效（本该抛异常，却真的渲染成功了）—— 这个坑踩过一次。
         """
         work = tmp_path / "work"
         sandbox = make_sandbox(work, manim_timeout_sec=30)
-        # 故意不注入假 manim，于是 `python -m manim` 会报 No module named manim。
-        request = ManimRenderRequest(code=_VALID_CODE, output_dir=work)
+        request = ManimRenderRequest(
+            code=_VALID_CODE,
+            output_dir=work,
+            env_extra={"PYTHONPATH": str(broken_manim_root)},
+        )
 
         with pytest.raises(ManimSandboxError) as exc_info:
             sandbox.render(request)

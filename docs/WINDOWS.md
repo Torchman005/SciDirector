@@ -138,12 +138,15 @@ curl.exe http://127.0.0.1:8000/healthz
 
 **换真模型只解决「代码生成对不对」，解决不了「本机有没有渲染引擎」。**
 
-| 引擎 | 需要 | 本机现状 |
+| 引擎 | 需要 | 装法 |
 | --- | --- | --- |
-| stock（AMBIENCE 氛围镜头） | ffmpeg | ✅ 可用 |
-| manim（MATH 数学镜头） | `pip install manim` + MiKTeX/TeX Live | ❌ 缺 |
-| d3 / echarts（DATA 数据镜头） | `pip install playwright && playwright install chromium` | ❌ 缺 |
-| code_anim（CODE 代码镜头） | 同上 | ❌ 缺 |
+| stock（AMBIENCE 氛围镜头） | ffmpeg | 已有 |
+| manim（MATH 数学镜头） | `pip install manim` + MiKTeX / TeX Live | 两个都要装 |
+| d3 / echarts（DATA 数据镜头） | `pip install playwright` + **浏览器二进制** | `playwright install chromium` |
+| code_anim（CODE 代码镜头） | 同上 | 同上 |
+
+> **d3 / echarts / code_anim 是靠 Playwright 驱动 Chromium 出图的** ——
+> 只装 Python 包、不装浏览器二进制等于没装（v0.4.6 记录过一次健康检查谎报可用）。
 
 缺引擎的镜头会熔断为 `AWAITING_HUMAN`，任务终态是 `PARTIAL` ——
 **这是设计行为，不是故障**：引擎不可用属于镜头级失败，不该拖垮其余镜头。
@@ -153,6 +156,23 @@ curl.exe http://127.0.0.1:8000/healthz
 ```cmd
 curl.exe http://127.0.0.1:8000/healthz
 ```
+
+期望 `manim` / `d3` / `echarts` / `code_anim` / `stock` 全为 `true`。
+
+### 装完之后引擎仍报不可用？按这三条查
+
+1. **必须重启 AI 服务。** `/healthz` 的探测结果来自进程启动那一刻，
+   装完依赖不重启不会变 —— 这一类「改了没生效」已经出现过不止一次。
+2. **LaTeX 必须在子进程的 PATH 里。** manim 用**裸命令名**调用 `latex` 与
+   `dvisvgm`。Windows 在进程启动那一刻就把环境块定死了：装完 MiKTeX 往注册表
+   写 User PATH，**已经开着的终端**以及它的所有子进程都看不到。
+   `dev.bat` / `dev-env.ps1` 会自己解析并注入（顺序：`SCID_TEX_BIN` →
+   注册表 PATH → 常见安装位置），所以**不需要重开终端、更不需要注销登录**。
+   看到 `does not support converting .dvi files to SVG` 时，
+   99% 是 PATH 问题而不是 dvisvgm 版本问题 —— 这条报错非常容易把人带偏。
+3. **分辨率不归 `SCID_SANDBOX_MANIM_QUALITY` 管。** 正片分辨率取
+   `SCID_RENDER_WIDTH` / `SCID_RENDER_HEIGHT` / `SCID_RENDER_FPS`；
+   `SCID_SANDBOX_MANIM_QUALITY` 只对**草稿渲染**生效。
 
 想一次装齐，用 Docker（镜像里 manim + LaTeX + Playwright 都装好了）：
 

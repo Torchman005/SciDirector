@@ -18,11 +18,13 @@ from pathlib import Path
 
 import pytest
 
+from scidirector_ai import media as media_module
 from scidirector_ai.media import (
     MediaToolError,
     _build_filtergraph,
     _escape_drawtext,
     _escape_fontfile,
+    ambient_font_size,
     extract_frames,
     find_font,
     render_ambient,
@@ -127,6 +129,28 @@ class TestFiltergraphComposition:
             colors=("0x0B1020", "0x4F8CFF", "0xFF6B6B"), font=None, text="标题",
         )
         assert "drawtext" not in vf
+
+    def test_title_gets_a_dark_border_for_contrast(self) -> None:
+        """标题必须有深色描边 —— 白字压在明亮渐变上实测被判"对比度不足"。
+
+        描边宽度还要随字号缩放：1080p 下 90px 的字配 2px 描边等于没加。
+        """
+        def vf_for(font_size: int) -> str:
+            return _build_filtergraph(
+                duration_sec=4.0, width=1920, height=1080, fps=30,
+                colors=("0x0B1020", "0x4F8CFF", "0xFF6B6B"),
+                font="C:/Windows/Fonts/msyh.ttc", text="勾股定理", font_size=font_size,
+            )
+
+        small, large = vf_for(20), vf_for(90)
+        assert "bordercolor=black@0.75" in large, "标题没有描边，浅色渐变上会看不清"
+        assert "shadowcolor=" in large, "标题没有阴影，对比度不足以保证"
+        # 描边宽度必须随字号增长，否则大字号下形同虚设。
+        border_of = lambda vf: int(vf.split("borderw=")[1].split(":")[0])  # noqa: E731
+        assert border_of(large) > border_of(small), (
+            f"描边没有随字号缩放：{border_of(small)} -> {border_of(large)}"
+        )
+        assert border_of(small) >= 2, "极小字号下描边也不能细到看不见"
 
 
 # ===========================================================================
@@ -303,3 +327,98 @@ class TestExtractFrames:
             path = Path(frame)
             assert path.is_file(), f"返回了不存在的帧路径: {frame}"
             assert path.stat().st_size > 0, f"抽出了空帧: {frame}"
+
+
+class _RecordingFrameRunner:
+    """记录每次抽帧用的 ``-ss``，并造出一个非空文件冒充抽到的帧。"""
+
+    def __init__(self) -> None:
+        self.seeks: list[float] = []
+
+    def run(self, argv: list[str], **kwargs: object) -> object:
+        from scidirector_ai.sandbox.runner import ExecResult
+
+        self.seeks.append(float(argv[argv.index("-ss") + 1]))
+        out = Path(argv[-1])
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(b"not-really-a-png")
+        return ExecResult(command=list(argv), returncode=0)
+
+
+def test_frames_are_extracted_in_chronological_order(tmp_path: Path) -> None:
+    """抽帧必须按时间**升序** —— 审查提示词正是这样向 VLM 声明顺序的。
+
+    真实事故：采样点原先直接产出 ``[中点..., 0.0, 末帧]``（**没有排序**），
+    实际时间顺序成了「12.5% → 37.5% → 62.5% → 87.5% → 0% → 100%」。
+    VLM 于是看到「画面齐全 → 突然全空 → 又齐全」，**合理地**判定
+    「动画顺序有问题」，连续多轮给出同一条建议，整条重试链白烧
+    （实测得分 0.65 → 0.59，三次 attempt 全部浪费）。
+
+    顺序错乱比内容错误隐蔽得多：每一张画面单独看都是正常的，
+    只有把顺序和"按时间排列"这句声明放在一起才看得出问题。
+    """
+    runner = _RecordingFrameRunner()
+    extract_frames(
+        "whatever.mp4", tmp_path / "frames", runner, count=4, duration_sec=10.0  # type: ignore[arg-type]
+    )
+
+    assert runner.seeks == sorted(runner.seeks), f"抽帧顺序不是时间升序：{runner.seeks}"
+    # 首帧不能取 t=0：以 Create/Write 开场的镜头在 0 秒时进度为 0，
+    # 画面本来就是空的，会被 rubric 的「画面几乎全空」误判成致命问题。
+    assert runner.seeks[0] > 0.0, f"首帧取在了 0 秒，会抽到空帧：{runner.seeks}"
+    assert runner.seeks[-1] < 10.0, f"末帧越过了时长：{runner.seeks}"
+    assert len(runner.seeks) == len(set(runner.seeks)), "出现了重复的采样点"
+
+
+class TestAmbientFontSize:
+    """氛围镜头的标题字号必须随输出高度缩放。
+
+    写死一个像素值在某一端必然出错：64px 在 320x240 时代是醒目的大标题，
+    到了 1920x1080 就只是个小注脚 —— 实测审查智能体在 1080p 下据此判
+    「标题字号不足」，而 stock 镜头又改不动代码，只能转人工。
+    """
+
+    def test_scales_with_height(self) -> None:
+        assert ambient_font_size(240) < ambient_font_size(1080)
+        # 1080p 下要是一个真正"标题级"的字号，而不是注脚。
+        assert ambient_font_size(1080) >= 72, (
+            f"1080p 的标题字号只有 {ambient_font_size(1080)}px，会被判为不可读"
+        )
+
+    def test_has_a_floor_for_tiny_drafts(self) -> None:
+        assert ambient_font_size(64) == 16, "极小分辨率下要有下限，不能退化成个位数"
+
+    def test_render_ambient_derives_size_when_not_given(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``font_size`` 留空时必须按高度推算，而不是沿用旧的字面量 64。
+
+        只测纯函数不够：真正会出错的是**调用点没接上**，那才是静默失效。
+
+        字体与 drawtext 可用性都显式打桩，避免这条用例变成
+        「只在装了中文字体的机器上才真的跑」—— 那是本项目反复记录过的坑。
+        """
+        captured: dict[str, object] = {}
+
+        def fake_run_ambient(
+            target: Path, runner: object, duration_sec: float, width: int,
+            height: int, fps: int, colors: object, **kwargs: object,
+        ) -> object:
+            from scidirector_ai.sandbox.runner import ExecResult
+
+            captured.update(kwargs)
+            Path(target).write_bytes(b"x")
+            return ExecResult(command=["fake"], returncode=0)
+
+        monkeypatch.setattr(media_module, "find_font", lambda: "C:/fake/font.ttc")
+        monkeypatch.setattr(media_module, "_drawtext_available", lambda: True)
+        monkeypatch.setattr(media_module, "_run_ambient", fake_run_ambient)
+
+        render_ambient(
+            tmp_path / "ambient.mp4", SandboxRunner(),  # type: ignore[arg-type]
+            duration_sec=2.0, width=1920, height=1080, fps=30, text="勾股定理",
+        )
+
+        assert captured.get("font_size") == ambient_font_size(1080), (
+            "调用点没有把按高度推算的字号传下去，字号仍会被写死"
+        )

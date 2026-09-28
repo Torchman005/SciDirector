@@ -279,6 +279,25 @@ class TestManimRendererDelegation:
         ok, reason = ManimRenderer(make_settings(tmp_path), _StubSandbox(ok=False)).available()
         assert ok is False and "桩" in reason
 
+    def test_passes_resolution_through_to_the_sandbox(self, tmp_path: Path) -> None:
+        """宽高与帧率必须从 RenderRequest 一路传到 ManimRenderRequest。
+
+        回归防护：这里曾经把这三个字段丢掉，于是 manim 只能用 `-q` 预设
+        （854x480），配置里的 1920x1080 形同虚设 —— 成片"糊"，
+        而且从日志里完全看不出是哪一层丢的。这是本项目最贵的一次排查。
+        """
+        sandbox = _StubSandbox()
+        renderer = ManimRenderer(make_settings(tmp_path), sandbox)  # type: ignore[arg-type]
+        request = make_request(tmp_path, code="class X(Scene): pass")
+        request.width, request.height, request.fps = 1920, 1080, 30
+
+        renderer.render(request, SandboxRunner())
+
+        sent = sandbox.requests[0]
+        assert (sent.width, sent.height, sent.fps) == (1920, 1080, 30), (
+            "分辨率没有透传到沙盒，manim 会退回自己的预设分辨率"
+        )
+
 
 # ===========================================================================
 # HTML 渲染契约
