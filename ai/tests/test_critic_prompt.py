@@ -45,6 +45,10 @@ PLACEHOLDER_VALUES: dict[str, Any] = {
     "style_guide": "- 背景色：#0B1020",
     "previous_feedback": "",
     "frame_count": 6,
+    # 抽帧缩放宽度与"成片/缩略图"比例。审查提示词必须把它们告诉 VLM，
+    # 否则它会拿缩略图上的字号去对成片像素的阈值，系统性索要过大字号。
+    "preview_width": 1024,
+    "preview_scale": "1.88",
 }
 
 #: 未被解析的 Jinja 风格占位符。渲染后不应残留。
@@ -164,6 +168,18 @@ class TestRequiredContent:
     def test_user_template_lists_frames_in_order(self, critic_user_prompt: str) -> None:
         """必须告诉模型抽帧的**时间顺序**，否则它无法判断动画节奏。"""
         assert "首帧" in critic_user_prompt and "末帧" in critic_user_prompt
+
+    def test_user_template_states_the_preview_scale(self, critic_user_prompt: str) -> None:
+        """必须给出缩略图与成片的比例。
+
+        抽帧会被缩放到 1024px 宽再送审，而系统提示词里的字号下限是**成片像素**。
+        不说换算比例，VLM 就会拿缩略图上的字号去对成片阈值 ——
+        1080p 下 32px 在它眼里只有 17px，于是它一路要求"提到 48px"，
+        每次都白烧一轮 1080p 渲染加一次模型调用。
+        """
+        assert "1024" in critic_user_prompt, "没有告诉模型缩略图宽度"
+        assert "1.88" in critic_user_prompt, "没有告诉模型换算比例"
+        assert "成片" in critic_user_prompt, "没有说明阈值是成片像素"
 
 
 # ===========================================================================

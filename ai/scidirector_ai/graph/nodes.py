@@ -392,6 +392,9 @@ class PipelineNodes:
                 self.deps.runner,
                 count=self.deps.settings.critic_frame_samples,
                 duration_sec=result.duration_sec,
+                # 显式传宽度：审查提示词要按**同一个值**告诉 VLM 缩略图的换算比例，
+                # 两处各自取默认值就会悄悄分叉（见 config.critic_frame_width）。
+                width=self.deps.settings.critic_frame_width,
             )
         except MediaToolError as exc:
             logger.warning(

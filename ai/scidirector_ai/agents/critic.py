@@ -156,6 +156,14 @@ class CriticAgent(Agent):
             background_color=style_guide.background_color,
             min_font_size=style_guide.min_font_size,
         )
+        # 缩略图换算比例：必须告诉 VLM 它在缩略图上量到的字号要乘多少才是成片字号。
+        #
+        # 不告诉它会出现很隐蔽的单位错配：提示词里的字号下限是**成片像素**，
+        # 而它是在缩略图上用眼睛量的。1080p 缩到 1024 宽是 1.875:1，
+        # 于是 32px 的下限在它眼里只有 17px，它会一路要求"提到 48px" ——
+        # 每次都白烧一轮 1080p 渲染加一次模型调用。
+        preview_width = max(int(self.settings.critic_frame_width), 1)
+        preview_scale = max(int(artifact.width or 0), 1) / preview_width
         user_prompt = render_prompt(
             "critic_user",
             index=shot.index,
@@ -171,6 +179,8 @@ class CriticAgent(Agent):
             style_guide=style_guide_to_text(style_guide),
             previous_feedback=_format_previous(previous_feedback),
             frame_count=len(frames),
+            preview_width=preview_width,
+            preview_scale=f"{preview_scale:.2f}",
         )
 
         try:

@@ -30,6 +30,11 @@
 下面附上 {{frame_count}} 张抽帧图片，按**时间先后顺序**排列
 （第一张是首帧，最后一张是末帧，中间为等间隔采样）。
 
+> **图片已被缩放到 {{preview_width}}px 宽**，而成片是 {{width}}px 宽。
+> 所以你在图上量到的字号，要乘以 **{{preview_scale}}** 才是成片上的实际字号。
+> 系统提示词里所有以 `px` 给出的阈值（尤其是字号下限）说的都是**成片像素**，
+> 判断时必须先做这个换算，否则会系统性地要求一个过大的字号。
+
 ## 现在开始
 
 先在心里过一遍这三步（**不要写出来**）：
@@ -49,4 +54,5 @@
   {{index}} {{tag}} {{engine}} {{duration_sec}} {{actual_duration}}
   {{width}} {{height}} {{attempt}} {{narration}} {{visual_brief}}
   {{style_guide}} {{previous_feedback}} {{frame_count}}
+  {{preview_width}} {{preview_scale}}   抽帧缩放宽度与成片/缩略图的比例
 -->
