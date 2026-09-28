@@ -105,8 +105,10 @@ func TestSyncShotsFromPayloadParses(t *testing.T) {
 		t.Errorf("tag 期望 AMBIENCE，实际 %q", first.Tag)
 	}
 	// 引擎必须由标签推导，而不是照抄 payload 里的值。
-	if first.Engine != domain.EngineStock {
-		t.Errorf("engine 期望 stock，实际 %q", first.Engine)
+	// AMBIENCE 现在推导为 motion（HTML 动画）—— 渐变只在浏览器不可用时由
+	// Python 侧降级使用，不在 Go 的路由表里体现。
+	if first.Engine != domain.EngineMotion {
+		t.Errorf("engine 期望 motion，实际 %q", first.Engine)
 	}
 	if first.Status != domain.StatusPending {
 		t.Errorf("新镜头应当是 PENDING，实际 %q", first.Status)
@@ -205,8 +207,8 @@ func TestSyncShotsFromPayloadFixesInvalidTag(t *testing.T) {
 		t.Errorf("非法标签应当降级为 AMBIENCE，实际 %q", job.Shots[0].Tag)
 	}
 	// 降级后引擎必须重新推导，否则会用 payload 里的非法值。
-	if job.Shots[0].Engine != domain.EngineStock {
-		t.Errorf("引擎应当按降级后的标签推导为 stock，实际 %q", job.Shots[0].Engine)
+	if job.Shots[0].Engine != domain.EngineMotion {
+		t.Errorf("引擎应当按降级后的标签推导为 motion，实际 %q", job.Shots[0].Engine)
 	}
 }
 

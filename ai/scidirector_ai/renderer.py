@@ -7,7 +7,8 @@
 | `manim` | **ManimSandbox**（沙盒子进程） | Python + Manim + LaTeX | 10~60s | MATH |
 | `d3` / `echarts` | headless 浏览器逐帧截图 + ffmpeg 编码 | Playwright + Chromium | 5~30s | DATA |
 | `code_anim` | 同 HTML 路径（高亮 + 打字动画） | Playwright + Chromium | 5~20s | CODE |
-| `stock` | ffmpeg lavfi 动态渐变 | 仅 ffmpeg | < 2s | AMBIENCE |
+| `motion` | 同 HTML 路径（由模型自由绘制二维画面） | Playwright + Chromium | 5~30s | MOTION / AMBIENCE |
+| `stock` | ffmpeg lavfi 动态渐变 | 仅 ffmpeg | < 2s | **仅降级**（浏览器不可用时兜底） |
 
 分层约定：
     **本模块**负责「选哪个引擎、统一成败语义」；
@@ -81,7 +82,7 @@ class RenderRequest:
     #: ---- 局部重渲染 ----
     #: 只渲染 [range_start_sec, range_end_sec) 这一段，用于「只改了一处细节」。
     #:
-    #: 只在**时间轴可控**的引擎上有意义：AMBIENCE（lavfi）与 HTML（逐帧 seek）
+    #: 只在**时间轴可控**的引擎上有意义：stock（lavfi）与 HTML（逐帧 seek）
     #: 可以按秒精确截取；MANIM 是按动画序号驱动渲染的，
     #: 「第 3~5 秒」无法可靠映射到动画区间，因此会忽略该区间并整镜重渲。
     #:
@@ -395,11 +396,12 @@ class HtmlRenderer:
 
 
 class AmbientRenderer:
-    """氛围镜头渲染器：ffmpeg 动态渐变（可选文字）。
+    """环境镜头渲染器：ffmpeg 动态渐变（可选文字）。
 
     这是整条流水线里**最可靠**的路径：只依赖 ffmpeg。
-    没有它则该引擎不可用；但只要有它，任何环境下都能出片 ——
-    因此它也是 AMBIENCE 标签的兜底引擎，以及整条链路的"最小可验证单元"。
+    它现在**不是** AMBIENCE 的默认引擎（那已改为 HTML 动效），
+    而是"headless 浏览器不可用"时由 ``graph/nodes.py`` 降级使用的兜底 ——
+    只要有 ffmpeg 就一定能出片，因此它同时是整条链路的"最小可验证单元"。
     """
 
     engine = "stock"
@@ -685,6 +687,7 @@ ENGINE_BY_TAG: dict[str, str] = {
     "MATH": "manim",
     "DATA": "d3",
     "CODE": "code_anim",
-    "AMBIENCE": "stock",
+    # AMBIENCE 也走 HTML 动画；`stock`（ffmpeg 渐变）退居"浏览器不可用时的兜底"。
+    "AMBIENCE": "motion",
     "MOTION": "motion",
 }

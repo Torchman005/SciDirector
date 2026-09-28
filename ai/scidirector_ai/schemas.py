@@ -34,7 +34,7 @@ class SceneTag(str, Enum):
     MATH = "MATH"          # [数学] 公式推导、几何演示 -> Manim
     DATA = "DATA"          # [数据] 统计图表、趋势对比 -> D3 / ECharts
     CODE = "CODE"          # [代码] 算法讲解、代码演示 -> 代码高亮动画
-    AMBIENCE = "AMBIENCE"  # [氛围] 过渡、情绪铺陈 -> 素材 / 渐变占位
+    AMBIENCE = "AMBIENCE"  # [氛围] 过渡、情绪铺陈 -> HTML 动态背景 + 一行标题
     MOTION = "MOTION"      # [动效] 界面演示、图标/角色动画、示意图 -> HTML/CSS/JS
 
     @classmethod
@@ -44,8 +44,9 @@ class SceneTag(str, Enum):
         模型经常会输出 ``[数学]`` / ``math`` / ``MATH`` 等变体，
         统一在这里归一，避免调用点各写一遍兼容逻辑。
 
-        兜底仍是 ``AMBIENCE``：它是**最便宜且一定可用**的引擎（只要 ffmpeg）。
-        模型输出乱码时给出一个渐变标题卡，比让 HTML 渲染失败要好。
+        兜底仍是 ``AMBIENCE``：它没有具体对象、最容易画，而且**浏览器不可用时
+        还会进一步降级回 ffmpeg 渐变**（见 ``graph/nodes.py::_engine_or_fallback``），
+        因此任何环境下都画得出来。
         """
         text = (raw or "").strip().strip("[]【】").upper()
         aliases = {
@@ -53,10 +54,10 @@ class SceneTag(str, Enum):
             "数据": cls.DATA, "图表": cls.DATA, "DATA": cls.DATA, "CHART": cls.DATA,
             "代码": cls.CODE, "编程": cls.CODE, "CODE": cls.CODE, "CODING": cls.CODE,
             # 动效：产品演示、界面讲解、图标/角色动画、示意图。
-            # 这些内容四个旧引擎一个都画不出来（MATH 只画公式、DATA 只画图表、
-            # CODE 只画代码、AMBIENCE 只能画渐变底 + 一行标题），
-            # 所以必须让模型有一个**明确的去处**，否则它会写成 AMBIENCE
-            # 再描述一堆画不出来的画面。
+            # 这些内容光靠 MATH / DATA / CODE 都画不出来（MATH 只画公式、
+            # DATA 只画图表、CODE 只画代码，而 AMBIENCE 只画背景与标题、
+            # 没有具体对象），所以必须让模型有一个**明确的去处**，
+            # 否则它会写成 AMBIENCE 再描述一堆画不出来的画面。
             "动效": cls.MOTION, "动画": cls.MOTION, "界面": cls.MOTION,
             "演示": cls.MOTION, "示意": cls.MOTION, "图形": cls.MOTION,
             "图标": cls.MOTION, "场景": cls.MOTION,
@@ -89,7 +90,17 @@ TAG_TO_ENGINE: dict[SceneTag, RenderEngine] = {
     SceneTag.MATH: RenderEngine.MANIM,
     SceneTag.DATA: RenderEngine.D3,
     SceneTag.CODE: RenderEngine.CODE_ANIM,
-    SceneTag.AMBIENCE: RenderEngine.STOCK,
+    # AMBIENCE 也走 HTML 动画，**不再**用 ffmpeg 固定渐变。
+    #
+    # 为什么改：渐变渲染器的配色与流速是写死的，于是**每个环境镜头都长得一模一样**，
+    # 整片看下来就是"同一张背景在换文字"—— 这正是用户的原话。而这类镜头恰恰数量
+    # 不少（开场、过渡、金句收尾）。交给 HTML 之后，每个镜头由模型各写一个场景，
+    # 光晕、粒子、文字动效都能不一样，成本只多一次模型调用 + 一次浏览器渲染。
+    #
+    # 注意 `stock` 引擎**没有删除**：浏览器不可用时由图节点把它降级回去
+    # （见 ``graph/nodes.py`` 的 `_engine_or_fallback`）—— "环境镜头永远画得出来"
+    # 是它作为兜底的唯一价值，不能因为换了默认实现就丢掉。
+    SceneTag.AMBIENCE: RenderEngine.MOTION,
     SceneTag.MOTION: RenderEngine.MOTION,
 }
 

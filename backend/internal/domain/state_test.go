@@ -61,7 +61,7 @@ func TestEngineForTag(t *testing.T) {
 		TagMath:     EngineManim,
 		TagData:     EngineD3,
 		TagCode:     EngineCodeAnim,
-		TagAmbience: EngineStock,
+		TagAmbience: EngineMotion, // 环境镜头也走 HTML 动画
 		TagMotion:   EngineMotion,
 	}
 	for tag, want := range cases {

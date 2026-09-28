@@ -254,7 +254,9 @@ def _fallback_visual_brief(shot: ShotSpec) -> str:
         SceneTag.MATH: "居中展示关键公式，逐项高亮推导步骤，末尾停留 1 秒。",
         SceneTag.DATA: "绘制居中的统计图表，元素从左到右生长，数值标签同步淡入。",
         SceneTag.CODE: "居中展示代码块，逐行打字并高亮当前行，末尾停留。",
-        SceneTag.AMBIENCE: "背景渐变缓慢流动，标题文字淡入后保持，末尾淡出。",
+        # 环境镜头现在也走 HTML 动效：动态背景 + 一行标题（不再是一张固定渐变）。
+        SceneTag.AMBIENCE: "动态背景缓慢流动（光晕/呼吸/粒子），标题文字淡入后保持，末尾淡出。",
+        SceneTag.MOTION: "居中绘制一个界面或图形，元素依次进入并完成一个明确动作，末尾停留。",
     }[shot.tag]
 
 

@@ -31,7 +31,7 @@ from typing import Any
 from ..agents.coder import CoderAgent
 from ..agents.critic import CriticAgent
 from ..agents.director import DirectorAgent
-from ..config import Settings
+from ..config import Settings, browser_ready
 from ..llm import LLMClient, LLMError
 from ..logging import get_logger
 from ..media import MediaToolError, extract_frames
@@ -39,7 +39,7 @@ from ..pbconv import shots_payload_json
 from ..renderer import LLM_ENGINES, Renderer, RendererError, RenderRequest, build_renderer
 from ..sandbox.runner import SandboxRunner
 from ..tts.base import synthesize_with_retry, write_marks_sidecar
-from ..schemas import CriticFeedback, RenderArtifact, ShotSpec, StyleGuide
+from ..schemas import CriticFeedback, RenderArtifact, RenderEngine, ShotSpec, StyleGuide
 from .state import (
     NODE_ADVANCE,
     NODE_CODE,
@@ -215,6 +215,37 @@ class PipelineNodes:
     # code：编码智能体生成渲染代码
     # ==================================================================
 
+    def _engine_or_fallback(
+        self, shot: ShotSpec, state: PipelineState
+    ) -> tuple[ShotSpec, dict[str, Any] | None]:
+        """引擎不可用时**如实降级**，而不是让镜头直接失败。
+
+        环境镜头（``AMBIENCE``）现在也走 HTML 动画，而 HTML 需要 headless 浏览器。
+        浏览器可能没装 —— 而"环境镜头永远画得出来"（只要 ffmpeg）正是它作为
+        **兜底镜头**的全部价值，不能因为换了默认实现就丢掉。
+
+        所以这里退回 ffmpeg 渐变，并留一条事件说明。
+        "静默降级"和"如实降级"的区别就在这里：前者事后无法解释
+        "这个镜头为什么突然变简单了"。
+        """
+        if shot.engine is not RenderEngine.MOTION:
+            return shot, None
+
+        ok, reason = browser_ready()
+        if ok:
+            return shot, None
+
+        logger.warning(
+            "headless 浏览器不可用，环境镜头降级为 ffmpeg 渐变",
+            extra={"shot_id": shot.shot_id, "reason": reason[:200]},
+        )
+        degraded = shot.model_copy(update={"engine": RenderEngine.STOCK})
+        return degraded, make_event(
+            state, node=NODE_CODE, shot=shot,
+            message=f"headless 浏览器不可用（{reason[:80]}），本镜头降级为程序化渐变",
+            status="GENERATING",
+        )
+
     @traced_node("code")
     def code(self, state: PipelineState) -> dict[str, Any]:
         """为当前镜头生成渲染代码。
@@ -226,6 +257,11 @@ class PipelineNodes:
         shot = current_shot(state)
         if shot is None:
             return {"route_hint": HINT_DONE, "finished": True}
+
+        # 引擎可能不可用（环境镜头现在走 HTML，而 HTML 需要 headless 浏览器）。
+        # 必须**在调用编码智能体之前**决定：换引擎会换提示词，
+        # 而且降级回 stock 时标题是由 `_programmatic_ambient` 从画外音截出来的。
+        shot, engine_event = self._engine_or_fallback(shot, state)
 
         style = state.get("style_guide") or StyleGuide()
         attempt = shot_attempt(state, shot.shot_id) + 1
@@ -269,15 +305,23 @@ class PipelineNodes:
             else f"生成的代码未通过静态检查：{result.policy_summary[:200]}"
         )
 
-        # 氛围镜头的标题要落到 shot.meta，渲染节点才会用它绘图。
+        # 把镜头写回列表。**无条件写回**（而不是只在有 overlay_text 时）：
+        # 引擎可能刚被 `_engine_or_fallback` 改过，不持久化的话渲染节点读到的
+        # 仍是旧引擎，降级就白做了。写回本身是幂等的。
         shots = list(state.get("shots") or [])
-        if result.overlay_text and 0 <= shot.index < len(shots):
-            updated = shot.model_copy(update={
-                "meta": {**shot.meta, "overlay_text": result.overlay_text}
+        updated = shot
+        if result.overlay_text:
+            updated = updated.model_copy(update={
+                "meta": {**updated.meta, "overlay_text": result.overlay_text}
             })
+        if 0 <= shot.index < len(shots):
             shots[shot.index] = updated
 
-        events = [
+        events: list[dict[str, Any]] = []
+        if engine_event is not None:
+            # 降级说明放在生成事件**之前**，读事件流的人先看到"为什么换了引擎"。
+            events.append(engine_event)
+        events.append(
             make_event(
                 state, node=NODE_CODE, message=message, status="GENERATING",
                 shot=shot, attempt=attempt, error="" if ok else result.policy_summary[:500],
@@ -285,7 +329,7 @@ class PipelineNodes:
                 # 使 HITL 重做时能带着上一版代码重写。
                 payload_json=_code_patch(shot.shot_id, result.code, result.artifact.language),
             )
-        ]
+        )
 
         logger.info(
             "code 完成",

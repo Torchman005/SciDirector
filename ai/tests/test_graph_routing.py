@@ -55,6 +55,7 @@ from scidirector_ai.schemas import (
     FeedbackSource,
     JobRequest,
     RenderArtifact,
+    RenderEngine,
     SceneTag,
     ShotSpec,
     StyleGuide,
@@ -243,17 +244,25 @@ class SandboxRunnerStub:
         return ExecResult(command=list(argv), returncode=0)
 
 
-def make_shots(count: int = 2, tag: SceneTag = SceneTag.MATH) -> list[ShotSpec]:
+def make_shots(
+    count: int = 2,
+    tag: SceneTag = SceneTag.MATH,
+    engine: RenderEngine | None = None,
+) -> list[ShotSpec]:
     """构造分镜。
 
     默认用 `MATH`（-> manim，属于**可重新生成代码**的引擎）。
-    这一点现在是关键：`revise` 只对可重新生成的引擎做重试 ——
-    程序化引擎（`AMBIENCE` -> stock）没有代码可改，重跑必然得到逐像素相同的画面，
-    因此判负后直接转人工。要验证那条分支请显式传 `tag=SceneTag.AMBIENCE`。
+    这一点是关键：`revise` 只对可重新生成的引擎做重试 ——
+    程序化引擎（`stock`，ffmpeg 渐变）没有代码可改，重跑必然得到逐像素
+    相同的画面，因此判负后直接转人工。
+
+    ⚠️ `AMBIENCE` **已经不能用来构造程序化引擎的分镜了** —— 它现在映射到
+    `motion`（HTML 动画，可重新生成）。要测那条分支必须显式传
+    `engine=RenderEngine.STOCK`，不要靠标签推导。
     """
     return [
         ShotSpec(shot_id=f"job-x-s{i:03d}", index=i, narration=f"第 {i} 段",
-                 visual_brief="画面", tag=tag, duration_sec=4.0)
+                 visual_brief="画面", tag=tag, engine=engine, duration_sec=4.0)
         for i in range(count)
     ]
 
@@ -343,15 +352,20 @@ class TestEndToEndWithStubs:
     def test_programmatic_engine_skips_retry(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """程序化引擎（AMBIENCE -> stock）判负后**不得重试**。
+        """程序化引擎（`stock`）判负后**不得重试**。
 
         它的画面由固定参数决定、没有可修改的代码，重跑只会得到逐像素相同的结果。
         实测中这曾表现为：同一句建议连续三轮、得分 0.27 / 0.27 / 0.28，
         白烧三轮渲染 + 三次 VLM 调用，最后仍然转人工。
         所以这里要求"第一次判负就转人工"，而不是走满 max_attempts。
+
+        注意 `stock` 现在**必须显式指定**：`AMBIENCE` 已改走 HTML 动画
+        （那是可重新生成的，重试有意义）。
         """
         deps, _, coder, critic, _ = make_deps(
-            tmp_path, shots=make_shots(1, tag=SceneTag.AMBIENCE), verdicts=[False]
+            tmp_path,
+            shots=make_shots(1, tag=SceneTag.AMBIENCE, engine=RenderEngine.STOCK),
+            verdicts=[False],
         )
         events = run_graph(deps, max_attempts=3, monkeypatch=monkeypatch)
 
@@ -362,6 +376,49 @@ class TestEndToEndWithStubs:
         assert any(
             "重试不会产生不同画面" in (e.get("message") or "") for e in events
         ), "转人工时必须说明「重试无用」的原因，否则人工不知道该怎么办"
+
+    def test_motion_degrades_to_stock_when_browser_is_missing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """headless 浏览器不可用时，环境镜头必须**如实降级**回 ffmpeg 渐变。
+
+        环境镜头现在走 HTML 动画，而 HTML 需要浏览器。浏览器可能没装 ——
+        而"环境镜头永远画得出来"（只要 ffmpeg）正是它作为**兜底镜头**的全部价值，
+        不能因为换了默认实现就丢掉。降级还必须留痕：否则事后无法解释
+        "这个镜头为什么突然变简单了"。
+        """
+        import scidirector_ai.graph.nodes as nodes_module
+
+        monkeypatch.setattr(
+            nodes_module, "browser_ready", lambda: (False, "没有可用的 Chromium")
+        )
+        deps, _, _, _, _ = make_deps(tmp_path, shots=make_shots(1, tag=SceneTag.AMBIENCE))
+        events = run_graph(deps, monkeypatch=monkeypatch)
+
+        assert any("降级" in (e.get("message") or "") for e in events), "降级没有留痕"
+        # 关键：降级必须真的落到"用哪个引擎生成"上，而不只是写了一条事件。
+        assert any(
+            "已生成 stock 代码" in (e.get("message") or "") for e in events
+        ), "降级没有作用到实际使用的引擎"
+
+    def test_motion_is_kept_when_browser_is_available(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """反向对照：浏览器可用时**不得**降级。
+
+        少了这条，"永远降级"这种退化实现也能让上一条用例通过 ——
+        而那恰好会把新增的 HTML 通路整个废掉。
+        """
+        import scidirector_ai.graph.nodes as nodes_module
+
+        monkeypatch.setattr(nodes_module, "browser_ready", lambda: (True, ""))
+        deps, _, _, _, _ = make_deps(tmp_path, shots=make_shots(1, tag=SceneTag.AMBIENCE))
+        events = run_graph(deps, monkeypatch=monkeypatch)
+
+        assert not any("降级" in (e.get("message") or "") for e in events)
+        assert any(
+            "已生成 motion 代码" in (e.get("message") or "") for e in events
+        ), "浏览器可用时环境镜头应当走 HTML 动画"
 
     def test_static_failure_skips_render(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

@@ -140,11 +140,15 @@ curl.exe http://127.0.0.1:8000/healthz
 
 | 引擎 | 需要 | 装法 |
 | --- | --- | --- |
-| stock（AMBIENCE 氛围镜头） | ffmpeg | 已有 |
+| stock（**兜底**：浏览器不可用时的环境镜头） | ffmpeg | 已有 |
 | manim（MATH 数学镜头） | `pip install manim` + MiKTeX / TeX Live | 两个都要装 |
 | d3 / echarts（DATA 数据镜头） | `pip install playwright` + **浏览器二进制** | `playwright install chromium` |
 | code_anim（CODE 代码镜头） | 同上 | 同上 |
-| motion（MOTION 动效镜头：界面/图标/角色/示意图） | 与 d3 相同 | 同上 |
+| motion（MOTION 动效 + AMBIENCE 环境镜头） | 与 d3 相同 | 同上 |
+
+> **环境镜头（AMBIENCE）默认也走 motion（HTML 动画）**，不再是固定的 ffmpeg 渐变 ——
+> 旧做法的配色与流速写死，导致每个环境镜头长得一模一样。只有在本机找不到
+> headless 浏览器时，它才会自动降级回渐变（事件流里会写明"降级"）。
 
 > **d3 / echarts / code_anim 是靠 Playwright 驱动 Chromium 出图的** ——
 > 只装 Python 包、不装浏览器二进制等于没装（v0.4.6 记录过一次健康检查谎报可用）。

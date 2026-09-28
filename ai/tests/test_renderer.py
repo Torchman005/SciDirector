@@ -124,7 +124,7 @@ class TestFactory:
             "MATH": "manim",
             "DATA": "d3",
             "CODE": "code_anim",
-            "AMBIENCE": "stock",
+            "AMBIENCE": "motion",
             "MOTION": "motion",
         }
 

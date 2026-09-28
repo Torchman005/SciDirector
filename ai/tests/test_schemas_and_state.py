@@ -69,7 +69,9 @@ class TestTagRouting:
             (SceneTag.MATH, RenderEngine.MANIM),
             (SceneTag.DATA, RenderEngine.D3),
             (SceneTag.CODE, RenderEngine.CODE_ANIM),
-            (SceneTag.AMBIENCE, RenderEngine.STOCK),
+            # 环境镜头现在也走 HTML 动画（不再用固定渐变）；
+            # `stock` 只在浏览器不可用时由图节点降级使用。
+            (SceneTag.AMBIENCE, RenderEngine.MOTION),
             (SceneTag.MOTION, RenderEngine.MOTION),
         ],
     )

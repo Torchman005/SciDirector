@@ -34,7 +34,7 @@ from scidirector_ai.agents.coder import (
 from scidirector_ai.config import Settings
 from scidirector_ai.llm import LLMClient
 from scidirector_ai.rag import FewShot, JsonCorpusRetriever
-from scidirector_ai.schemas import SceneTag, ShotSpec, StyleGuide
+from scidirector_ai.schemas import RenderEngine, SceneTag, ShotSpec, StyleGuide
 
 # ---------------------------------------------------------------------------
 # 夹具与桩
@@ -130,17 +130,30 @@ class TestRouting:
             marker = load_prompt(prompt_name).splitlines()[0]
             assert marker in system, f"{tag} 没有使用 {prompt_name} 提示词"
 
-    def test_ambience_skips_the_model_entirely(self) -> None:
-        """氛围镜头由 ffmpeg 程序化生成 —— 不该浪费一次 LLM 调用。"""
+    def test_stock_engine_skips_the_model_entirely(self) -> None:
+        """``stock``（ffmpeg 渐变）由程序化生成 —— 不该浪费一次 LLM 调用。
+
+        注意它现在**不是 AMBIENCE 的默认引擎**：环境镜头已改为走 HTML 动画，
+        `stock` 只在 headless 浏览器不可用时由图节点降级使用
+        （见 ``graph/nodes.py::_engine_or_fallback``）。
+        所以这里必须显式指定引擎，而不是靠标签推导。
+        """
         agent = make_agent([])
-        result = agent.generate(shot=make_shot(SceneTag.AMBIENCE, keywords=[]), style_guide=StyleGuide())
+        shot = make_shot(SceneTag.AMBIENCE, keywords=[], engine=RenderEngine.STOCK)
+        result = agent.generate(shot=shot, style_guide=StyleGuide())
         assert result.skipped_llm is True
         assert agent.llm.calls == []  # type: ignore[attr-defined]
 
-    def test_ambience_produces_a_title_from_narration(self) -> None:
+    def test_ambience_still_uses_html_by_default(self) -> None:
+        """环境镜头默认走 HTML 动画 —— 这正是"背景不再一成不变"的关键。"""
+        shot = make_shot(SceneTag.AMBIENCE)
+        assert shot.engine is RenderEngine.MOTION
+
+    def test_stock_engine_produces_a_title_from_narration(self) -> None:
         agent = make_agent([])
         shot = make_shot(SceneTag.AMBIENCE,
-                         narration="相对论的基本假设是光速不变。下一句不该出现。")
+                         narration="相对论的基本假设是光速不变。下一句不该出现。",
+                         engine=RenderEngine.STOCK)
         result = agent.generate(shot=shot, style_guide=StyleGuide())
         assert result.overlay_text == "相对论的基本假设是光速不变"
         assert "下一句" not in result.overlay_text
@@ -148,7 +161,8 @@ class TestRouting:
     def test_explicit_overlay_text_wins(self) -> None:
         agent = make_agent([])
         shot = make_shot(SceneTag.AMBIENCE,
-                         narration="画外音", meta={"overlay_text": "指定标题"})
+                         narration="画外音", meta={"overlay_text": "指定标题"},
+                         engine=RenderEngine.STOCK)
         assert agent.generate(shot=shot, style_guide=StyleGuide()).overlay_text == "指定标题"
 
 

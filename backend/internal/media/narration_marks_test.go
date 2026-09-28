@@ -9,6 +9,7 @@ package media
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -162,10 +163,19 @@ func TestReadNarrationMarksEmptyAudioPath(t *testing.T) {
 }
 
 // TestNarrationMarksPathConvention 钉住命名约定 —— Python 侧必须写同一个文件名。
+//
+// 断言的是**约定**（目录不变、原名后缀 ".marks.json"），因此期望值必须用
+// filepath.Join 拼、而不是硬编码 "/"。硬编码斜杠会让这条用例**只在 Linux 上通过**：
+// 实现用的是 filepath.Join（Windows 下产出 `\`），两者在 Windows 上必然不等 ——
+// 那不是约定坏了，是用例把平台差异当成了契约（本项目已踩过一次）。
 func TestNarrationMarksPathConvention(t *testing.T) {
-	got := NarrationMarksPath("/data/work/shot_000/narration.mp3")
-	want := "/data/work/shot_000/narration.mp3.marks.json"
+	got := NarrationMarksPath(filepath.Join("/data/work/shot_000", "narration.mp3"))
+	want := filepath.Join("/data/work/shot_000", "narration.mp3.marks.json")
 	if got != want {
 		t.Errorf("sidecar 路径约定变了：期望 %s，实际 %s（Python 侧用的是原名 + .marks.json）", want, got)
+	}
+	// 反向控制：后缀必须真的追加在原名之后，而不是替换扩展名。
+	if !strings.HasSuffix(got, "narration.mp3.marks.json") {
+		t.Errorf("sidecar 文件名必须是「原名 + .marks.json」，实际 %s", filepath.Base(got))
 	}
 }

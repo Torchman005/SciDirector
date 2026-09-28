@@ -65,7 +65,11 @@ func EngineForTag(t Tag) (Engine, error) {
 	case TagCode:
 		return EngineCodeAnim, nil
 	case TagAmbience:
-		return EngineStock, nil
+		// 环境镜头同样走 HTML 动画（不再是 ffmpeg 固定渐变）。
+		// 渐变引擎仍在，但只在浏览器不可用时由 Python 侧降级使用 ——
+		// 这里必须与 TAG_TO_ENGINE 保持一致，否则会出现
+		// "Go 认为是 stock、Python 按 motion 渲染"这类跨语言契约漂移。
+		return EngineMotion, nil
 	case TagMotion:
 		return EngineMotion, nil
 	default:
