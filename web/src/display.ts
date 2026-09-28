@@ -71,10 +71,12 @@ export const TAG_LABEL: Record<string, string> = {
   SCENE_TAG_DATA: '数据',
   SCENE_TAG_CODE: '代码',
   SCENE_TAG_AMBIENCE: '氛围',
+  SCENE_TAG_MOTION: '动效',
   MATH: '数学',
   DATA: '数据',
   CODE: '代码',
   AMBIENCE: '氛围',
+  MOTION: '动效',
 }
 
 export function tagLabel(t: string): string {

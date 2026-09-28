@@ -35,6 +35,7 @@ class SceneTag(str, Enum):
     DATA = "DATA"          # [数据] 统计图表、趋势对比 -> D3 / ECharts
     CODE = "CODE"          # [代码] 算法讲解、代码演示 -> 代码高亮动画
     AMBIENCE = "AMBIENCE"  # [氛围] 过渡、情绪铺陈 -> 素材 / 渐变占位
+    MOTION = "MOTION"      # [动效] 界面演示、图标/角色动画、示意图 -> HTML/CSS/JS
 
     @classmethod
     def from_prompt(cls, raw: str) -> SceneTag:
@@ -42,12 +43,27 @@ class SceneTag(str, Enum):
 
         模型经常会输出 ``[数学]`` / ``math`` / ``MATH`` 等变体，
         统一在这里归一，避免调用点各写一遍兼容逻辑。
+
+        兜底仍是 ``AMBIENCE``：它是**最便宜且一定可用**的引擎（只要 ffmpeg）。
+        模型输出乱码时给出一个渐变标题卡，比让 HTML 渲染失败要好。
         """
         text = (raw or "").strip().strip("[]【】").upper()
         aliases = {
             "数学": cls.MATH, "公式": cls.MATH, "MATH": cls.MATH, "MATHSCENE": cls.MATH,
             "数据": cls.DATA, "图表": cls.DATA, "DATA": cls.DATA, "CHART": cls.DATA,
             "代码": cls.CODE, "编程": cls.CODE, "CODE": cls.CODE, "CODING": cls.CODE,
+            # 动效：产品演示、界面讲解、图标/角色动画、示意图。
+            # 这些内容四个旧引擎一个都画不出来（MATH 只画公式、DATA 只画图表、
+            # CODE 只画代码、AMBIENCE 只能画渐变底 + 一行标题），
+            # 所以必须让模型有一个**明确的去处**，否则它会写成 AMBIENCE
+            # 再描述一堆画不出来的画面。
+            "动效": cls.MOTION, "动画": cls.MOTION, "界面": cls.MOTION,
+            "演示": cls.MOTION, "示意": cls.MOTION, "图形": cls.MOTION,
+            "图标": cls.MOTION, "场景": cls.MOTION,
+            "MOTION": cls.MOTION, "MOTIONGRAPHICS": cls.MOTION,
+            "ANIMATION": cls.MOTION, "UI": cls.MOTION, "UX": cls.MOTION,
+            "GRAPHIC": cls.MOTION, "GRAPHICS": cls.MOTION,
+            "DIAGRAM": cls.MOTION, "ILLUSTRATION": cls.MOTION,
             "氛围": cls.AMBIENCE, "过渡": cls.AMBIENCE, "AMBIENCE": cls.AMBIENCE,
             "MOOD": cls.AMBIENCE, "TRANSITION": cls.AMBIENCE,
         }
@@ -62,6 +78,9 @@ class RenderEngine(str, Enum):
     ECHARTS = "echarts"
     CODE_ANIM = "code_anim"
     STOCK = "stock"
+    #: HTML/CSS/JS 任意二维动效。与 d3/echarts/code_anim 走**同一条**浏览器通路，
+    #: 区别只在提示词与用途：那三个是"数据/代码"的专用模板，这个是通用的。
+    MOTION = "motion"
 
 
 # 标签 -> 引擎的确定性路由表。
@@ -71,6 +90,7 @@ TAG_TO_ENGINE: dict[SceneTag, RenderEngine] = {
     SceneTag.DATA: RenderEngine.D3,
     SceneTag.CODE: RenderEngine.CODE_ANIM,
     SceneTag.AMBIENCE: RenderEngine.STOCK,
+    SceneTag.MOTION: RenderEngine.MOTION,
 }
 
 

@@ -477,13 +477,18 @@ _RENDERERS: dict[str, type] = {
     "echarts": HtmlRenderer,
     "code_anim": HtmlRenderer,
     "stock": AmbientRenderer,
+    # motion 复用 HtmlRenderer：它本来就是"把一段 HTML/CSS/JS 按时间轴逐帧截下来"，
+    # 与 d3/echarts 的差别只在提示词，不在渲染机制。
+    "motion": HtmlRenderer,
 }
 
 #: 需要 LLM 生成代码的引擎（`stock` 不需要 —— 由 ffmpeg 程序化生成）。
-LLM_ENGINES: frozenset[str] = frozenset({"manim", "d3", "echarts", "code_anim"})
+LLM_ENGINES: frozenset[str] = frozenset(
+    {"manim", "d3", "echarts", "code_anim", "motion"}
+)
 
 #: 走 HTML 逐帧截图路径的引擎。
-HTML_ENGINES: frozenset[str] = frozenset({"d3", "echarts", "code_anim"})
+HTML_ENGINES: frozenset[str] = frozenset({"d3", "echarts", "code_anim", "motion"})
 
 
 def build_renderer(engine: str, settings: Settings | None = None) -> Renderer:
@@ -681,4 +686,5 @@ ENGINE_BY_TAG: dict[str, str] = {
     "DATA": "d3",
     "CODE": "code_anim",
     "AMBIENCE": "stock",
+    "MOTION": "motion",
 }

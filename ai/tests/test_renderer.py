@@ -111,7 +111,7 @@ class TestFactory:
 
     def test_availability_report_covers_every_engine(self, tmp_path: Path) -> None:
         report = renderer_availability(make_settings(tmp_path))
-        assert set(report) == {"manim", "d3", "echarts", "code_anim", "stock"}
+        assert set(report) == {"manim", "d3", "echarts", "code_anim", "stock", "motion"}
         assert all(isinstance(v, bool) for v in report.values())
 
     def test_engine_by_tag_matches_go_side_contract(self) -> None:
@@ -125,6 +125,7 @@ class TestFactory:
             "DATA": "d3",
             "CODE": "code_anim",
             "AMBIENCE": "stock",
+            "MOTION": "motion",
         }
 
     def test_engine_groups_are_consistent(self) -> None:

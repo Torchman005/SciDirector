@@ -32,6 +32,9 @@ PLACEHOLDER_VALUES: dict[str, Any] = {
     "threshold": "0.75",
     "background_color": "#0B1020",
     "min_font_size": 36,
+    # 容差下限：低于下限但仍在它的 90% 以内算"偏小但可读"，不判负。
+    # 没有这条，差 1px 就会触发一整轮重渲染。
+    "min_font_size_tolerance": 32,
     "index": 2,
     "tag": "MATH",
     "engine": "manim",
@@ -101,6 +104,16 @@ class TestLoadability:
         assert "0.75" in critic_system_prompt, "阈值未注入"
         assert "#0B1020" in critic_system_prompt, "背景色未注入"
         assert "36px" in critic_system_prompt, "字号下限未注入"
+
+    def test_font_size_judgement_has_a_tolerance_band(self, critic_system_prompt: str) -> None:
+        """字号判定必须分两档，不能为 1~2px 触发一整轮重渲染。
+
+        真实代价：某镜头在缩略图上量到 16px、标准是 17px，连续三轮判负 ——
+        每轮都白烧一次 1080p 渲染加一次 VLM 调用，最后仍然转人工，
+        而画面质量并没有因此变好。可读性的红线应当拦"明显读不清"。
+        """
+        assert "32px" in critic_system_prompt, "容差下限没有注入"
+        assert "10%" in critic_system_prompt, "没有说明容差的比例"
 
     def test_prompt_is_chinese(self, critic_system_prompt: str) -> None:
         """需求明确要求中文提示词。"""

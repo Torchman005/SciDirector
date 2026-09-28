@@ -40,6 +40,15 @@ class TestSceneTag:
             ("图表", SceneTag.DATA),
             ("code", SceneTag.CODE),
             ("氛围", SceneTag.AMBIENCE),
+            # 动效档：产品演示、界面讲解、图标/角色动画都归它。
+            # 少了这些别名，模型写"界面"/"动效"会被兜底成 AMBIENCE，
+            # 而 AMBIENCE 只能画渐变卡 —— 那正是成片"只剩标题卡"的成因。
+            ("MOTION", SceneTag.MOTION),
+            ("motion", SceneTag.MOTION),
+            ("[动效]", SceneTag.MOTION),
+            ("界面", SceneTag.MOTION),
+            ("图标", SceneTag.MOTION),
+            ("[UI]", SceneTag.MOTION),
             ("完全无法识别的内容", SceneTag.AMBIENCE),  # 兜底
             ("", SceneTag.AMBIENCE),
         ],
@@ -61,6 +70,7 @@ class TestTagRouting:
             (SceneTag.DATA, RenderEngine.D3),
             (SceneTag.CODE, RenderEngine.CODE_ANIM),
             (SceneTag.AMBIENCE, RenderEngine.STOCK),
+            (SceneTag.MOTION, RenderEngine.MOTION),
         ],
     )
     def test_engine_derived_from_tag(self, tag: SceneTag, engine: RenderEngine) -> None:

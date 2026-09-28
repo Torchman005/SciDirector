@@ -25,6 +25,7 @@ var tagToPB = map[domain.Tag]pb.SceneTag{
 	domain.TagData:     pb.SceneTag_SCENE_TAG_DATA,
 	domain.TagCode:     pb.SceneTag_SCENE_TAG_CODE,
 	domain.TagAmbience: pb.SceneTag_SCENE_TAG_AMBIENCE,
+	domain.TagMotion:   pb.SceneTag_SCENE_TAG_MOTION,
 }
 
 var pbToTag = func() map[pb.SceneTag]domain.Tag {
@@ -41,6 +42,7 @@ var engineToPB = map[domain.Engine]pb.RenderEngine{
 	domain.EngineECharts:  pb.RenderEngine_RENDER_ENGINE_ECHARTS,
 	domain.EngineCodeAnim: pb.RenderEngine_RENDER_ENGINE_CODE_ANIM,
 	domain.EngineStock:    pb.RenderEngine_RENDER_ENGINE_STOCK,
+	domain.EngineMotion:   pb.RenderEngine_RENDER_ENGINE_MOTION,
 }
 
 var pbToEngine = func() map[pb.RenderEngine]domain.Engine {

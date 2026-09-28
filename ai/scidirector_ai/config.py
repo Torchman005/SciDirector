@@ -481,10 +481,11 @@ def reset_browser_probe_cache() -> None:
 ENGINE_REQUIREMENTS: dict[str, tuple[str, ...]] = {
     # 数学镜头：Manim 本身依赖 LaTeX 排版公式、依赖 ffmpeg 合成视频。
     "manim": ("manim", "latex", "ffmpeg"),
-    # 数据 / 代码镜头：headless 浏览器逐帧截图，再用 ffmpeg 编码。
+    # 数据 / 代码 / 动效镜头：headless 浏览器逐帧截图，再用 ffmpeg 编码。
     "d3": ("playwright", "ffmpeg"),
     "echarts": ("playwright", "ffmpeg"),
     "code_anim": ("playwright", "ffmpeg"),
+    "motion": ("playwright", "ffmpeg"),
     # 氛围镜头：纯 ffmpeg lavfi 生成，依赖最少，因此也是最可靠的兜底路径。
     "stock": ("ffmpeg",),
 }

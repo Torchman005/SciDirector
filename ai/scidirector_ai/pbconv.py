@@ -41,6 +41,7 @@ TAG_TO_PB: dict[SceneTag, int] = {
     SceneTag.DATA: common.SCENE_TAG_DATA,
     SceneTag.CODE: common.SCENE_TAG_CODE,
     SceneTag.AMBIENCE: common.SCENE_TAG_AMBIENCE,
+    SceneTag.MOTION: common.SCENE_TAG_MOTION,
 }
 PB_TO_TAG: dict[int, SceneTag] = {v: k for k, v in TAG_TO_PB.items()}
 
@@ -50,6 +51,7 @@ ENGINE_TO_PB: dict[str, int] = {
     "echarts": common.RENDER_ENGINE_ECHARTS,
     "code_anim": common.RENDER_ENGINE_CODE_ANIM,
     "stock": common.RENDER_ENGINE_STOCK,
+    "motion": common.RENDER_ENGINE_MOTION,
 }
 PB_TO_ENGINE: dict[int, str] = {v: k for k, v in ENGINE_TO_PB.items()}
 

@@ -62,6 +62,7 @@ func TestEngineForTag(t *testing.T) {
 		TagData:     EngineD3,
 		TagCode:     EngineCodeAnim,
 		TagAmbience: EngineStock,
+		TagMotion:   EngineMotion,
 	}
 	for tag, want := range cases {
 		got, err := EngineForTag(tag)

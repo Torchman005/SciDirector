@@ -34,6 +34,10 @@ PROMPT_BY_ENGINE: dict[str, str] = {
     RenderEngine.D3.value: "coder_html",
     RenderEngine.ECHARTS.value: "coder_html",
     RenderEngine.CODE_ANIM.value: "coder_code_anim",
+    # 通用二维动效：界面演示、图标/角色动画、示意图。
+    # 与 d3/echarts 共用渲染机制，但提示词不同 —— 那两套是"画数据图"的专用模板，
+    # 拿它们画聊天界面只会画出奇怪的东西。
+    RenderEngine.MOTION.value: "coder_motion",
 }
 
 #: 系统提示词里会被注入的占位符。
@@ -50,7 +54,7 @@ ENGINE_PROMPT_PLACEHOLDERS: tuple[str, ...] = (
 )
 
 #: 走 HTML 逐帧截图路径的引擎（静态检查项与 Manim 不同）。
-_HTML_ENGINES: frozenset[str] = frozenset({"d3", "echarts", "code_anim"})
+_HTML_ENGINES: frozenset[str] = frozenset({"d3", "echarts", "code_anim", "motion"})
 
 #: 静态检查失败后允许的自动修复次数。
 #: 设为 1 而不是更多：把违规回灌给模型通常一次就能改对；

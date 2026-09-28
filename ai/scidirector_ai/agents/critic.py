@@ -150,11 +150,18 @@ class CriticAgent(Agent):
                 reason="渲染产物没有可用的抽帧，无法进行视觉审查",
             )
 
+        # 容差下限：低于下限但仍在它的 90% 以内时，判"偏小但可读"而不是"不可读"。
+        #
+        # 为什么需要：差一两个像素就判负会触发**一整轮重渲染**（数十秒到数分钟），
+        # 而重渲之后量到的值往往仍在同一档 —— 白烧成本、画面却没变好。
+        # 真正该拦的是"明显读不清"，不是"比标准矮了一点"。
+        min_font_size = int(style_guide.min_font_size)
         system_prompt = render_prompt(
             "critic",
             threshold=f"{self.settings.critic_score_threshold:.2f}",
             background_color=style_guide.background_color,
-            min_font_size=style_guide.min_font_size,
+            min_font_size=min_font_size,
+            min_font_size_tolerance=max(int(min_font_size * 0.9), 1),
         )
         # 缩略图换算比例：必须告诉 VLM 它在缩略图上量到的字号要乘多少才是成片字号。
         #

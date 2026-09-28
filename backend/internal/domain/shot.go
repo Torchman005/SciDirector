@@ -22,10 +22,14 @@ const (
 	TagData     Tag = "DATA"     // [数据] -> D3 / ECharts
 	TagCode     Tag = "CODE"     // [代码] -> 代码高亮动画
 	TagAmbience Tag = "AMBIENCE" // [氛围] -> 素材检索 / 渐变占位
+	// [动效] -> HTML/CSS/JS 通用二维动效。
+	// 界面演示、图标/角色动画、示意图都归它；少了这一档，规划器只能把这类内容
+	// 打成 AMBIENCE，而成片会退化成几张几乎一样的标题卡（见 proto 里的说明）。
+	TagMotion Tag = "MOTION"
 )
 
 // AllTags 用于校验与提示词生成，避免在两处硬编码标签集合。
-var AllTags = []Tag{TagMath, TagData, TagCode, TagAmbience}
+var AllTags = []Tag{TagMath, TagData, TagCode, TagAmbience, TagMotion}
 
 // Valid 报告标签是否是受支持的枚举值。
 func (t Tag) Valid() bool {
@@ -47,6 +51,7 @@ const (
 	EngineECharts  Engine = "echarts"   // HTML + ECharts
 	EngineCodeAnim Engine = "code_anim" // 代码高亮打字动画
 	EngineStock    Engine = "stock"     // 素材检索 / 程序化渐变
+	EngineMotion   Engine = "motion"    // HTML/CSS/JS 通用二维动效（同浏览器通路）
 )
 
 // EngineForTag 实现「标签 -> 引擎」的确定性路由。
@@ -61,6 +66,8 @@ func EngineForTag(t Tag) (Engine, error) {
 		return EngineCodeAnim, nil
 	case TagAmbience:
 		return EngineStock, nil
+	case TagMotion:
+		return EngineMotion, nil
 	default:
 		return "", fmt.Errorf("domain: 未知场景标签 %q，无法路由到渲染引擎", t)
 	}

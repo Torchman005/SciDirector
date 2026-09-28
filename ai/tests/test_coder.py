@@ -287,15 +287,21 @@ def render_engine_prompt(name: str, **overrides: object) -> str:
     return load_engine_prompt(name, settings, **kwargs)
 
 
+#: 所有引擎提示词。**从 ``PROMPT_BY_ENGINE`` 派生**，而不是手写清单 ——
+#: 手写清单会在新增引擎时悄悄过期，而"新提示词没有被契约测试覆盖"
+#: 恰恰是这一组用例要防的事（d3 与 echarts 共用一份提示词，故先去重）。
+ENGINE_PROMPTS: list[str] = sorted(set(PROMPT_BY_ENGINE.values()))
+
+
 class TestEnginePromptContract:
-    @pytest.mark.parametrize("name", ["coder_manim", "coder_html", "coder_code_anim"])
+    @pytest.mark.parametrize("name", ENGINE_PROMPTS)
     def test_all_placeholders_resolve(self, name: str) -> None:
         """渲染后不得残留 ``{{...}}`` —— 残留会被模型原样抄进代码。"""
         rendered = render_engine_prompt(name)
         leftover = _UNRESOLVED.findall(rendered)
         assert not leftover, f"{name} 残留未解析的占位符：{leftover}"
 
-    @pytest.mark.parametrize("name", ["coder_manim", "coder_html", "coder_code_anim"])
+    @pytest.mark.parametrize("name", ENGINE_PROMPTS)
     def test_real_values_are_injected(self, name: str) -> None:
         rendered = render_engine_prompt(name, min_font_size=44, duration_sec=12.5,
                                         background_color="#ABCDEF")
@@ -309,7 +315,7 @@ class TestEnginePromptContract:
         防止有人加了新占位符却忘了在注入端登记 —— 那种情况会在渲染后
         留下 ``{{...}}``，而模型会把它当成真实语法抄进代码。
         """
-        for name in ("coder_manim", "coder_html", "coder_code_anim"):
+        for name in ENGINE_PROMPTS:
             used = set(_UNRESOLVED.findall(load_prompt(name)))
             unknown = used - set(ENGINE_PROMPT_PLACEHOLDERS)
             assert not unknown, f"{name} 使用了未登记的占位符：{sorted(unknown)}"

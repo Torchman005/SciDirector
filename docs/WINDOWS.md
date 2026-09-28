@@ -144,6 +144,7 @@ curl.exe http://127.0.0.1:8000/healthz
 | manim（MATH 数学镜头） | `pip install manim` + MiKTeX / TeX Live | 两个都要装 |
 | d3 / echarts（DATA 数据镜头） | `pip install playwright` + **浏览器二进制** | `playwright install chromium` |
 | code_anim（CODE 代码镜头） | 同上 | 同上 |
+| motion（MOTION 动效镜头：界面/图标/角色/示意图） | 与 d3 相同 | 同上 |
 
 > **d3 / echarts / code_anim 是靠 Playwright 驱动 Chromium 出图的** ——
 > 只装 Python 包、不装浏览器二进制等于没装（v0.4.6 记录过一次健康检查谎报可用）。
