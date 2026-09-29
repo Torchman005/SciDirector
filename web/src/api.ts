@@ -13,6 +13,7 @@ import type {
   APIError,
   ApproveResponse,
   EventsResponse,
+  EstimateDurationResponse,
   GenerateRequest,
   GenerateResponse,
   JobResponse,
@@ -116,6 +117,18 @@ export const api = {
   /** 成片的播放地址（浏览器直接播，支持 Range）。 */
   artifactUrl: (jobId: string) =>
     `/api/v1/jobs/${encodeURIComponent(jobId)}/artifact`,
+
+  /**
+   * 按脚本估算成片时长。
+   *
+   * 估算规则只由服务端实现一份：前端各写一套的话，"界面显示的预计时长"与
+   * "实际采用的目标时长"迟早会对不上，而那种不一致看起来完全像 bug。
+   */
+  estimateDuration: (rawScript: string) =>
+    request<EstimateDurationResponse>('/api/v1/estimate-duration', {
+      method: 'POST',
+      ...json({ raw_script: rawScript }),
+    }),
 
   getJob: (jobId: string) =>
     request<JobResponse>(`/api/v1/jobs/${encodeURIComponent(jobId)}`),

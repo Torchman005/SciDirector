@@ -160,7 +160,20 @@ export interface Effects {
   fade_in_sec?: number
   fade_out_sec?: number
   burn_subtitles?: boolean
+  /** 只在 burn_subtitles 为 true 时有效，否则服务端直接报 400。 */
+  subtitle_style?: SubtitleStyle
   loudness_lufs?: number
+}
+
+export interface SubtitleStyle {
+  /** 字号（成片像素）。0 = 自动（按画面高度推算）。 */
+  font_size?: number
+  /** 字色 #RRGGBB。注意 ASS 内部用的是 BGR 字节序，转换在服务端做。 */
+  primary_color?: string
+  /** 描边宽度。0 = 自动。 */
+  outline_width?: number
+  /** 距画面底边的像素。0 = 自动。 */
+  margin_v?: number
 }
 
 export interface BgmEffects {
@@ -184,6 +197,15 @@ export interface GenerateResponse {
   job_id: string
   status: JobStatus
   task_id?: string
+  /** 最终采用的目标时长（留空时是估算值）。 */
+  target_duration_sec?: number
+  /** 时长的来源：auto = 按脚本估算，explicit = 用户指定。 */
+  duration_source?: 'auto' | 'explicit'
+}
+
+export interface EstimateDurationResponse {
+  duration_sec: number
+  basis: string
 }
 
 /**

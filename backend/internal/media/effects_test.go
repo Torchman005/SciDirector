@@ -544,3 +544,118 @@ func TestFitFadesNeverOverlaps(t *testing.T) {
 		t.Errorf("按比例缩放不该把某一段压成 0：in=%.2f out=%.2f", in, out)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// 字幕样式
+// ---------------------------------------------------------------------------
+
+func TestPlanSubtitleStyleUsesAssBGRColourOrder(t *testing.T) {
+	// ASS 的颜色是 &HAABBGGRR —— 与 #RRGGBB 相比红蓝是**反的**。
+	// 照直觉写成 &H00RRGGBB 不会报错，只会让红色显示成蓝色，
+	// 而这种"配色不对"极难从成片反推回配置。所以这里逐个钉住。
+	cases := map[string]string{
+		"#FF0000": "&H000000FF", // 纯红：R=FF 必须落在最后
+		"#0000FF": "&H00FF0000", // 纯蓝：B=FF 必须落在最前
+		"#00FF00": "&H0000FF00", // 纯绿在中间，两种写法相同 —— 只测它测不出错误
+		"#FFFFFF": "&H00FFFFFF",
+		"#0B1020": "&H0020100B",
+	}
+	for in, want := range cases {
+		got, err := assColour(in)
+		if err != nil {
+			t.Fatalf("assColour(%q) 报错: %v", in, err)
+		}
+		if got != want {
+			t.Errorf("assColour(%q) = %s，期望 %s", in, got, want)
+		}
+	}
+}
+
+func TestPlanSubtitleStyleRejectsBadColour(t *testing.T) {
+	for _, bad := range []string{"red", "#FFF", "#GGGGGG", "ABCDEF", "#FF00000"} {
+		if _, err := assColour(bad); err == nil {
+			t.Errorf("颜色 %q 应当被拒绝", bad)
+		}
+	}
+}
+
+func TestPlanSubtitleStyleAutoScalesWithFrameHeight(t *testing.T) {
+	// 自动值必须随画面高度走：同一套配置在 720p 与 1080p 上观感才一致。
+	small, err := PlanSubtitleStyle(SubtitleStyle{}, 720)
+	if err != nil {
+		t.Fatalf("PlanSubtitleStyle 报错: %v", err)
+	}
+	large, err := PlanSubtitleStyle(SubtitleStyle{}, 1080)
+	if err != nil {
+		t.Fatalf("PlanSubtitleStyle 报错: %v", err)
+	}
+	if small == large {
+		t.Fatalf("720p 与 1080p 的自动字幕样式不该相同：%s", small)
+	}
+	if !strings.Contains(large, "FontSize=45") {
+		t.Errorf("1080p 的自动字号应当是 45px，实际样式串：%s", large)
+	}
+	// 没有画面高度时不能崩，也不能产出空样式让字幕变成 libass 的默认大小。
+	fallback, err := PlanSubtitleStyle(SubtitleStyle{}, 0)
+	if err != nil {
+		t.Fatalf("frameHeight=0 时不该报错: %v", err)
+	}
+	if !strings.Contains(fallback, "FontSize=") {
+		t.Errorf("缺少画面高度时也应当给出可用样式，实际：%s", fallback)
+	}
+}
+
+func TestPlanSubtitleStyleAlwaysCarriesAnOutline(t *testing.T) {
+	// 描边不是装饰：字幕压在浅色画面上时，没有描边就是一片糊。
+	// 因此即便用户把 outline_width 留成 0（"自动"），也必须产出非零描边。
+	got, err := PlanSubtitleStyle(SubtitleStyle{}, 1080)
+	if err != nil {
+		t.Fatalf("PlanSubtitleStyle 报错: %v", err)
+	}
+	if strings.Contains(got, "Outline=0.0") || !strings.Contains(got, "Outline=") {
+		t.Errorf("自动描边不该为 0，实际：%s", got)
+	}
+}
+
+// TestPostProcessSubtitleFontSizeChangesTheFrame 用像素证明字号真的生效。
+//
+// 黑底白字下，字越大 -> 白像素越多 -> 整帧平均亮度越高。
+// 这条同时验证了 force_style 能被 libass 正确解析 ——
+// force_style 的值里含**逗号**，而逗号在滤镜图里是滤镜分隔符，
+// 少一层引号整条链就会被劈开，ffmpeg 只报一句含糊的 Invalid argument。
+func TestPostProcessSubtitleFontSizeChangesTheFrame(t *testing.T) {
+	requireFFmpeg(t)
+	if testing.Short() {
+		t.Skip("短模式跳过真实媒体集成测试")
+	}
+	r := newTestRunner(t, 1)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "in.mp4")
+	srt := filepath.Join(dir, "final.srt")
+	makeColorClip(t, r, src, "black", 2)
+
+	srtBody := "1\n00:00:00,200 --> 00:00:01,800\n字号测试 ABC\n"
+	if err := os.WriteFile(srt, []byte(srtBody), 0o644); err != nil {
+		t.Fatalf("写 SRT 失败: %v", err)
+	}
+
+	render := func(fontSize int) float64 {
+		out := filepath.Join(dir, fmt.Sprintf("font%d.mp4", fontSize))
+		err := r.PostProcess(context.Background(), src, out, PostOptions{
+			BurnSubtitlePath: srt,
+			FrameHeight:      240, // 测试片段是 320x240
+			SubtitleStyle:    SubtitleStyle{FontSize: fontSize},
+		}, 2)
+		if err != nil {
+			t.Fatalf("烧录字幕（字号 %d）失败: %v", fontSize, err)
+		}
+		return frameStatsAt(t, out, 1.0)["YAVG"]
+	}
+
+	small := render(14)
+	large := render(64)
+	if large <= small {
+		t.Errorf("字号变大后画面亮度没有变化：14px -> %.2f，64px -> %.2f（force_style 没生效？）",
+			small, large)
+	}
+}

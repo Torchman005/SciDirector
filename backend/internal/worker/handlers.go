@@ -384,8 +384,12 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 	// 而静默降级会让排查方向完全跑偏（去找播放器、去找音响）。
 	effects := job.Effects
 	outDuration := plan.OutDuration
+	// 画面高度用来推算字幕的自动字号与底边距 —— 同一套配置在 720p 与 1080p
+	// 上观感才会一致，而不必让用户按分辨率分别配一遍。
+	frameHeight := 0
 	if probe, perr := p.media.Probe(ctx, mergedPath); perr == nil {
 		outDuration = probe.DurationSec
+		frameHeight = probe.Height
 	} else {
 		lg.Warn("探测成片时长失败，配乐与淡出按方案预测时长处理", "error", perr.Error())
 	}
@@ -420,7 +424,16 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 	postOpts := media.PostOptions{
 		Grade:        media.GradeSpec{Name: effects.Grade, Strength: effects.GradeStrength},
 		Fade:         media.FadeSpec{InSec: effects.FadeInSec, OutSec: effects.FadeOutSec},
+		FrameHeight:  frameHeight,
 		LoudnessLUFS: effects.LoudnessLUFS,
+	}
+	if s := effects.SubtitleStyle; s != nil {
+		postOpts.SubtitleStyle = media.SubtitleStyle{
+			FontSize:     s.FontSize,
+			PrimaryColor: s.PrimaryColor,
+			OutlineWidth: s.OutlineWidth,
+			MarginV:      s.MarginV,
+		}
 	}
 	// 只有真的要烧录字幕时才把字幕交给后期：没有字幕文件时 BurnSubtitles
 	// 无从落地，硬传会让 PostProcess 直接报错。

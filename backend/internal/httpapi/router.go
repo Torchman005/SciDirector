@@ -61,6 +61,10 @@ func NewRouter(s *Server, deps Deps) *gin.Engine {
 	{
 		v1.POST("/generate", s.HandleGenerate)
 
+		// 时长估算独立成端点：用户把时长留空时界面要能提前显示"预计约 XX 秒"，
+		// 而不是提交完才发现成片长度和自己想的不一样。
+		v1.POST("/estimate-duration", s.HandleEstimateDuration)
+
 		// 队列可观测：让「任务卡住了吗」有一个不需要翻 Redis 的答案。
 		// 放在 /api/v1 下而不是 /healthz：它是运维视角的诊断信息，
 		// 不参与编排系统的存活/就绪判定 —— 队列积压不该让实例被摘除。

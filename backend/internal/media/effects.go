@@ -17,9 +17,11 @@ package media
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -58,8 +60,123 @@ type PostOptions struct {
 	// BurnSubtitlePath 非空时把字幕烧进画面（而不是只挂软字幕）。
 	// 代价是必须重编码，好处是任何播放器都一定能看到字幕。
 	BurnSubtitlePath string `json:"-"`
+	// SubtitleStyle 只在烧录字幕时生效：软字幕的样式由播放器决定，
+	// 容器里存不下，因此"给软字幕设样式"是一个不会报错的空操作。
+	SubtitleStyle SubtitleStyle `json:"subtitle_style,omitempty"`
+	// FrameHeight 是成片高度（像素），用于推算字幕的自动字号与底边距。
+	FrameHeight int `json:"-"`
 	// LoudnessLUFS 是混音后的整体响度目标。0 表示用缺省值。
 	LoudnessLUFS float64 `json:"loudness_lufs,omitempty"`
+}
+
+// SubtitleStyle 是烧录字幕的样式。
+//
+// 各字段为 0/空表示"自动"：自动值按画面高度推算，这样同一套配置
+// 在 720p 与 1080p 上观感一致，而不必让用户分别配一遍。
+type SubtitleStyle struct {
+	// FontSize 是字号（成片像素）。0 = 自动（画面高度 / 24）。
+	FontSize int `json:"font_size,omitempty"`
+	// PrimaryColor 是字色（#RRGGBB）。空 = 白色。
+	PrimaryColor string `json:"primary_color,omitempty"`
+	// OutlineWidth 是描边宽度。0 = 自动（按字号推算）。
+	//
+	// 描边不是装饰：字幕压在浅色画面上时，没有描边就是一片糊。
+	OutlineWidth float64 `json:"outline_width,omitempty"`
+	// MarginV 是字幕距画面底边的像素。0 = 自动（画面高度 / 18）。
+	MarginV int `json:"margin_v,omitempty"`
+}
+
+// 字幕自动样式的推算基准。
+const (
+	// subtitleFontDivisor：1080p 下得到 45px，是科普视频的常见字号。
+	subtitleFontDivisor = 24
+	// subtitleMarginDivisor：1080p 下得到 60px 底边距。
+	subtitleMarginDivisor = 18
+	minSubtitleFontSize   = 14
+	maxSubtitleFontSize   = 160
+)
+
+// PlanSubtitleStyle 把字幕样式翻成 libass 的 `force_style` 串。
+//
+// **颜色字节序是个经典的坑**：ASS 用的是 `&HAABBGGRR` —— 与 `#RRGGBB`
+// 相比红蓝是**反的**。照直觉写成 `&H00RRGGBB` 不会报错，只会让红色显示成蓝色，
+// 而这种"配色不对"极难从成片反推到配置上。有一条单测专门钉住这个转换。
+func PlanSubtitleStyle(s SubtitleStyle, frameHeight int) (string, error) {
+	if frameHeight <= 0 {
+		// 没有画面高度就推不出自动值；退回 1080p 的常见值，
+		// 而不是产出空样式让字幕变成 libass 的默认大小（通常过大）。
+		frameHeight = 1080
+	}
+
+	fontSize := s.FontSize
+	if fontSize <= 0 {
+		fontSize = frameHeight / subtitleFontDivisor
+	}
+	fontSize = clampInt(fontSize, minSubtitleFontSize, maxSubtitleFontSize)
+
+	outline := s.OutlineWidth
+	if outline <= 0 {
+		// 描边与字号成正比：字越大，细描边就越显得没用。
+		outline = math.Max(1, math.Round(float64(fontSize)/18))
+	}
+	if outline > 8 {
+		return "", fmt.Errorf("media: 字幕描边过宽（%.1f，上限 8）", outline)
+	}
+
+	margin := s.MarginV
+	if margin <= 0 {
+		margin = frameHeight / subtitleMarginDivisor
+	}
+	if margin < 0 || margin > frameHeight {
+		return "", fmt.Errorf("media: 字幕底边距越界（%d，画面高 %d）", margin, frameHeight)
+	}
+
+	colour := s.PrimaryColor
+	if strings.TrimSpace(colour) == "" {
+		colour = "#FFFFFF"
+	}
+	ass, err := assColour(colour)
+	if err != nil {
+		return "", err
+	}
+
+	return fmt.Sprintf("FontSize=%d,PrimaryColour=%s,Outline=%.1f,MarginV=%d",
+		fontSize, ass, outline, margin), nil
+}
+
+// assColour 把 `#RRGGBB` 转成 ASS 的 `&HAABBGGRR`。
+//
+// 刻意**不接受**省略 `#` 的写法（如 `ABCDEF`）：domain 层的校验要求必须带 `#`，
+// 两处一旦松紧不一，就会出现"接口拒绝了、渲染器其实能接受"这种漂移，
+// 而漂移只会让后来的人不知道该信哪一处。
+func assColour(hex string) (string, error) {
+	h := strings.TrimSpace(hex)
+	if !strings.HasPrefix(h, "#") {
+		return "", fmt.Errorf("media: 字幕颜色必须以 # 开头（形如 #RRGGBB），实际 %q", hex)
+	}
+	h = h[1:]
+	if len(h) != 6 {
+		return "", fmt.Errorf("media: 字幕颜色必须是 #RRGGBB 形式，实际 %q", hex)
+	}
+	r, err1 := strconv.ParseUint(h[0:2], 16, 8)
+	g, err2 := strconv.ParseUint(h[2:4], 16, 8)
+	b, err3 := strconv.ParseUint(h[4:6], 16, 8)
+	if err1 != nil || err2 != nil || err3 != nil {
+		return "", fmt.Errorf("media: 字幕颜色含非法十六进制字符：%q", hex)
+	}
+	// 注意这里的顺序是 **B、G、R**：ASS 的 &H 颜色是 BGR 排列。
+	return fmt.Sprintf("&H00%02X%02X%02X", b, g, r), nil
+}
+
+// clampInt 把 v 夹到 [lo, hi]。
+func clampInt(v, lo, hi int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
 }
 
 // defaultLoudnessLUFS 是成片的目标响度。
@@ -202,7 +319,14 @@ func PlanVideoChain(opts PostOptions, durationSec float64, subtitleFilterName st
 		parts = append(parts, grade)
 	}
 	if subtitleFilterName != "" {
-		parts = append(parts, "subtitles="+subtitleFilterName)
+		style, serr := PlanSubtitleStyle(opts.SubtitleStyle, opts.FrameHeight)
+		if serr != nil {
+			return "", serr
+		}
+		// force_style 的值里含逗号，而逗号在滤镜图里是**滤镜分隔符** ——
+		// 不用单引号把值包起来，整条滤镜链会被从中间劈成两半，
+		// ffmpeg 只会报一句含糊的 "Invalid argument"。
+		parts = append(parts, fmt.Sprintf("subtitles=%s:force_style='%s'", subtitleFilterName, style))
 	}
 	if opts.Fade.InSec > 0 {
 		parts = append(parts, fmt.Sprintf("fade=t=in:st=0:d=%.3f", opts.Fade.InSec))

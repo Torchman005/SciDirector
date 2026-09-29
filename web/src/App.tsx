@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import { api, errorText } from './api'
 import { EventTimeline } from './components/EventTimeline'
@@ -30,11 +30,17 @@ const CONNECTION_TEXT: Record<ConnectionState, { label: string; color: string }>
 
 export function App() {
   const [script, setScript] = useState('')
-  const [duration, setDuration] = useState(60)
+  // 时长留空 = 按脚本自动估算。用 '' 而不是 0 是为了让输入框真的空着 ——
+  // 显示一个 0 或一个假缺省值，用户会以为那就是实际会用的时长。
+  const [duration, setDuration] = useState<number | ''>('')
+  const [estimate, setEstimate] = useState<number | null>(null)
+  const [estimateBasis, setEstimateBasis] = useState('')
   const [jobId, setJobId] = useState<string | null>(null)
   const [submitError, setSubmitError] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [refreshTick, setRefreshTick] = useState(0)
+  // 提交后服务端实际采用的时长与来源（留空时才知道它选了多久）。
+  const [resolved, setResolved] = useState<{ sec: number; source: string } | null>(null)
 
   // --- 风格（影响生成）与后期效果（影响合成）---
   //
@@ -46,6 +52,11 @@ export function App() {
   const [fadeIn, setFadeIn] = useState(0)
   const [fadeOut, setFadeOut] = useState(0)
   const [burnSubtitles, setBurnSubtitles] = useState(false)
+  // 字幕样式只在烧录时有效（软字幕的样式由播放器决定，容器里存不下）。
+  // 0 / 空 = 自动，由服务端按画面高度推算。
+  const [subtitleFontSize, setSubtitleFontSize] = useState(0)
+  const [subtitleColor, setSubtitleColor] = useState('#ffffff')
+  const [subtitleMarginV, setSubtitleMarginV] = useState(0)
 
   // BGM：上传后记住 asset_id。**只传 id，不传路径** ——
   // 路径由服务端从素材库解析，请求方拿不到"读服务端任意文件"的能力。
@@ -92,6 +103,37 @@ export function App() {
   const conn = CONNECTION_TEXT[connection]
   const pending = stat.awaiting_human
 
+  // 时长留空时，跟着脚本实时估算 —— 否则用户提交前完全不知道成片会有多长，
+  // 而这正是"自动判断时长"最容易被质疑的地方。
+  //
+  // 加了 600ms 防抖：估算本身是纯计算，但每敲一个字就发一次请求既没必要，
+  // 也会让界面在打字时闪烁。
+  useEffect(() => {
+    const text = script.trim()
+    if (text.length < 10) {
+      setEstimate(null)
+      return
+    }
+    let cancelled = false
+    const timer = setTimeout(() => {
+      api
+        .estimateDuration(text)
+        .then((r) => {
+          if (cancelled) return
+          setEstimate(r.duration_sec)
+          setEstimateBasis(r.basis)
+        })
+        .catch(() => {
+          // 估算失败不该打断提交：留空时服务端仍会自己算一遍。
+          if (!cancelled) setEstimate(null)
+        })
+    }, 600)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [script])
+
   async function uploadBgm(file: File) {
     setBgmBusy(true)
     setBgmError('')
@@ -118,14 +160,28 @@ export function App() {
       if (fadeIn > 0) effects.fade_in_sec = fadeIn
       if (fadeOut > 0) effects.fade_out_sec = fadeOut
       if (burnSubtitles) effects.burn_subtitles = true
+      // 只在烧录时带上样式：服务端会对"设了样式却没开烧录"直接报 400，
+      // 与其让用户提交后才看到错误，不如在这里就不发。
+      if (burnSubtitles) {
+        effects.subtitle_style = {
+          font_size: subtitleFontSize,
+          primary_color: subtitleColor,
+          margin_v: subtitleMarginV,
+        }
+      }
       if (bgm) effects.bgm = { asset_id: bgm.assetId, volume_db: bgmVolume, loop: true }
 
       const resp = await api.generate({
         raw_script: script.trim(),
-        target_duration_sec: duration,
+        // 留空传 0：服务端据此走"按脚本自动估算"。
+        target_duration_sec: duration === '' ? 0 : duration,
         locale: 'zh-CN',
         style_guide: { preset },
         effects,
+      })
+      setResolved({
+        sec: resp.target_duration_sec ?? 0,
+        source: resp.duration_source ?? 'explicit',
       })
       setJobId(resp.job_id)
     } catch (err) {
@@ -134,6 +190,15 @@ export function App() {
       setSubmitting(false)
     }
   }
+
+  // 时长提示必须**如实反映本次会用哪个值**：留空时说清"按脚本自动估算"，
+  // 填了就说清"不再自动估算"。否则用户无法判断自己填的数字有没有被采纳。
+  const durationHint =
+    duration !== ''
+      ? `将使用你指定的 ${duration} 秒（不再自动估算）`
+      : estimate !== null
+        ? `时长留空 → 按脚本自动估算：约 ${estimate} 秒`
+        : '时长留空 → 按脚本自动估算'
 
   return (
     <main className="app">
@@ -167,15 +232,24 @@ export function App() {
             onChange={(e) => setScript(e.target.value)}
             placeholder="把要讲解的科学内容贴进来，例如：用三分钟解释傅里叶变换的直觉……"
           />
+          <p className="muted" title={estimateBasis || undefined}>
+            {durationHint}
+          </p>
           <div className="row">
             <label>
-              目标时长（秒）
+              目标时长（秒，可留空）
               <input
                 type="number"
-                min={10}
-                max={600}
+                min={5}
+                max={1800}
+                placeholder="留空＝按脚本自动"
                 value={duration}
-                onChange={(e) => setDuration(Number(e.target.value) || 60)}
+                onChange={(e) => {
+                  const v = e.target.value.trim()
+                  // 清空输入框 = 交回"自动"，而不是回落到某个数字 ——
+                  // 回落会让用户没法表达"我不关心，你定"。
+                  setDuration(v === '' ? '' : Number(v))
+                }}
               />
             </label>
             <button
@@ -254,6 +328,38 @@ export function App() {
               </label>
             </div>
 
+            {/* 字幕样式：不开烧录就没有意义，因此整体置灰而不是藏起来 ——
+                藏起来用户会以为"没有这个功能"。 */}
+            <div className="row">
+              <label>
+                字幕字号（0＝自动）
+                <input
+                  type="number" min={0} max={200} value={subtitleFontSize}
+                  disabled={!burnSubtitles}
+                  onChange={(e) => setSubtitleFontSize(Number(e.target.value) || 0)}
+                />
+              </label>
+              <label>
+                字幕颜色
+                <input
+                  type="color" value={subtitleColor}
+                  disabled={!burnSubtitles}
+                  onChange={(e) => setSubtitleColor(e.target.value)}
+                />
+              </label>
+              <label>
+                距底边（0＝自动）
+                <input
+                  type="number" min={0} max={400} value={subtitleMarginV}
+                  disabled={!burnSubtitles}
+                  onChange={(e) => setSubtitleMarginV(Number(e.target.value) || 0)}
+                />
+              </label>
+            </div>
+            {!burnSubtitles && (
+              <p className="muted">字幕样式只在「字幕烧进画面」时生效（软字幕的样式由播放器决定）。</p>
+            )}
+
             <div className="row">
               <label>
                 背景音乐
@@ -309,6 +415,13 @@ export function App() {
             </div>
 
             {!state.loaded && <p className="muted">正在获取任务快照…</p>}
+
+            {resolved && resolved.sec > 0 && (
+              <p className="muted">
+                目标时长 {formatTime(resolved.sec)}
+                {resolved.source === 'auto' ? '（按脚本自动估算）' : '（你指定的）'}
+              </p>
+            )}
 
             <div className="progress">
               <div className="progress-bar" style={{ width: `${Math.round(state.progress * 100)}%` }} />

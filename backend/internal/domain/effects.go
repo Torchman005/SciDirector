@@ -3,6 +3,7 @@ package domain
 import (
 	"fmt"
 	"math"
+	"regexp"
 	"strings"
 )
 
@@ -30,8 +31,24 @@ type Effects struct {
 	// BurnSubtitles 为 true 时把字幕烧进画面（必须重编码）。
 	// 缺省 false：软字幕不损画质，且播放器可以关掉。
 	BurnSubtitles bool `json:"burn_subtitles,omitempty"`
+	// SubtitleStyle 是烧录字幕的样式。**只在 BurnSubtitles 为 true 时有效** ——
+	// 这一点由 Validate 强制：设了样式却没开烧录会直接报错，
+	// 而不是安静地什么都不做（那是最难查的一类"配置没生效"）。
+	SubtitleStyle *SubtitleStyle `json:"subtitle_style,omitempty"`
 	// LoudnessLUFS 是混音后的整体响度目标，0 表示用媒体层缺省值。
 	LoudnessLUFS float64 `json:"loudness_lufs,omitempty"`
+}
+
+// SubtitleStyle 是烧录字幕的样式。字段为 0/空表示"自动"，按画面高度推算。
+type SubtitleStyle struct {
+	// FontSize 是字号（成片像素）。0 = 自动。
+	FontSize int `json:"font_size,omitempty"`
+	// PrimaryColor 是字色（#RRGGBB）。空 = 白色。
+	PrimaryColor string `json:"primary_color,omitempty"`
+	// OutlineWidth 是描边宽度。0 = 自动。
+	OutlineWidth float64 `json:"outline_width,omitempty"`
+	// MarginV 是字幕距画面底边的像素。0 = 自动。
+	MarginV int `json:"margin_v,omitempty"`
 }
 
 // BGMEffects 是背景音乐配置。
@@ -85,7 +102,15 @@ const (
 	MaxGradeStrength    = 1.0
 	MaxBGMFadeSec       = 10.0
 	MaxBGMAssetIDLength = 128
+	// 字幕样式的上限。与 media 层的实现上限对齐 ——
+	// 两处不一致时，表现是"接口接受了、渲染时报错"。
+	MaxSubtitleFontSize = 200
+	MaxSubtitleOutline  = 8.0
+	MaxSubtitleMarginV  = 2000
 )
+
+// hexColourRe 校验 #RRGGBB。
+var hexColourRe = regexp.MustCompile(`^#[0-9A-Fa-f]{6}$`)
 
 // Validate 校验后期效果配置的**取值范围**。
 //
@@ -119,6 +144,39 @@ func (e Effects) Validate() error {
 				return fmt.Errorf("domain: %s 应在 [0, %.1f] 之间，实际 %.3f", name, MaxBGMFadeSec, v)
 			}
 		}
+	}
+	return e.validateSubtitleStyle()
+}
+
+// validateSubtitleStyle 校验字幕样式。
+func (e Effects) validateSubtitleStyle() error {
+	s := e.SubtitleStyle
+	if s == nil {
+		return nil
+	}
+	// 设了样式却没开烧录 -> **报错而不是忽略**。
+	//
+	// 这一条是刻意加的：软字幕的样式由播放器决定，容器里存不下，
+	// 所以"给未烧录的字幕配样式"在技术上必然无效。若静默忽略，
+	// 用户会看到"我配了字号却完全没变化"，而没有任何线索指向真正的原因。
+	if !e.BurnSubtitles {
+		return fmt.Errorf("domain: 设置了 subtitle_style 但未开启 burn_subtitles；" +
+			"软字幕的样式由播放器决定，请同时设置 burn_subtitles=true")
+	}
+	if s.FontSize < 0 || s.FontSize > MaxSubtitleFontSize {
+		return fmt.Errorf("domain: subtitle_style.font_size 应在 [0, %d] 之间（0 = 自动），实际 %d",
+			MaxSubtitleFontSize, s.FontSize)
+	}
+	if s.OutlineWidth < 0 || s.OutlineWidth > MaxSubtitleOutline {
+		return fmt.Errorf("domain: subtitle_style.outline_width 应在 [0, %.1f] 之间（0 = 自动），实际 %.1f",
+			MaxSubtitleOutline, s.OutlineWidth)
+	}
+	if s.MarginV < 0 || s.MarginV > MaxSubtitleMarginV {
+		return fmt.Errorf("domain: subtitle_style.margin_v 应在 [0, %d] 之间（0 = 自动），实际 %d",
+			MaxSubtitleMarginV, s.MarginV)
+	}
+	if c := strings.TrimSpace(s.PrimaryColor); c != "" && !hexColourRe.MatchString(c) {
+		return fmt.Errorf("domain: subtitle_style.primary_color 必须是 #RRGGBB 形式，实际 %q", c)
 	}
 	return nil
 }

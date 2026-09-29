@@ -172,10 +172,21 @@ func (s *Server) HandleGenerate(c *gin.Context) {
 	}
 
 	jobID := NewJobID()
-	// 目标时长的默认值：科普短视频的常见长度。
+	// 目标时长：**没填就按脚本估算**，填了就用用户的值。
+	//
+	// 原先这里是一个写死的缺省值（90 秒），与脚本长短无关 ——
+	// 一段 60 字的短文案会被撑成 90 秒（塞满水词），一段 800 字的长文又会被
+	// 压到 90 秒（每句都赶）。脚本本身就是最好的依据，不必让用户去猜。
 	target := req.TargetDurationSec
+	durationSource := "explicit"
 	if target <= 0 {
-		target = 90
+		target = domain.EstimateDurationSec(req.RawScript)
+		// 与 DTO 的校验上限保持一致：估算器自己也夹了区间，这里是第二道保险。
+		if target > maxTargetDurationSec {
+			target = maxTargetDurationSec
+		}
+		durationSource = "auto"
+		lg.Info("未指定时长，按脚本自动估算", "target_duration_sec", target)
 	}
 	locale := req.Locale
 	if locale == "" {
@@ -253,6 +264,28 @@ func (s *Server) HandleGenerate(c *gin.Context) {
 		TaskID:    taskID,
 		CreatedAt: now,
 		WSURL:     "/ws/jobs/" + jobID,
+		// 把最终采用的时长与来源回传：留空提交时必须有个地方告诉用户
+		// "这次按 45 秒做的"，否则成片长度会显得随机。
+		TargetDurationSec: target,
+		DurationSource:    durationSource,
+	})
+}
+
+// HandleEstimateDuration 按脚本估算一个合理的成片时长。
+//
+// 估算规则（语速、说话单位、夹取、取整）只在这一处实现：
+// 前端各写一套的话，"界面显示的预计时长"与"实际采用的目标时长"迟早会对不上，
+// 而那种不一致看起来完全像 bug —— 用户没法判断该信哪个。
+func (s *Server) HandleEstimateDuration(c *gin.Context) {
+	var req EstimateDurationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		abortWith(c, http.StatusBadRequest, ErrCodeBadRequest, "请求参数非法", err)
+		return
+	}
+	sec := domain.EstimateDurationSec(req.RawScript)
+	respondOK(c, EstimateDurationResponse{
+		DurationSec: sec,
+		Basis:       "按字数与语速估算（中文约 4.2 字/秒，英文约 2.6 词/秒），取整到 5 秒",
 	})
 }
 

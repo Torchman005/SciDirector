@@ -93,10 +93,15 @@ AI 不可用只标为 `degraded`（已提交的任务仍可查询）。
 | 字段 | 类型 | 必填 | 约束 | 说明 |
 | --- | --- | --- | --- | --- |
 | `raw_script` | string | ✅ | 10 ~ 20000 字符 | 科普脚本原文 |
-| `target_duration_sec` | number | | 5 ~ 1800，默认 90 | 目标总时长 |
+| `target_duration_sec` | number | | 5 ~ 1800，**留空 = 按脚本自动估算** | 目标总时长 |
 | `locale` | string | | `zh-CN` / `en-US` / `ja-JP` | 默认 `zh-CN` |
 | `style_guide` | object | | | **影响生成**：风格预设、配色、字体、字号下限、术语表 |
-| `effects` | object | | | **影响后期**：背景音乐、调色、淡入淡出、响度 |
+| `effects` | object | | | **影响后期**：背景音乐、调色、淡入淡出、字幕样式、响度 |
+
+> **时长语义**：`target_duration_sec` 留空（或传 0）时，服务端按脚本内容估算 ——
+> 中文约 4.2 字/秒、英文约 2.6 词/秒，夹取到 [15, 600] 秒并取整到 5 秒。
+> 响应里的 `duration_source` 会如实告诉你这次用的是 `auto` 还是 `explicit`。
+> 想提前知道估算值，用下面的 `/estimate-duration`。
 
 `style_guide` 字段：
 
@@ -118,7 +123,35 @@ AI 不可用只标为 `degraded`（已提交的任务仍可查询）。
 | `grade_strength` | 调色强度，“0 与 1 都表示完整效果”（关掉请用 `none`） |
 | `fade_in_sec` / `fade_out_sec` | 片头片尾淡入淡出 |
 | `burn_subtitles` | 把字幕烧进画面（必须重编码；缺省 false = 软字幕） |
+| `subtitle_style.font_size` | 字幕字号（成片像素）。0 = 自动（画面高度 / 24，1080p 下 45px） |
+| `subtitle_style.primary_color` | 字色 `#RRGGBB`。空 = 白色。内部会转成 ASS 的 **BGR** 字节序 |
+| `subtitle_style.outline_width` | 描边宽度。0 = 自动（按字号推算，保证不为 0） |
+| `subtitle_style.margin_v` | 字幕距底边像素。0 = 自动（画面高度 / 18） |
 | `loudness_lufs` | 混音后整体响度目标，缺省 -16（0 表示用缺省值） |
+
+⚠️ `subtitle_style` **只在 `burn_subtitles: true` 时有效**。软字幕的样式由播放器决定、
+容器里存不下，所以"给未烧录的字幕配样式"在技术上必然无效 —— 服务端因此**直接报 400**，
+而不是安静地什么都不做。
+
+### 2.3 估算时长
+
+#### `POST /api/v1/estimate-duration`
+
+给脚本、拿回一个建议时长。`target_duration_sec` 留空时用的就是同一套规则。
+
+```bash
+curl -X POST http://localhost:8080/api/v1/estimate-duration \
+  -H 'Content-Type: application/json' -d '{"raw_script":"勾股定理说的是……"}'
+```
+
+```json
+{"ok":true,"data":{"duration_sec":15,
+ "basis":"按字数与语速估算（中文约 4.2 字/秒，英文约 2.6 词/秒），取整到 5 秒"}}
+```
+
+> 估算规则只在服务端实现一份：前端各写一套的话，"界面显示的预计时长"与
+> "实际采用的目标时长"迟早会对不上，而那种不一致看起来完全像 bug。
+
 
 > **不请求任何 `effects` 时不会多跑一次编码** —— 调色与烧录字幕都要重编码，
 > 因此整条后期链路按需触发，默认行为与之前逐字节一致。

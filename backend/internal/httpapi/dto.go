@@ -12,7 +12,11 @@ import (
 //   - 下限防止空/占位脚本浪费一次完整的渲染流水线；
 //   - 上限防止有人贴一整本书进来，把 LLM 上下文与费用打爆。
 type GenerateRequest struct {
-	RawScript         string         `json:"raw_script" binding:"required,min=10,max=20000"`
+	RawScript string `json:"raw_script" binding:"required,min=10,max=20000"`
+	// TargetDurationSec 留空（或 0）表示**按脚本自动估算**。
+	//
+	// `omitempty` 是这条语义的关键：有它，0 才不会撞上 min=5 的校验，
+	// 「没填」与「填了个非法小值」因此能被区分开。
 	TargetDurationSec float64        `json:"target_duration_sec" binding:"omitempty,min=5,max=1800"`
 	Locale            string         `json:"locale" binding:"omitempty,oneof=zh-CN en-US ja-JP"`
 	StyleGuide        map[string]any `json:"style_guide"`
@@ -20,6 +24,12 @@ type GenerateRequest struct {
 	// 调色**名字**则要用 media.PlanGrade 验（方案表在媒体层）。
 	Effects domain.Effects `json:"effects"`
 }
+
+// maxTargetDurationSec 与 GenerateRequest 上 max 校验值保持一致。
+//
+// 单独抽出来是给「自动估算」那条路径用的：估算值绕过了 binding 校验，
+// 若不在代码里再夹一次，两处上限就会各说各话。
+const maxTargetDurationSec = 1800.0
 
 // UploadAssetResponse 返回上传素材的元信息。
 //
@@ -41,6 +51,28 @@ type GenerateResponse struct {
 	CreatedAt time.Time        `json:"created_at"`
 	// WSURL 直接给前端，省去前端自己拼路径的重复逻辑。
 	WSURL string `json:"ws_url"`
+	// TargetDurationSec 是**最终采用**的目标时长，DurationSource 说明它的来源。
+	//
+	// 回传它是因为"没填时长"这条路径必须可解释：用户提交时留空，
+	// 界面上总得有个地方告诉他"这次按 45 秒做的"，否则成片长度会显得随机。
+	TargetDurationSec float64 `json:"target_duration_sec"`
+	DurationSource    string  `json:"duration_source"` // auto | explicit
+}
+
+// EstimateDurationRequest 用于「按脚本估算时长」。
+type EstimateDurationRequest struct {
+	RawScript string `json:"raw_script" binding:"required,min=1,max=20000"`
+}
+
+// EstimateDurationResponse 返回估算结果。
+//
+// 单独给一个端点而不是写在前端：估算规则（语速、单位、夹取、取整）只能有一份实现，
+// 前端各写一套的话，"界面显示的预计时长"和"实际采用的目标时长"迟早会对不上，
+// 而那种不一致看起来完全像 bug。
+type EstimateDurationResponse struct {
+	DurationSec float64 `json:"duration_sec"`
+	// Basis 说明估算依据，便于用户理解这个数字是怎么来的。
+	Basis string `json:"basis"`
 }
 
 // JobResponse 是任务详情的响应体。
