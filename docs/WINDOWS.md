@@ -203,6 +203,10 @@ SCID_SANDBOX_WORK_DIR    默认 <repo>\.data\sandbox
 SCID_ARCHIVE_LOCAL_DIR
 ```
 
+**上传的背景音乐**落在 `<SCID_MEDIA_WORK_DIR>\assets\<租户>\<随机id>.<ext>`。
+它**刻意没有单独的配置项**：多一个配置项就多一处"部署时忘了配"的机会，
+而这里没有按环境变化的理由。要清理上传的素材，删这个 `assets` 目录即可。
+
 ---
 
 ## 八、常见问题

@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 from pydantic import ValidationError
 
@@ -17,6 +19,7 @@ from scidirector_ai.graph.state import (
     shot_attempt,
 )
 from scidirector_ai.schemas import (
+    STYLE_PRESETS,
     TAG_TO_ENGINE,
     CriticFeedback,
     FeedbackSource,
@@ -214,3 +217,53 @@ class TestPipelineState:
 class TestFeedbackSource:
     def test_default_source_is_vlm(self) -> None:
         assert CriticFeedback(passed=True, score=0.9).source is FeedbackSource.VLM
+
+
+class TestStylePreset:
+    """风格预设：生成期的配色一律由它展开，后期的调色是 Go 侧的 grade。"""
+
+    def test_default_preset_keeps_historical_colors(self) -> None:
+        """不填任何东西时必须还是原来那套配色 —— 预设不能悄悄改变既有行为。"""
+        guide = StyleGuide()
+        assert guide.preset == "default"
+        assert guide.primary_color == "#4F8CFF"
+        assert guide.background_color == "#0B1020"
+
+    def test_preset_expands_to_palette(self) -> None:
+        guide = StyleGuide(preset="tech")
+        assert guide.primary_color == STYLE_PRESETS["tech"]["primary_color"]
+        assert guide.background_color == STYLE_PRESETS["tech"]["background_color"]
+
+    def test_explicit_colour_wins_over_preset(self) -> None:
+        """显式色值优先：预设只是省事的默认，不该覆盖用户明确的要求。"""
+        guide = StyleGuide(preset="tech", primary_color="#ABCDEF")
+        assert guide.primary_color == "#ABCDEF"
+        # 没显式给的那一项仍然来自预设。
+        assert guide.background_color == STYLE_PRESETS["tech"]["background_color"]
+
+    def test_unknown_preset_is_rejected_with_the_list(self) -> None:
+        """未登记的预设必须报错，不静默回落。
+
+        静默回落的表现是"用户选了暖色调、成片却是蓝色"，且没有任何提示 ——
+        与调色方案那边采取的态度一致。
+        """
+        with pytest.raises(ValidationError) as exc:
+            StyleGuide(preset="nope")
+        assert "未知的风格预设" in str(exc.value)
+        assert "tech" in str(exc.value), "错误信息应当列出可选值"
+
+    def test_every_preset_has_valid_hex_colours(self) -> None:
+        """每个预设的两个色值都必须是合法十六进制。
+
+        这条防的是手滑：写错一个色值不会报错，而是被原样注入提示词，
+        模型照着画出来的颜色不可控 —— 那种问题极难从成片反推回来。
+        """
+        hex_re = re.compile(r"^#[0-9A-Fa-f]{6}$")
+        for name, palette in STYLE_PRESETS.items():
+            for key in ("primary_color", "background_color"):
+                value = palette.get(key, "")
+                assert hex_re.match(value), f"预设 {name} 的 {key}={value!r} 不是合法色值"
+            # 主色与背景色相同会让画面糊成一片，这一条几乎总是配置错误。
+            assert palette["primary_color"].lower() != palette["background_color"].lower(), (
+                f"预设 {name} 的主色与背景色相同"
+            )

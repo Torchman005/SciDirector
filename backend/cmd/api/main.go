@@ -19,6 +19,7 @@ import (
 	"github.com/itJinYu/SciDirector/backend/internal/config"
 	"github.com/itJinYu/SciDirector/backend/internal/httpapi"
 	"github.com/itJinYu/SciDirector/backend/internal/logging"
+	"github.com/itJinYu/SciDirector/backend/internal/media"
 	"github.com/itJinYu/SciDirector/backend/internal/obs"
 	"github.com/itJinYu/SciDirector/backend/internal/queue"
 	"github.com/itJinYu/SciDirector/backend/internal/reconcile"
@@ -119,6 +120,21 @@ func run() error {
 	defer func() { _ = inspector.Close() }()
 	logger.Info("队列观测已启用", "queues", inspector.Queues())
 
+	// 素材上传要按内容判定音频，所以需要一个媒体运行器。
+	//
+	// 注意这里**必须用接口变量**而不是直接传 `*media.Runner`：
+	// 构造失败时那个指针是 nil，而把它塞进接口会得到一个**非 nil 的接口**
+	// （值非空、指向 nil 指针），handler 里的 `AssetProber == nil` 判断
+	// 就会失效，接着在 nil 接收者上调用方法直接 panic。
+	// 这是 Go 里最经典的一类"看起来判空了其实没判到"。
+	var assetProber httpapi.AudioProber
+	if r, rerr := media.NewRunner(cfg.Media); rerr != nil {
+		// 只降级上传能力，不让网关整个起不来：与 Inspector/Metrics 同样的取舍。
+		logger.Warn("构造媒体运行器失败，素材上传将不可用", "error", rerr.Error())
+	} else {
+		assetProber = r
+	}
+
 	deps := httpapi.Deps{
 		Config:    cfg,
 		Store:     st,
@@ -132,6 +148,9 @@ func run() error {
 		// 按需状态对账：与 worker 的周期扫描共用同一个实现。
 		// api 只用到 store + ai 客户端，因此不需要（也不该）拉起整个 worker。
 		Reconciler: reconcile.New(st, aiClient, logger),
+		// 素材上传要按**内容**判定音频（而不是看扩展名），因此需要一个 ffprobe
+		// 探测能力。只用到 ProbeAudio 一个方法，接口因此定义在 httpapi 那一侧。
+		AssetProber: assetProber,
 	}
 	router := httpapi.NewRouter(httpapi.NewServer(deps), deps)
 

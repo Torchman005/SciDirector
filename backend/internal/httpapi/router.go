@@ -66,11 +66,18 @@ func NewRouter(s *Server, deps Deps) *gin.Engine {
 		// 不参与编排系统的存活/就绪判定 —— 队列积压不该让实例被摘除。
 		v1.GET("/queue/stats", s.HandleQueueStats)
 
+		// 素材上传：目前只有背景音乐。请求方拿到 asset_id 后，
+		// 在 /generate 的 effects.bgm.asset_id 里引用它。
+		v1.POST("/assets", s.HandleUploadAsset)
+
 		jobs := v1.Group("/jobs/:jobID")
 		{
 			jobs.GET("", s.HandleGetJob)
 			jobs.GET("/shots", s.HandleListShots)
 			jobs.GET("/events", s.HandleListEvents)
+			// 成片直出：浏览器可以直接播（支持 Range），
+			// 不必让用户去文件系统里找路径。
+			jobs.GET("/artifact", s.HandleGetArtifact)
 			// 成本单独成端点：审计视角，见 HandleGetJobCost 的说明。
 			jobs.GET("/cost", s.HandleGetJobCost)
 			// 状态对账：默认只读，?repair=true 才改状态（见 HandleReconcileJob）。

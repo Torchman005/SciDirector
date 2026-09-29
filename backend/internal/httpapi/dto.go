@@ -16,6 +16,21 @@ type GenerateRequest struct {
 	TargetDurationSec float64        `json:"target_duration_sec" binding:"omitempty,min=5,max=1800"`
 	Locale            string         `json:"locale" binding:"omitempty,oneof=zh-CN en-US ja-JP"`
 	StyleGuide        map[string]any `json:"style_guide"`
+	// Effects 是后期效果（配乐/调色/淡入淡出）。取值范围在这里校验，
+	// 调色**名字**则要用 media.PlanGrade 验（方案表在媒体层）。
+	Effects domain.Effects `json:"effects"`
+}
+
+// UploadAssetResponse 返回上传素材的元信息。
+//
+// 返回 duration_sec 而不是只回一个 id：前端要在选择 BGM 后立刻告诉用户
+// 「这段音乐多长、会不会被循环」，而这两件事决定了实际听感。
+type UploadAssetResponse struct {
+	AssetID     string  `json:"asset_id"`
+	Kind        string  `json:"kind"` // 目前只有 audio
+	Filename    string  `json:"filename"`
+	DurationSec float64 `json:"duration_sec"`
+	SizeBytes   int64   `json:"size_bytes"`
 }
 
 // GenerateResponse 返回任务受理结果。

@@ -230,6 +230,19 @@ func (r *Runner) acquire(ctx context.Context) (func(), error) {
 // 返回的错误中会附带 ffmpeg 的 stderr 尾部 —— 这是排查渲染/合成问题最有价值的信息，
 // 必须保留而不是丢弃。
 func (r *Runner) run(ctx context.Context, args ...string) error {
+	return r.runDir(ctx, "", args...)
+}
+
+// runDir 与 run 相同，但可以指定子进程的工作目录。
+//
+// 为什么需要它：烧录字幕要用 `subtitles=<文件>` 这个**滤镜参数**，而滤镜图有自己的
+// 一层语法 —— 冒号分隔选项、逗号分隔滤镜、方括号表示流标签。Windows 的 `C:` 落进去
+// 会被当成选项分隔符，于是要靠一长串反斜杠转义，而这种转义在不同 ffmpeg 版本上
+// 行为并不一致（本项目已经在 drawtext 的 fontfile 上踩过一次「两级转义」）。
+//
+// 更稳的办法是**让路径里根本不出现冒号**：把工作目录设成字幕所在目录，
+// 参数只传文件名。输出路径仍在过滤器之外，作为普通命令行参数不受影响。
+func (r *Runner) runDir(ctx context.Context, dir string, args ...string) error {
 	release, err := r.acquire(ctx)
 	if err != nil {
 		return err
@@ -238,6 +251,9 @@ func (r *Runner) run(ctx context.Context, args ...string) error {
 
 	cmd, cancel := r.newCmd(ctx, r.ffmpegBin, args...)
 	defer cancel()
+	if dir != "" {
+		cmd.Dir = dir
+	}
 
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

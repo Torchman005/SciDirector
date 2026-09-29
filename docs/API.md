@@ -95,7 +95,33 @@ AI 不可用只标为 `degraded`（已提交的任务仍可查询）。
 | `raw_script` | string | ✅ | 10 ~ 20000 字符 | 科普脚本原文 |
 | `target_duration_sec` | number | | 5 ~ 1800，默认 90 | 目标总时长 |
 | `locale` | string | | `zh-CN` / `en-US` / `ja-JP` | 默认 `zh-CN` |
-| `style_guide` | object | | | 风格约束（配色、字体、字号下限、术语表） |
+| `style_guide` | object | | | **影响生成**：风格预设、配色、字体、字号下限、术语表 |
+| `effects` | object | | | **影响后期**：背景音乐、调色、淡入淡出、响度 |
+
+`style_guide` 字段：
+
+| 字段 | 说明 |
+| --- | --- |
+| `preset` | 风格预设：`default` / `tech` / `warm` / `minimal` / `nature` / `sunset`。未登记的预设**报错**，不静默回落 |
+| `primary_color` / `background_color` | 显式色值，**优先于**预设 |
+| `min_font_size` | 正文字号下限（成片像素），同时是审查 rubric 里的硬性指标 |
+
+`effects` 字段：
+
+| 字段 | 说明 |
+| --- | --- |
+| `bgm.asset_id` | 由 `POST /api/v1/assets` 上传后返回的素材 id。**请求里不要传路径**（会被服务端丢弃） |
+| `bgm.volume_db` | 配乐相对电平，缺省 0（由响度归一化兜底），范围 [-60, 12] |
+| `bgm.loop` | 是否循环，**缺省 true**（短片当 BGM 是常态，不循环会让后半段静音） |
+| `bgm.fade_in_sec` / `bgm.fade_out_sec` | 配乐自身的淡入淡出 |
+| `grade` | 调色方案：`none` / `warm` / `cool` / `high_contrast` / `film`。未登记的名字报 400 |
+| `grade_strength` | 调色强度，“0 与 1 都表示完整效果”（关掉请用 `none`） |
+| `fade_in_sec` / `fade_out_sec` | 片头片尾淡入淡出 |
+| `burn_subtitles` | 把字幕烧进画面（必须重编码；缺省 false = 软字幕） |
+| `loudness_lufs` | 混音后整体响度目标，缺省 -16（0 表示用缺省值） |
+
+> **不请求任何 `effects` 时不会多跑一次编码** —— 调色与烧录字幕都要重编码，
+> 因此整条后期链路按需触发，默认行为与之前逐字节一致。
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/generate \
@@ -271,7 +297,46 @@ X-Tenant-ID: acme
 它的流水线已经停了、在等人类，不该继续占配额，否则一个卡着人工审核的任务会把
 整个租户挡在门外。
 
-### 2.4 人类反馈闭环
+### 2.4 上传素材（背景音乐）
+
+#### `POST /api/v1/assets`
+
+`multipart/form-data`，字段名固定为 `file`。成功响应 `200` 带 `{ok,data}` 信封。
+
+| 约束 | 值 |
+| --- | --- |
+| 大小上限 | 20 MB |
+| 时长上限 | 900 秒 |
+| 允许扩展名 | `.mp3` `.wav` `.m4a` `.aac` `.flac` `.ogg` `.opus` |
+| 内容判定 | **由 ffprobe 真探一次**，不看扩展名 |
+
+```bash
+curl -X POST http://localhost:8080/api/v1/assets -F "file=@music.mp3"
+```
+
+```json
+{"ok":true,"data":{"asset_id":"c252a4a4…","kind":"audio",
+ "filename":"music.mp3","duration_sec":6,"size_bytes":97010}}
+```
+
+⚠️ 请求方给出的文件名**不参与拼磁盘路径**：素材以服务端生成的随机 id 落盘，
+按租户分目录。因此"读服务端任意文件"不会成为一个 HTTP 接口。
+
+---
+
+### 2.5 播放成片
+
+#### `GET /api/v1/jobs/:jobID/artifact`
+
+直接返回成片文件，**支持 Range**（浏览器里可拖动进度条）。任务尚无成片时返回 404。
+
+```html
+<video controls src="/api/v1/jobs/job-xxx/artifact"></video>
+```
+
+---
+
+### 2.6 人类反馈闭环
 
 #### `POST /api/v1/jobs/:jobID/shots/:shotID/reject`
 

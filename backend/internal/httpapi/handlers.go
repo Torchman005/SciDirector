@@ -12,6 +12,7 @@ import (
 
 	"github.com/itJinYu/SciDirector/backend/internal/domain"
 	"github.com/itJinYu/SciDirector/backend/internal/logging"
+	"github.com/itJinYu/SciDirector/backend/internal/media"
 	"github.com/itJinYu/SciDirector/backend/internal/queue"
 )
 
@@ -123,6 +124,23 @@ func (s *Server) HandleGenerate(c *gin.Context) {
 	// 配额检查与任务落库都要用它，而「解析规则」只应存在于中间件一处。
 	tenant := tenantOf(c)
 
+	// 后期效果的取值范围与调色方案名在这里就校验掉，且放在配额与 AI 探活**之前**：
+	// 这三件事都是本地、确定、便宜的判断，而"参数写错了"比"你超额了""上游挂了"
+	// 更具体、更该优先告诉用户。
+	if err := req.Effects.Validate(); err != nil {
+		abortWith(c, http.StatusBadRequest, ErrCodeBadRequest, "effects 参数非法", err)
+		return
+	}
+	if _, err := media.PlanGrade(req.Effects.Grade, req.Effects.GradeStrength); err != nil {
+		abortWith(c, http.StatusBadRequest, ErrCodeBadRequest, "调色方案非法", err)
+		return
+	}
+
+	effects, err := s.resolveEffects(c, tenant, req.Effects)
+	if err != nil {
+		return // resolveEffects 内部已经写过响应
+	}
+
 	// 租户配额（阶段五）：资源隔离，而不只是数据隔离。
 	// 渲染是重活，一个租户灌进几十个任务会把所有租户一起拖慢。
 	// 配额为 0 时不做任何检查（单租户/本地开发的缺省）。
@@ -173,6 +191,7 @@ func (s *Server) HandleGenerate(c *gin.Context) {
 		TenantID:          tenant,
 		RawScript:         req.RawScript,
 		StyleGuide:        req.StyleGuide,
+		Effects:           effects,
 		TargetDurationSec: target,
 		Locale:            locale,
 		Status:            domain.JobCreated,

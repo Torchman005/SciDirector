@@ -72,6 +72,9 @@ type Deps struct {
 	// （worker 背着一整套媒体/归档栈，反向依赖会把编译期耦合拉成一张网）。
 	// 接口只声明这里真正要用的那一个方法。
 	Reconciler Reconciler
+	// AssetProber 提供音频探测能力（素材上传要用它按内容判定，而不是看扩展名）。
+	// 为 nil 时上传接口返回 501，理由同 Inspector / Metrics。
+	AssetProber AudioProber
 }
 
 // Reconciler 是按需状态对账的能力（由 reconcile.Reconciler 实现）。

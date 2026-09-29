@@ -140,6 +140,44 @@ export interface GenerateRequest {
   raw_script: string
   target_duration_sec: number
   locale: string
+  /** 影响**生成**的配置（配色/风格预设），会进提示词。 */
+  style_guide?: StyleGuide
+  /** 影响**后期**的配置（配乐/调色/淡入淡出），只由合成阶段消费。 */
+  effects?: Effects
+}
+
+export interface StyleGuide {
+  preset?: string
+  primary_color?: string
+  background_color?: string
+  min_font_size?: number
+}
+
+export interface Effects {
+  bgm?: BgmEffects
+  grade?: string
+  grade_strength?: number
+  fade_in_sec?: number
+  fade_out_sec?: number
+  burn_subtitles?: boolean
+  loudness_lufs?: number
+}
+
+export interface BgmEffects {
+  /** 上传接口返回的素材 id。服务端据此解析路径，请求里不要传 path。 */
+  asset_id?: string
+  volume_db?: number
+  loop?: boolean
+  fade_in_sec?: number
+  fade_out_sec?: number
+}
+
+export interface UploadAssetResponse {
+  asset_id: string
+  kind: string
+  filename: string
+  duration_sec: number
+  size_bytes: number
 }
 
 export interface GenerateResponse {

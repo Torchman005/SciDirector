@@ -22,6 +22,7 @@ import type {
   RejectResponse,
   Shot,
   ShotsResponse,
+  UploadAssetResponse,
 } from './types'
 
 /** 后端不可用时的统一异常类型。 */
@@ -91,6 +92,30 @@ export const api = {
   /** 提交生成任务。 */
   generate: (req: GenerateRequest) =>
     request<GenerateResponse>('/api/v1/generate', { method: 'POST', ...json(req) }),
+
+  /**
+   * 上传音频素材（背景音乐）。
+   *
+   * 刻意**不套 request() 的 JSON 封装**：multipart 的 Content-Type 必须由浏览器
+   * 自己带 boundary，手写 'application/json' 会让服务端解析不出文件。
+   */
+  uploadAsset: async (file: File): Promise<UploadAssetResponse> => {
+    const form = new FormData()
+    form.append('file', file)
+    const resp = await fetch('/api/v1/assets', { method: 'POST', body: form })
+    const text = await resp.text()
+    const parsed = text ? JSON.parse(text) : {}
+    if (!resp.ok) {
+      const err = parsed as { message?: string; code?: string }
+      throw new Error(err.message || `上传失败（HTTP ${resp.status}）`)
+    }
+    // 与其它接口一致：响应被 {ok,data} 包了一层。
+    return (parsed.data ?? parsed) as UploadAssetResponse
+  },
+
+  /** 成片的播放地址（浏览器直接播，支持 Range）。 */
+  artifactUrl: (jobId: string) =>
+    `/api/v1/jobs/${encodeURIComponent(jobId)}/artifact`,
 
   getJob: (jobId: string) =>
     request<JobResponse>(`/api/v1/jobs/${encodeURIComponent(jobId)}`),

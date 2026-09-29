@@ -374,12 +374,91 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 		}
 	}
 
+	// 阶段三点五：后期效果（配乐 / 调色 / 淡入淡出 / 烧录字幕）。
+	//
+	// 顺序有讲究：**先把音轨与字幕都备好，再动画面** ——
+	// 烧录字幕需要 SRT 已经写好；配乐需要成片时长（用来循环/裁剪到等长）。
+	//
+	// 每一步失败都**只降级、不中断**：画面与旁白才是主体，配乐与调色是增强。
+	// 但每一处降级都必须留痕 —— "说好的背景音乐没了"用户能直接感知，
+	// 而静默降级会让排查方向完全跑偏（去找播放器、去找音响）。
+	effects := job.Effects
+	outDuration := plan.OutDuration
+	if probe, perr := p.media.Probe(ctx, mergedPath); perr == nil {
+		outDuration = probe.DurationSec
+	} else {
+		lg.Warn("探测成片时长失败，配乐与淡出按方案预测时长处理", "error", perr.Error())
+	}
+
+	audioTrack := narrationTrack
+	bgmApplied := false
+	if effects.HasBGM() && outDuration > 0 {
+		bgmTrack := filepath.Join(workDir, "bgm.m4a")
+		berr := p.media.BuildBgmTrack(ctx, effects.BGM.Path, bgmTrack, outDuration, media.BgmSpec{
+			Loop:       effects.BGM.LoopOrDefault(),
+			VolumeDB:   effects.BGM.VolumeDB,
+			FadeInSec:  effects.BGM.FadeInSec,
+			FadeOutSec: effects.BGM.FadeOutSec,
+		})
+		if berr != nil {
+			lg.Error("背景音乐配轨失败，成片将没有配乐", "error", berr.Error())
+		} else {
+			// 旁白可能为空（用户没开 TTS）：MixSoundtrack 支持只有配乐的情形。
+			mixed := filepath.Join(workDir, "audio.m4a")
+			if merr := p.media.MixSoundtrack(ctx, narrationTrack, bgmTrack, mixed,
+				effects.LoudnessLUFS); merr != nil {
+				lg.Error("音轨混音失败，回退为只用旁白", "error", merr.Error())
+			} else {
+				audioTrack = mixed
+				bgmApplied = true
+				lg.Info("配乐已混入成片", "bgm", filepath.Base(effects.BGM.Path),
+					"loop", effects.BGM.LoopOrDefault(), "volume_db", effects.BGM.VolumeDB)
+			}
+		}
+	}
+
+	postOpts := media.PostOptions{
+		Grade:        media.GradeSpec{Name: effects.Grade, Strength: effects.GradeStrength},
+		Fade:         media.FadeSpec{InSec: effects.FadeInSec, OutSec: effects.FadeOutSec},
+		LoudnessLUFS: effects.LoudnessLUFS,
+	}
+	// 只有真的要烧录字幕时才把字幕交给后期：没有字幕文件时 BurnSubtitles
+	// 无从落地，硬传会让 PostProcess 直接报错。
+	if effects.BurnSubtitles && subtitlePath != "" {
+		postOpts.BurnSubtitlePath = subtitlePath
+	}
+
+	videoPath := mergedPath
+	softSubtitle := subtitlePath
+	postApplied := false
+	if media.NeedsPostProcess(postOpts) {
+		graded := filepath.Join(workDir, "graded.mp4")
+		// 烧进画面之后就不能再挂软字幕：同一份字幕出现两遍，
+		// 而且位置会有细微偏移，看起来像重影。
+		if postOpts.BurnSubtitlePath != "" {
+			softSubtitle = ""
+		}
+		perr := p.media.PostProcess(ctx, mergedPath, graded, postOpts, outDuration)
+		if perr != nil {
+			// 调色方案非法之类的问题在这里才会暴露（httpapi 已拦过一道，
+			// 但库里的旧任务可能带着当时合法的配置）。成片照出，只是不带效果。
+			lg.Error("后期处理失败，成片将不带调色/淡入淡出/烧录字幕", "error", perr.Error())
+			softSubtitle = subtitlePath
+		} else {
+			videoPath = graded
+			postApplied = true
+			lg.Info("后期处理已应用", "grade", effects.Grade,
+				"fade_in", effects.FadeInSec, "fade_out", effects.FadeOutSec,
+				"burn_subtitles", postOpts.BurnSubtitlePath != "")
+		}
+	}
+
 	// 阶段四：产出最终文件。
 	//
-	// narrationTrack 为空表示该任务没有配音（尚未接入 TTS 时的缺省情形），
-	// 此时 MuxFinal 按「视频自带音轨」处理 —— 调用契约不变。
+	// audioTrack 为空表示既没有配音也没有配乐，此时 MuxFinal 按
+	// 「视频自带音轨」处理 —— 调用契约不变。
 	finalPath := filepath.Join(workDir, "final.mp4")
-	if err := p.media.MuxFinal(ctx, mergedPath, narrationTrack, subtitlePath, finalPath); err != nil {
+	if err := p.media.MuxFinal(ctx, videoPath, audioTrack, softSubtitle, finalPath); err != nil {
 		return fmt.Errorf("worker: 生成成片失败: %w", err)
 	}
 
@@ -421,6 +500,16 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 			"transition_used":  plan.Enabled,
 			"out_duration_sec": plan.OutDuration,
 			"missing_shots":    missing,
+			// 实际生效的后期效果。写进事件而不是只写日志：
+			// 用户问"为什么没有背景音乐"时，答案要能在界面里看到，
+			// 而不是只能去翻服务端日志。
+			"effects": map[string]any{
+				"bgm_requested":  effects.HasBGM(),
+				"bgm_applied":    bgmApplied,
+				"grade":          effects.Grade,
+				"post_applied":   postApplied,
+				"burn_subtitles": postOpts.BurnSubtitlePath != "",
+			},
 		},
 		Timestamp: time.Now().UTC(),
 	})

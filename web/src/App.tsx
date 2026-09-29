@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+﻿import { useEffect, useState } from 'react'
 
 import { api, errorText } from './api'
 import { EventTimeline } from './components/EventTimeline'
@@ -6,7 +6,7 @@ import { ShotRow } from './components/ShotRow'
 import { deriveStat, shotsOf } from './stream'
 import { useJobStream } from './useJobStream'
 import { formatTime, jobStatus } from './display'
-import type { ConnectionState } from './types'
+import type { ConnectionState, Effects } from './types'
 
 /**
  * SciDirector 分镜审核台。
@@ -35,6 +35,24 @@ export function App() {
   const [submitError, setSubmitError] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [refreshTick, setRefreshTick] = useState(0)
+
+  // --- 风格（影响生成）与后期效果（影响合成）---
+  //
+  // 这两组配置刻意分开放：前者会被注入提示词、决定模型"画什么颜色"，
+  // 后者是合成阶段的 ffmpeg 处理。混在一起用户就分不清自己改的是哪一段。
+  const [preset, setPreset] = useState('default')
+  const [grade, setGrade] = useState('none')
+  const [gradeStrength, setGradeStrength] = useState(1)
+  const [fadeIn, setFadeIn] = useState(0)
+  const [fadeOut, setFadeOut] = useState(0)
+  const [burnSubtitles, setBurnSubtitles] = useState(false)
+
+  // BGM：上传后记住 asset_id。**只传 id，不传路径** ——
+  // 路径由服务端从素材库解析，请求方拿不到"读服务端任意文件"的能力。
+  const [bgm, setBgm] = useState<{ assetId: string; filename: string; durationSec: number } | null>(null)
+  const [bgmVolume, setBgmVolume] = useState(-8)
+  const [bgmBusy, setBgmBusy] = useState(false)
+  const [bgmError, setBgmError] = useState('')
 
   const { state, connection, lastError, reconnect, mergeDetail } = useJobStream({
     jobId,
@@ -74,14 +92,40 @@ export function App() {
   const conn = CONNECTION_TEXT[connection]
   const pending = stat.awaiting_human
 
+  async function uploadBgm(file: File) {
+    setBgmBusy(true)
+    setBgmError('')
+    try {
+      const resp = await api.uploadAsset(file)
+      setBgm({ assetId: resp.asset_id, filename: resp.filename, durationSec: resp.duration_sec })
+    } catch (err) {
+      setBgm(null)
+      setBgmError(errorText(err))
+    } finally {
+      setBgmBusy(false)
+    }
+  }
+
   async function submit() {
     setSubmitting(true)
     setSubmitError('')
     try {
+      const effects: Effects = {}
+      if (grade !== 'none') {
+        effects.grade = grade
+        effects.grade_strength = gradeStrength
+      }
+      if (fadeIn > 0) effects.fade_in_sec = fadeIn
+      if (fadeOut > 0) effects.fade_out_sec = fadeOut
+      if (burnSubtitles) effects.burn_subtitles = true
+      if (bgm) effects.bgm = { asset_id: bgm.assetId, volume_db: bgmVolume, loop: true }
+
       const resp = await api.generate({
         raw_script: script.trim(),
         target_duration_sec: duration,
         locale: 'zh-CN',
+        style_guide: { preset },
+        effects,
       })
       setJobId(resp.job_id)
     } catch (err) {
@@ -145,6 +189,104 @@ export function App() {
               <span className="muted">脚本至少 20 字</span>
             )}
           </div>
+
+          {/* 风格：影响**生成**（会进提示词）。 */}
+          <details className="effects">
+            <summary>风格与效果（可选）</summary>
+            <div className="row">
+              <label>
+                风格预设
+                <select value={preset} onChange={(e) => setPreset(e.target.value)}>
+                  <option value="default">默认（蓝）</option>
+                  <option value="tech">科技（青绿）</option>
+                  <option value="warm">暖色（橙）</option>
+                  <option value="minimal">极简（灰白）</option>
+                  <option value="nature">自然（绿）</option>
+                  <option value="sunset">日落（粉紫）</option>
+                </select>
+              </label>
+
+              <label>
+                后期色调
+                <select value={grade} onChange={(e) => setGrade(e.target.value)}>
+                  <option value="none">不调色</option>
+                  <option value="warm">暖</option>
+                  <option value="cool">冷</option>
+                  <option value="high_contrast">高对比</option>
+                  <option value="film">胶片感</option>
+                </select>
+              </label>
+
+              <label>
+                强度 {Math.round(gradeStrength * 100)}%
+                <input
+                  type="range"
+                  min={10}
+                  max={100}
+                  value={Math.round(gradeStrength * 100)}
+                  disabled={grade === 'none'}
+                  onChange={(e) => setGradeStrength(Number(e.target.value) / 100)}
+                />
+              </label>
+            </div>
+
+            <div className="row">
+              <label>
+                片头淡入（秒）
+                <input
+                  type="number" min={0} max={5} step={0.5} value={fadeIn}
+                  onChange={(e) => setFadeIn(Number(e.target.value) || 0)}
+                />
+              </label>
+              <label>
+                片尾淡出（秒）
+                <input
+                  type="number" min={0} max={5} step={0.5} value={fadeOut}
+                  onChange={(e) => setFadeOut(Number(e.target.value) || 0)}
+                />
+              </label>
+              <label className="check">
+                <input
+                  type="checkbox" checked={burnSubtitles}
+                  onChange={(e) => setBurnSubtitles(e.target.checked)}
+                />
+                字幕烧进画面
+              </label>
+            </div>
+
+            <div className="row">
+              <label>
+                背景音乐
+                <input
+                  type="file"
+                  accept="audio/*,.mp3,.wav,.m4a,.aac,.flac,.ogg,.opus"
+                  disabled={bgmBusy}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0]
+                    if (f) void uploadBgm(f)
+                  }}
+                />
+              </label>
+              <label>
+                配乐音量 {bgmVolume} dB
+                <input
+                  type="range" min={-30} max={0} value={bgmVolume}
+                  disabled={!bgm}
+                  onChange={(e) => setBgmVolume(Number(e.target.value))}
+                />
+              </label>
+            </div>
+
+            {bgmBusy && <p className="muted">上传中…</p>}
+            {bgm && (
+              <p className="muted">
+                已选择：{bgm.filename}（{formatTime(bgm.durationSec)}）
+                {/* 比成片短时会自动循环，提前说清楚，免得用户以为是 bug。 */}
+                <button className="btn btn-sm" onClick={() => setBgm(null)}>移除</button>
+              </p>
+            )}
+            {bgmError && <p className="banner banner-error">{bgmError}</p>}
+          </details>
           {submitError && <p className="banner banner-error">{submitError}</p>}
         </section>
       )}
@@ -181,9 +323,14 @@ export function App() {
             </div>
 
             {state.job?.final_video_path && (
-              <p className="shot-artifact">
-                成片：<code>{state.job.final_video_path}</code>
-              </p>
+              <div className="film">
+                {/* 直接播，而不是只给一个文件路径让用户自己去文件夹里找。
+                    artifact 接口支持 Range，所以进度条能拖动。 */}
+                <video controls preload="metadata" src={api.artifactUrl(String(jobId))} />
+                <p className="shot-artifact">
+                  成片：<code>{state.job.final_video_path}</code>
+                </p>
+              </div>
             )}
             {state.job?.error && <p className="banner banner-error">{state.job.error}</p>}
           </section>

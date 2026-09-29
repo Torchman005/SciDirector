@@ -415,3 +415,51 @@ input[type='number'] {
   color: #9fb3d9;
   font-size: 13px;
 }
+
+/* ---------------------------------------------------------------------------
+   风格与效果表单（提交页）
+   --------------------------------------------------------------------------- */
+
+.effects {
+  margin-top: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 14px;
+}
+
+.effects summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.effects .row {
+  margin-top: 12px;
+}
+
+.effects label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.effects input[type='range'] {
+  width: 140px;
+}
+
+/* 复选框要横排：竖排时标签与方框会错位得很难看。 */
+.effects .check {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+
+.film video {
+  width: 100%;
+  max-height: 420px;
+  margin-top: 12px;
+  border-radius: 10px;
+  background: #000;
+}

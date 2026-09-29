@@ -201,16 +201,19 @@ type Job struct {
 	// 在创建时落库、之后不可更改：归属一旦可以改，"谁有权看"就变得不可推理。
 	// 旧任务没有这个字段，读取时按 DefaultTenantID 处理（见 JobBelongsTo），
 	// 因此加这个字段不会让历史任务突然全部「不存在」。
-	TenantID          string         `json:"tenant_id,omitempty"`
-	RawScript         string         `json:"raw_script"`
-	StyleGuide        map[string]any `json:"style_guide,omitempty"`
-	TargetDurationSec float64        `json:"target_duration_sec"`
-	Locale            string         `json:"locale"`
-	Status            JobStatus      `json:"status"`
-	Shots             []*Shot        `json:"shots"`
-	Progress          float64        `json:"progress"`
-	FinalVideoPath    string         `json:"final_video_path,omitempty"`
-	Error             string         `json:"error,omitempty"`
+	TenantID   string         `json:"tenant_id,omitempty"`
+	RawScript  string         `json:"raw_script"`
+	StyleGuide map[string]any `json:"style_guide,omitempty"`
+	// Effects 是后期效果（配乐/调色/淡入淡出）。与 StyleGuide 分工不同：
+	// 后者影响**生成**（进提示词），前者只由合成阶段消费。见 effects.go。
+	Effects           Effects   `json:"effects,omitempty"`
+	TargetDurationSec float64   `json:"target_duration_sec"`
+	Locale            string    `json:"locale"`
+	Status            JobStatus `json:"status"`
+	Shots             []*Shot   `json:"shots"`
+	Progress          float64   `json:"progress"`
+	FinalVideoPath    string    `json:"final_video_path,omitempty"`
+	Error             string    `json:"error,omitempty"`
 	// LLMUsage 是 Python 上报的 LLM 用量（Go 推不出来，所以必须持久化）。
 	// 渲染/配音等可推导项不存这里，读取时由 CostSnapshot 现算，见 cost.go。
 	LLMUsage  *LLMUsage `json:"llm_usage,omitempty"`

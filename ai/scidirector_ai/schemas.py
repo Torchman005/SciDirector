@@ -237,12 +237,38 @@ class ScriptPlan(BaseModel):
     total_tokens: int = 0
 
 
+#: 内置风格预设。
+#:
+#: 分工要清楚：**预设管生成期的配色**（会被注入各引擎的提示词，决定模型怎么写画面）；
+#: **后期的调色是 effects.grade**（Go 侧 ffmpeg 滤镜，见 media/effects.go）。
+#: 两者刻意分开：一个影响"画什么颜色"，一个影响"整片统一成什么色调"，
+#: 混在一起会让"这份配置到底作用在哪一段"不可推理。
+#:
+#: 新增预设时请同时更新 docs/API.md 的清单 —— 前端下拉框正是照它写的。
+STYLE_PRESETS: dict[str, dict[str, str]] = {
+    "default": {"primary_color": "#4F8CFF", "background_color": "#0B1020"},
+    "tech": {"primary_color": "#3DDC97", "background_color": "#08111F"},
+    "warm": {"primary_color": "#FF8A4C", "background_color": "#1A1013"},
+    "minimal": {"primary_color": "#E6ECFF", "background_color": "#101216"},
+    "nature": {"primary_color": "#5FD68A", "background_color": "#0B1A12"},
+    "sunset": {"primary_color": "#FF6B9D", "background_color": "#1B1020"},
+}
+
+DEFAULT_PRESET = "default"
+
+
 class StyleGuide(BaseModel):
     """风格约束。跨镜头一致性靠它维持（避免每个镜头风格漂移）。"""
 
     theme: str = Field(default="dark", description="dark / light")
-    primary_color: str = "#4F8CFF"
-    background_color: str = "#0B1020"
+    #: 预设名。显式填了 primary_color / background_color 时以显式值为准。
+    preset: str = Field(default=DEFAULT_PRESET, description="风格预设，见 STYLE_PRESETS")
+    # 空串 = **未指定**，由 preset 填充。
+    #
+    # 用空串而不是 None 表示"没填"：这两个字段最终一定会被填成具体色值，
+    # 保持 `str` 类型可以让所有下游（提示词注入、pbconv）不必到处判 None。
+    primary_color: str = ""
+    background_color: str = ""
     font_family: str = "Noto Sans CJK SC"
     # 正文字号下限：直接对应审查 rubric 中的「文字可读性」，
     # 也是模型最常犯的错误（字号过小）。
@@ -253,6 +279,25 @@ class StyleGuide(BaseModel):
         description="术语表：保证同一概念在全片中的译名一致",
     )
     extra: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _apply_preset(self) -> StyleGuide:
+        """把预设展开成具体色值；显式给出的颜色优先。
+
+        未登记的预设**直接报错**，不静默回落到 default：静默回落的表现是
+        "用户选了暖色调，成片却是蓝色"，而且没有任何地方提示过 ——
+        与本项目在调色方案上采取的态度一致。
+        """
+        if self.preset not in STYLE_PRESETS:
+            raise ValueError(
+                f"未知的风格预设 {self.preset!r}；可用：{', '.join(sorted(STYLE_PRESETS))}"
+            )
+        palette = STYLE_PRESETS[self.preset]
+        if not self.primary_color:
+            self.primary_color = palette["primary_color"]
+        if not self.background_color:
+            self.background_color = palette["background_color"]
+        return self
 
     @property
     def resolution(self) -> tuple[int, int]:
