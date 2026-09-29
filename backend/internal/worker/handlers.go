@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -87,6 +88,7 @@ func RegisterHandlers(mux *asynq.ServeMux, p *Processor) {
 // ---------------------------------------------------------------------------
 
 // shotItem 是合成阶段的一个输入片段（包级定义，便于排序与并发索引）。
+// shotItem 描述一个待合成的镜头产物。
 type shotItem struct {
 	index     int    // 分镜序号，决定在成片中的位置
 	path      string // 视频文件路径
@@ -95,6 +97,18 @@ type shotItem struct {
 	// 它来自渲染产物自带的 audio_path —— 那条链路早就通了，
 	// 只是此前没有任何东西往里写（全片配音未接入）。
 	audioPath string
+	// plannedSec 是导演给的**计划**时长。归一化会用它把片段对齐 ——
+	// 各引擎对时长的遵守程度差别很大（HTML 由 __seek(t) 驱动、精确；
+	// manim 取决于代码里 play/wait 的总和，实测能超 50%）。
+	plannedSec float64
+}
+
+// driftTolerance 是"值得上报"的时长偏差阈值（秒）。
+//
+// 取 max(0.5s, 15%)：固定 0.5 秒挡掉帧率对齐级别的噪声，
+// 而 15% 让"3 秒镜头差 1 秒"这种在小镜头上才显眼的偏差不会被放过。
+func driftTolerance(planned float64) float64 {
+	return math.Max(0.5, planned*0.15)
 }
 
 // subtitleTailMarginSec 是字幕末尾安全边距。
@@ -149,10 +163,11 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 			continue
 		}
 		items = append(items, shotItem{
-			index:     s.Index,
-			path:      s.Artifact.VideoPath,
-			narration: s.Narration,
-			audioPath: s.Artifact.AudioPath,
+			index:      s.Index,
+			path:       s.Artifact.VideoPath,
+			narration:  s.Narration,
+			audioPath:  s.Artifact.AudioPath,
+			plannedSec: s.DurationSec,
 		})
 	}
 	if len(items) == 0 {
@@ -187,6 +202,12 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 	// durations[i] 是归一化**之后**的时长，转场 offset 必须用它而不是原始时长：
 	// 归一化的 fps 变换会带来毫秒级差异，而 offset 是累积量，误差会逐段放大。
 	durations := make([]float64, len(items))
+	// drift 记录"实际时长与计划明显不符"的镜头，稍后如实上报。
+	//
+	// 必须留痕而不是默默裁掉：一个计划 8 秒、实际渲染 12.3 秒的 manim 镜头
+	// 被裁到 8 秒，意味着**有 4.3 秒的内容被丢掉了**。不告警的话，
+	// 用户只会看到"动画好像没播完"，而没有任何线索指向真正的原因。
+	var drift []string
 
 	// 任一分支失败即取消其余分支：正在跑的 ffmpeg 会收到取消并退出，不白烧 CPU。
 	// pool.Run 保证返回时**所有**分支都已收敛，因此下面可以安全地读 normPaths。
@@ -197,16 +218,31 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 		}
 		durations[i] = probe.DurationSec
 
-		// 已经符合目标规格就跳过转码：转码既有损又耗时，能省则省。
+		spec := p.media.DefaultNormalizeSpec()
+		// 对齐到计划时长。计划为 0 的旧任务不做对齐 —— 那种数据没有可对齐的目标，
+		// 强行按 0 处理会把片段裁没。
+		if items[i].plannedSec > 0 {
+			spec.AlignTo = items[i].plannedSec
+			spec.AlignFrom = probe.DurationSec
+			if delta := probe.DurationSec - items[i].plannedSec; math.Abs(delta) > driftTolerance(items[i].plannedSec) {
+				drift = append(drift, fmt.Sprintf("#%d 计划 %.1fs、实际 %.1fs（%+.1fs，已对齐）",
+					items[i].index, items[i].plannedSec, probe.DurationSec, delta))
+			}
+		}
+
+		// 已经符合目标规格**且不需要对齐**时才跳过转码：转码既有损又耗时，能省则省。
 		//
 		// 判定条件必须包含 HasAudio：无音轨的片段混进合成流程会让
 		// concat 错位、让 acrossfade 直接报错。宁可多转一次码，也不要放进去。
-		spec := p.media.DefaultNormalizeSpec()
+		//
+		// 也必须包含 NeedsAlign：否则"规格已经对了"会绕过时长对齐，
+		// 而成片偏长恰恰就是从这里漏出去的（HTML 产物天然就是目标规格）。
 		if probe.Width == spec.Width &&
 			probe.Height == spec.Height &&
 			int(probe.FPS+0.5) == spec.FPS &&
 			probe.PixFmt == "yuv420p" &&
-			probe.HasAudio {
+			probe.HasAudio &&
+			!spec.NeedsAlign() {
 			normPaths[i] = items[i].path
 			return nil
 		}
@@ -238,6 +274,24 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 			Timestamp: time.Now().UTC(),
 		})
 		return fmt.Errorf("worker: %s", msg)
+	}
+
+	// 如实上报时长偏差。
+	//
+	// 放在这里（对齐之后、合并之前）而不是最后：它解释的是"为什么成片会比
+	// 各镜头渲染时长之和短"，而那就是对齐做掉的那部分内容。
+	if len(drift) > 0 {
+		msg := fmt.Sprintf("%d 个镜头的实际时长与计划不符，已对齐到计划时长：%s",
+			len(drift), strings.Join(drift, "；"))
+		lg.Warn("镜头时长与计划不符，已对齐", "details", drift)
+		_, _ = p.emit(ctx, &domain.Event{
+			JobID: jobID, Node: "compose", Message: msg,
+			Payload: map[string]any{
+				"duration_drift":  drift,
+				"aligned_to_plan": true,
+			},
+			Timestamp: time.Now().UTC(),
+		})
 	}
 
 	// 阶段二：把归一化后的片段接起来。

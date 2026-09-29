@@ -55,11 +55,20 @@
   或把该标注改到边的另一侧。
 
 ### 4. 节奏（第二常被扣分的项）
-- 总动画时长控制在 **{{duration_sec}} 秒 ±15%**。
-- `self.play(..., run_time=...)` 的 `run_time` **不小于 1.0 秒**。
+- 总动画时长必须**精确等于 {{duration_sec}} 秒**（允许 ±0.5 秒）。
+  `self.play(..., run_time=...)` 的 `run_time` **不小于 1.0 秒** ——
   0.5 秒的动画观众根本来不及看清。
+- **必须按下面的步骤配平，不要靠估**：
+  1. 先给每个 `play` 定好 `run_time`；
+  2. 把它们**逐个相加**，算出已用时间；
+  3. 结尾用**一个** `self.wait(差额)` 补齐：`差额 = {{duration_sec}} - 已用时间`。
+     这个差额通常有好几秒，因为动画本身往往只有 3~5 秒。
+  4. 若"已用时间"已经**超过** {{duration_sec}}，就回头缩短中间某个 `run_time`，
+     而不是把结尾留空。
+- 这样做不是形式主义：**超出时长的部分会被合成流程直接裁掉**，
+  你的动画会播到一半突然结束，而审查会因此判负。
+  短于时长则会被冻住最后一帧，看起来像卡住了 —— 两种都不能接受。
 - 每个 `play` 之后留一点 `self.wait(...)`，让画面有呼吸。
-- 结尾 `self.wait(0.8)` 以上。
 
 ### 5. 确定性
 - **只有真的用了随机数，才写 `random.seed(0)`**，并且文件顶部必须
@@ -107,10 +116,15 @@ class SciShotScene(Scene):
 
         self.play(Write(title), run_time=1.2)
         self.play(FadeIn(eq, shift=UP * 0.3), run_time=1.5)
-        self.wait(0.8)
         # 逐步高亮：一次只强调一处，观众视线才有落点。
         self.play(eq[0][0:3].animate.set_color(YELLOW), run_time=1.2)
-        self.wait(1.0)
+
+        # 配平到 {{duration_sec}} 秒：已用 1.2 + 1.5 + 1.2 = 3.9 秒，
+        # 差额用**一个** wait 补齐。这里通常有好几秒，不要写死 0.8。
+        used = 1.2 + 1.5 + 1.2
+        remainder = {{duration_sec}} - used
+        if remainder > 0:
+            self.wait(remainder)
 ```
 
 上面所有 `{{...}}` 都是本次渲染注入的真实参数，**不要原样保留到输出里**。

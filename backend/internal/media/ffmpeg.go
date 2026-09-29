@@ -14,7 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/itJinYu/SciDirector/backend/internal/config"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,6 +22,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/itJinYu/SciDirector/backend/internal/config"
 )
 
 // ErrFFmpegNotFound 表示可执行文件不存在，属于部署配置错误，应当快速失败。
@@ -378,10 +380,14 @@ func (r *Runner) Probe(ctx context.Context, path string) (*ProbeResult, error) {
 //
 // 使用 scale + pad 而非强制拉伸，避免改变画面宽高比。
 func (r *Runner) Normalize(ctx context.Context, in, out string, spec NormalizeSpec) error {
-	return r.run(ctx,
+	args := []string{
 		"-hide_banner", "-nostdin", "-y",
 		"-i", in,
 		// 无音轨时补一条静音轨，保证所有片段结构一致（后续 mux / acrossfade 才不会错位）。
+		//
+		// anullsrc 不设时长 = **无限长**，配合末尾的 -shortest 让输出长度由
+		// **视频流**决定。这正是"补帧只要 tpad 视频、不必动音频"的原因：
+		// 视频被 tpad 拉长后，-shortest 自然跟着变长。
 		"-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
 		"-map", "0:v:0", "-map", "1:a:0",
 		"-vf", spec.normalizeVideoFilter(),
@@ -392,9 +398,14 @@ func (r *Runner) Normalize(ctx context.Context, in, out string, spec NormalizeSp
 		"-color_range", "tv",
 		"-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709",
 		"-shortest",
-		"-movflags", "+faststart",
-		out,
-	)
+	}
+	// 对齐到计划时长：`-t` 是输出选项，在**补帧之后**再兜一次底，
+	// 保证裁与补两条路径的产物长度都精确等于 AlignTo。
+	if spec.AlignTo > 0 {
+		args = append(args, "-t", fmt.Sprintf("%.3f", spec.AlignTo))
+	}
+	args = append(args, "-movflags", "+faststart", out)
+	return r.run(ctx, args...)
 }
 
 // Concat 用 concat demuxer 合并已归一化的片段。
@@ -609,6 +620,48 @@ type NormalizeSpec struct {
 	Height int
 	FPS    int
 	Color  ColorProfile
+	// AlignTo 非 0 时把输出**对齐到这个时长**（秒）：超长裁掉、不足补帧。
+	//
+	// 为什么必须有它：各引擎对"时长"的遵守程度差别很大 ——
+	// HTML 引擎由 window.__seek(t) 驱动，时长精确；而 manim 的时长完全取决于
+	// 生成的 Python 里 play/wait 的总和，实测某个计划 8 秒的镜头渲染出了 12.3 秒，
+	// 于是成片比目标长了 26%，而且没有任何地方告警。
+	//
+	// 对齐带来的第二个好处同样重要：字幕与旁白标记都是按**计划**时间轴算的，
+	// 视频不对齐时它们会整体漂移，对得越齐越准。
+	AlignTo float64
+	// AlignFrom 是输入的实际时长（调用方已探测）。用来决定该裁还是该补。
+	//
+	// 不在这里自己 Probe 是有原因的：Probe 会去抢 Runner 的全局并发闸门，
+	// 而 Normalize 内部已经持有它 —— 闸门上限为 1 时那会直接死锁。
+	AlignFrom float64
+}
+
+// NeedsAlign 报告这个片段是否需要为了对齐时长而重新编码。
+//
+// 抽成独立方法是因为调用方要拿它做"能否跳过转码"的判断：
+// 缺了它，"规格已经对了"会绕过时长对齐，而成片偏长正是从那里漏出去的
+// （HTML 引擎的产物天然就是目标规格）。
+func (s NormalizeSpec) NeedsAlign() bool {
+	if s.AlignTo <= 0 || s.FPS <= 0 {
+		return false
+	}
+	return math.Abs(s.AlignTo-s.AlignFrom) > 0.5/float64(s.FPS)
+}
+
+// alignPadSec 计算需要补帧的秒数（不需要补时为 0）。
+//
+// 容差取**半帧**：小于半帧的差异在帧率对齐时本来就会被抹平，
+// 为此多补一帧反而会引入可见的顿挫。
+func (s NormalizeSpec) alignPadSec() float64 {
+	if s.AlignTo <= 0 || s.FPS <= 0 {
+		return 0
+	}
+	short := s.AlignTo - s.AlignFrom - 0.5/float64(s.FPS)
+	if short <= 0 {
+		return 0
+	}
+	return short
 }
 
 // normalizeVideoFilter 构造归一化的视频滤镜链。
@@ -620,6 +673,9 @@ type NormalizeSpec struct {
 // in_range=auto:out_range=limited 是「统一质感」的关键一步：
 // 标了全范围的输入会被真正转换到有限范围，而不是被错误地当成有限范围播出去。
 // 输入未标注范围时 auto 按有限范围处理，等于不做多余转换 —— 两种情况都正确。
+//
+// tpad 放在 fps **之后**：补出来的帧直接就是目标帧率，
+// 放到前面会让补的帧再被 fps 滤镜重采样一次，白多一步。
 func (s NormalizeSpec) normalizeVideoFilter() string {
 	vf := fmt.Sprintf(
 		"scale=%d:%d:force_original_aspect_ratio=decrease:in_range=auto:out_range=limited,"+
@@ -627,6 +683,11 @@ func (s NormalizeSpec) normalizeVideoFilter() string {
 			"fps=%d",
 		s.Width, s.Height, s.Width, s.Height, s.FPS,
 	)
+	// stop_mode=clone 表示冻结最后一帧，而不是补黑帧 ——
+	// 补黑会让观众以为片子断了。
+	if pad := s.alignPadSec(); pad > 0 {
+		vf += fmt.Sprintf(",tpad=stop_mode=clone:stop_duration=%.3f", pad)
+	}
 	if eq := s.Color.filterExpr(); eq != "" {
 		vf += "," + eq
 	}
