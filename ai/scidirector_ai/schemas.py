@@ -263,6 +263,9 @@ class StyleGuide(BaseModel):
     theme: str = Field(default="dark", description="dark / light")
     #: 预设名。显式填了 primary_color / background_color 时以显式值为准。
     preset: str = Field(default=DEFAULT_PRESET, description="风格预设，见 STYLE_PRESETS")
+    #: 背景样式（见 backgrounds.BACKGROUND_STYLE_IDS）。
+    #: 缺省 auto = "由模型按内容决定"，与既有任务行为一致。
+    background_style: str = Field(default="auto", description="背景样式，见 BACKGROUND_STYLE_IDS")
     # 空串 = **未指定**，由 preset 填充。
     #
     # 用空串而不是 None 表示"没填"：这两个字段最终一定会被填成具体色值，
@@ -298,6 +301,26 @@ class StyleGuide(BaseModel):
         if not self.background_color:
             self.background_color = palette["background_color"]
         return self
+
+    @field_validator("background_style")
+    @classmethod
+    def _check_background_style(cls, v: str) -> str:
+        """背景样式必须在册。
+
+        延迟导入 `backgrounds`：那个模块需要引用本模块的 StyleGuide（仅类型），
+        而本模块要在校验时用它的表 —— 模块层互相导入会变成循环导入。
+
+        未登记的样式**直接报错**，理由与风格预设一致：静默回落的表现是
+        "用户选了网格、成片却是纯色"，且没有任何地方提示过。
+        """
+        from .backgrounds import BACKGROUND_STYLE_IDS
+
+        key = (v or "").strip().lower() or "auto"
+        if key not in BACKGROUND_STYLE_IDS:
+            raise ValueError(
+                f"未知的背景样式 {v!r}；可用：{', '.join(BACKGROUND_STYLE_IDS)}"
+            )
+        return key
 
     @property
     def resolution(self) -> tuple[int, int]:

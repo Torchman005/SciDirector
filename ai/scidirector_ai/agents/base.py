@@ -15,6 +15,7 @@ from typing import Any
 from ..config import get_settings
 from ..llm import LLMClient
 from ..logging import get_logger
+from ..backgrounds import background_prompt_block
 from ..schemas import StyleGuide
 
 logger = get_logger(__name__)
@@ -76,6 +77,9 @@ def style_guide_to_text(guide: StyleGuide) -> str:
         f"- 正文字号不小于：{guide.min_font_size}px（低于此值会被审查判为不可读）",
         f"- 画面比例：{guide.aspect_ratio}（{guide.resolution[0]}x{guide.resolution[1]}）",
     ]
+    # 背景样式单独展开成一块：它既要给出风格描述，也要给出**可直接用的 CSS**
+    # 与 manim 的做法 —— 只说"用网格背景"，模型画出来的网格千奇百怪。
+    lines.append(background_prompt_block(guide))
     if guide.glossary:
         pairs = "；".join(f"{k} -> {v}" for k, v in guide.glossary.items())
         lines.append(f"- 术语表（必须严格遵守，保证全片译名一致）：{pairs}")

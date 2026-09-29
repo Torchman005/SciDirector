@@ -43,6 +43,26 @@ type UploadAssetResponse struct {
 	SizeBytes   int64   `json:"size_bytes"`
 }
 
+// PreviewRequest 是"渲染一段效果预览"的请求体。
+//
+// style_guide 与 effects 的语义**与提交任务时完全一致** —— 预览若接受任务
+// 不接受的东西，用户会以为"预览能用、提交却报错"是 bug。
+type PreviewRequest struct {
+	StyleGuide map[string]any `json:"style_guide"`
+	Effects    domain.Effects `json:"effects"`
+	// DurationSec 是预览时长，0 表示用缺省值（几秒）。上限见 maxPreviewDurationSec。
+	DurationSec float64 `json:"duration_sec"`
+}
+
+// PreviewResponse 返回预览产物的地址。
+type PreviewResponse struct {
+	PreviewID   string  `json:"preview_id"`
+	URL         string  `json:"url"`
+	DurationSec float64 `json:"duration_sec"`
+	Width       int     `json:"width"`
+	Height      int     `json:"height"`
+}
+
 // GenerateResponse 返回任务受理结果。
 type GenerateResponse struct {
 	JobID     string           `json:"job_id"`
@@ -141,6 +161,12 @@ type ApproveResponse struct {
 type PatchShotRequest struct {
 	Narration   *string `json:"narration,omitempty" binding:"omitempty,max=2000"`
 	VisualBrief *string `json:"visual_brief,omitempty" binding:"omitempty,max=2000"`
+	// BackgroundStyle 是**逐镜头**的背景样式覆盖（见 media.BackgroundStyleIDs）。
+	//
+	// 用指针是为了区分「没给这个字段」与「显式清空」：空串表示回到全片统一设置。
+	// 只影响**重新渲染**那一次 —— 初版渲染是整条流水线一次性跑完的，
+	// 那时分镜表还不存在，谈不上"给某个镜头指定背景"。
+	BackgroundStyle *string `json:"background_style,omitempty" binding:"omitempty,max=32"`
 	// Redo 为 true 时，改完后立即把该镜头重新渲染一遍。
 	// 分开是刻意的：审核员可能只想先修正文案、稍后再统一重渲。
 	Redo bool `json:"redo"`

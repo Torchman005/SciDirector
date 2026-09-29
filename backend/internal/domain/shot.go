@@ -185,12 +185,18 @@ type Shot struct {
 	Code        string   `json:"code,omitempty"`
 	Language    string   `json:"language,omitempty"` // python / html+js
 
-	Status    ShotStatus `json:"status"`
-	Attempt   int        `json:"attempt"` // 已尝试次数，熔断依据
-	Artifact  *Artifact  `json:"artifact,omitempty"`
-	Feedbacks []Feedback `json:"feedbacks,omitempty"`
-	Error     string     `json:"error,omitempty"`
-	UpdatedAt time.Time  `json:"updated_at"`
+	Status ShotStatus `json:"status"`
+	// BackgroundStyle 是**逐镜头**的背景样式覆盖（空串 = 用全片统一设置）。
+	//
+	// 放在 Shot 上是免费的（整个 Shot 以 JSON 存 Redis），而渲染时它会被并进
+	// 该镜头的 style_guide_json 传给 AI —— 那条通道本来就有，因此不必改 proto。
+	// 用户此前反馈过"背景不变化"，逐镜头可切换正是为它准备的出口。
+	BackgroundStyle string     `json:"background_style,omitempty"`
+	Attempt         int        `json:"attempt"` // 已尝试次数，熔断依据
+	Artifact        *Artifact  `json:"artifact,omitempty"`
+	Feedbacks       []Feedback `json:"feedbacks,omitempty"`
+	Error           string     `json:"error,omitempty"`
+	UpdatedAt       time.Time  `json:"updated_at"`
 }
 
 // Job 是一次「脚本 -> 成片」的生成请求。

@@ -128,11 +128,15 @@ func run() error {
 	// 就会失效，接着在 nil 接收者上调用方法直接 panic。
 	// 这是 Go 里最经典的一类"看起来判空了其实没判到"。
 	var assetProber httpapi.AudioProber
+	// 预览渲染与音频探测共用同一个 Runner，也就共用同一个**全局并发闸门** ——
+	// 预览因此不会在任务渲染时抢出额外的 ffmpeg 并发。
+	var effectsPreviewer httpapi.EffectsPreviewer
 	if r, rerr := media.NewRunner(cfg.Media); rerr != nil {
-		// 只降级上传能力，不让网关整个起不来：与 Inspector/Metrics 同样的取舍。
-		logger.Warn("构造媒体运行器失败，素材上传将不可用", "error", rerr.Error())
+		// 只降级上传与预览能力，不让网关整个起不来：与 Inspector/Metrics 同样的取舍。
+		logger.Warn("构造媒体运行器失败，素材上传与效果预览将不可用", "error", rerr.Error())
 	} else {
 		assetProber = r
+		effectsPreviewer = r
 	}
 
 	deps := httpapi.Deps{
@@ -151,6 +155,8 @@ func run() error {
 		// 素材上传要按**内容**判定音频（而不是看扩展名），因此需要一个 ffprobe
 		// 探测能力。只用到 ProbeAudio 一个方法，接口因此定义在 httpapi 那一侧。
 		AssetProber: assetProber,
+		// 效果预览走成片同一条滤镜链（见 httpapi/preview.go）。
+		Previewer: effectsPreviewer,
 	}
 	router := httpapi.NewRouter(httpapi.NewServer(deps), deps)
 

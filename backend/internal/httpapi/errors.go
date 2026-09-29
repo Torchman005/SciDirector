@@ -75,6 +75,8 @@ type Deps struct {
 	// AssetProber 提供音频探测能力（素材上传要用它按内容判定，而不是看扩展名）。
 	// 为 nil 时上传接口返回 501，理由同 Inspector / Metrics。
 	AssetProber AudioProber
+	// Previewer 提供效果预览渲染能力。为 nil 时预览接口返回 501。
+	Previewer EffectsPreviewer
 }
 
 // Reconciler 是按需状态对账的能力（由 reconcile.Reconciler 实现）。

@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -593,6 +594,16 @@ func (s *Server) HandlePatchShot(c *gin.Context) {
 			shot.VisualBrief = strings.TrimSpace(*req.VisualBrief)
 			changed = append(changed, "visual_brief")
 		}
+		// 逐镜头切换背景：空串表示"回到全片统一设置"，因此同样用指针区分
+		// 「没给这个字段」与「显式清空」。
+		if req.BackgroundStyle != nil {
+			style := strings.TrimSpace(*req.BackgroundStyle)
+			if style != "" && !media.IsBackgroundStyle(style) {
+				return fmt.Errorf("%w: 未知的背景样式 %q", errBadBackgroundStyle, style)
+			}
+			shot.BackgroundStyle = style
+			changed = append(changed, "background_style")
+		}
 
 		if req.Redo {
 			next, terr := domain.Transition(shot.Status, domain.StatusRetrying)
@@ -622,6 +633,12 @@ func (s *Server) HandlePatchShot(c *gin.Context) {
 	if err != nil {
 		if errors.Is(err, errShotNotFound) {
 			abortWith(c, http.StatusNotFound, ErrCodeNotFound, "分镜不存在", err)
+			return
+		}
+		// 背景样式非法要回 400 而不是 500：这是**请求参数**的问题，
+		// 且错误信息里带着可用值列表，用户照着改就能成功。
+		if errors.Is(err, errBadBackgroundStyle) {
+			abortWith(c, http.StatusBadRequest, ErrCodeBadRequest, err.Error(), err)
 			return
 		}
 		mapError(c, err)
@@ -673,6 +690,10 @@ func (s *Server) HandlePatchShot(c *gin.Context) {
 // errShotNotFound 是 handler 内部哨兵，用于把「分镜不存在」与仓储错误区分开，
 // 从而返回 404 而不是 500。
 var errShotNotFound = errors.New("httpapi: 分镜不存在")
+
+// errBadBackgroundStyle 表示逐镜头背景样式非法。
+// 单独一个哨兵值是为了在 handler 里能把它映射成 400（而不是 500）。
+var errBadBackgroundStyle = errors.New("httpapi: 背景样式非法")
 
 // withTimeout 统一封装 context.WithTimeout，避免调用点忘记 defer cancel 造成
 // goroutine 与定时器泄漏（这是 Go 服务里最常见的一类长跑内存增长原因）。

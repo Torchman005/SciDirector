@@ -108,8 +108,13 @@ AI 不可用只标为 `degraded`（已提交的任务仍可查询）。
 | 字段 | 说明 |
 | --- | --- |
 | `preset` | 风格预设：`default` / `tech` / `warm` / `minimal` / `nature` / `sunset`。未登记的预设**报错**，不静默回落 |
+| `background_style` | 背景样式：`auto` / `solid` / `gradient` / `grid` / `vignette` / `noise` / `scanlines`。缺省 `auto`（模型自定，与旧任务行为一致）。未登记的值报错 |
 | `primary_color` / `background_color` | 显式色值，**优先于**预设 |
 | `min_font_size` | 正文字号下限（成片像素），同时是审查 rubric 里的硬性指标 |
+
+> **背景样式是"风格族"而不是一张固定背景图**：选定后全片风格统一，但要求模型
+> 在每个镜头里变化构图（网格疏密、光晕位置、颗粒浓度…）。若锁死成同一张背景，
+> 就退回了"只有文字变化、背景不变化"的老问题。
 
 `effects` 字段：
 
@@ -330,7 +335,53 @@ X-Tenant-ID: acme
 它的流水线已经停了、在等人类，不该继续占配额，否则一个卡着人工审核的任务会把
 整个租户挡在门外。
 
-### 2.4 上传素材（背景音乐）
+### 2.4 效果预览
+
+#### `POST /api/v1/preview/effects`
+
+用**成片同一条 ffmpeg 滤镜链**渲一小段，让用户在提交前就看到实际效果。
+`style_guide` 与 `effects` 的语义与 `/generate` 完全一致（预览若接受任务不接受的
+东西，用户会以为"预览能用、提交却报错"是 bug）。
+
+```bash
+curl -X POST http://localhost:8080/api/v1/preview/effects \
+  -H 'Content-Type: application/json' \
+  -d '{"style_guide":{"preset":"tech","background_style":"grid"},
+       "effects":{"grade":"cool","burn_subtitles":true,
+                  "subtitle_style":{"font_size":44,"primary_color":"#FFE066"}},
+       "duration_sec":3}'
+```
+
+```json
+{"ok":true,"data":{"preview_id":"pvbaf307…","url":"/api/v1/previews/pvbaf307…",
+ "duration_sec":3,"width":1920,"height":1080}}
+```
+
+预览画面是一张**测试卡**：背景（按所选样式真实渲染）+ 8 级灰阶梯（看对比度）
++ 红绿蓝三色块（看色温）+ 主色条（看调色板）+ 真实烧录的字幕。
+
+#### `GET /api/v1/previews/:previewID`
+
+播放预览产物，**支持 Range**。预览仅保留约 2 小时，之后会在下次预览时被清理。
+
+---
+
+### 2.5 逐镜头切换背景
+
+#### `PATCH /api/v1/jobs/:jobID/shots/:shotID`
+
+```json
+{"background_style": "scanlines", "redo": true}
+```
+
+- 只影响**重新渲染**那一次：初版渲染是整条流水线一次性跑完的，那时分镜表还不存在。
+- 空串 `""` 表示回到全片统一设置（因此该字段用指针区分「没给」与「显式清空」）。
+- 未登记的样式返回 400，错误信息里带可用值列表。
+- 覆盖是**合并**而非替换：配色/字体/术语表等全片性约束继续生效。
+
+---
+
+### 2.6 上传素材（背景音乐）
 
 #### `POST /api/v1/assets`
 

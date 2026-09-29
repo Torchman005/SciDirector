@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/hibiken/asynq"
@@ -509,7 +510,7 @@ func (p *Processor) HandleRenderShot(ctx context.Context, task RenderShotTask) e
 		Shot:           pbconv.ShotToPB(shot),
 		HumanComment:   task.Payload.HumanComment,
 		Attempt:        int32(task.Payload.Attempt),
-		StyleGuideJson: mustJSON(job.StyleGuide),
+		StyleGuideJson: mustJSON(shotStyleGuide(job, shot)),
 		OutputDir:      outputDir,
 	}
 	if partial {
@@ -693,6 +694,25 @@ func (p *Processor) shotWorkDir(jobID string, shotIndex int) string {
 // jobWorkDir 返回任务级工作目录（合成产物放这里）。
 func (p *Processor) jobWorkDir(jobID string) string {
 	return filepath.Join(p.cfg.Media.WorkDir, jobID)
+}
+
+// shotStyleGuide 把全片风格与该镜头的背景覆盖合并成这一镜头要用的 style_guide。
+//
+// 合并而不是整体替换：逐镜头覆盖**只该改变背景**，配色/字体/术语表这些全片性
+// 约束必须继续生效。若在这里整体替换，用户改一个镜头的背景会连带丢掉术语表，
+// 而成片里的表现（译名忽然不一致）几乎不可能与"我改了背景"联系起来。
+//
+// 这条通道本来就有（GenerateShotRequest / ReviseShotRequest 都带
+// style_guide_json），所以逐镜头背景**不需要改 proto**。
+func shotStyleGuide(job *domain.Job, shot *domain.Shot) map[string]any {
+	out := make(map[string]any, len(job.StyleGuide)+1)
+	for k, v := range job.StyleGuide {
+		out[k] = v
+	}
+	if shot != nil && strings.TrimSpace(shot.BackgroundStyle) != "" {
+		out["background_style"] = shot.BackgroundStyle
+	}
+	return out
 }
 
 // mustJSON 序列化为 JSON 字符串；失败返回 "{}"。

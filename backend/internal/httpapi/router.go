@@ -74,6 +74,11 @@ func NewRouter(s *Server, deps Deps) *gin.Engine {
 		// 在 /generate 的 effects.bgm.asset_id 里引用它。
 		v1.POST("/assets", s.HandleUploadAsset)
 
+		// 效果预览：用成片同一条滤镜链渲一小段，让用户在提交前就能看到
+		// 调色/淡入淡出/字幕样式/配乐的实际效果。
+		v1.POST("/preview/effects", s.HandlePreviewEffects)
+		v1.GET("/previews/:previewID", s.HandleGetPreview)
+
 		jobs := v1.Group("/jobs/:jobID")
 		{
 			jobs.GET("", s.HandleGetJob)
