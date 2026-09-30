@@ -98,6 +98,13 @@ class Settings(BaseSettings):
     doubao_access_token: str = ""
     doubao_cluster: str = "volcano_tts"
     doubao_endpoint: str = ""
+    #: `Resource-Id` 请求头。**用声音复刻/大模型音色时必须设它**。
+    #
+    # 同一个端点靠这个头区分"开通了哪个产品"：老的非流式合成不带它，
+    # 而大模型语音合成与声音复刻走的是按资源计费的另一条线（形如
+    # `volc.service_type.10029` / `volc.megatts.*`）。留空 = 不带这个头，
+    # 保持与既有行为一致（既有行为见 docs/ROADMAP 的"未验证"标注）。
+    doubao_resource_id: str = ""
 
     # Fish Audio。
     fish_api_key: str = ""

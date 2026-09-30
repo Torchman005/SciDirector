@@ -61,6 +61,7 @@ def build_tts_provider(settings, *, provider: str | None = None) -> TTSProvider 
             access_token=getattr(settings, "doubao_access_token", ""),
             cluster=getattr(settings, "doubao_cluster", "volcano_tts"),
             endpoint=getattr(settings, "doubao_endpoint", "") or "https://openspeech.bytedance.com/api/v1/tts",
+            resource_id=getattr(settings, "doubao_resource_id", ""),
             default_voice=voice or "zh_female_shuangkuaisisi_moon_bigtts",
             timeout_sec=getattr(settings, "tts_timeout_sec", 60),
         )

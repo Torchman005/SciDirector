@@ -54,6 +54,7 @@ class DoubaoTTSProvider:
         access_token: str = "",
         cluster: str = DEFAULT_CLUSTER,
         endpoint: str = DEFAULT_ENDPOINT,
+        resource_id: str = "",
         default_voice: str = DEFAULT_VOICE,
         encoding: str = "mp3",
         sample_rate: int = 24000,
@@ -63,6 +64,7 @@ class DoubaoTTSProvider:
         self.access_token = access_token
         self.cluster = cluster
         self.endpoint = endpoint
+        self.resource_id = resource_id
         self.default_voice = default_voice
         self.encoding = encoding
         self.sample_rate = sample_rate
@@ -129,6 +131,14 @@ class DoubaoTTSProvider:
             "Authorization": f"Bearer;{self.access_token}",
             "Content-Type": "application/json",
         }
+        # `Resource-Id` 决定这个请求算在**哪个产品**上。
+        #
+        # 同一个端点靠它区分开通项：老的非流式合成不带它，而大模型语音合成与
+        # **声音复刻**（复刻出的 speaker_id 只能在大模型合成上使用）必须带上，
+        # 否则会拿到「未开通/无权限」一类的失败码 —— 而那种报错不会告诉你
+        # "少了个请求头"。留空则保持既有行为不变。
+        if self.resource_id:
+            headers["Resource-Id"] = self.resource_id
 
         try:
             resp = httpx.post(
