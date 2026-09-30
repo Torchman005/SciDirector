@@ -41,6 +41,19 @@ type UploadAssetResponse struct {
 	Filename    string  `json:"filename"`
 	DurationSec float64 `json:"duration_sec"`
 	SizeBytes   int64   `json:"size_bytes"`
+	// MeanVolumeDBFS / PeakVolumeDBFS 是**实测电平**（dBFS，越接近 0 越响）。
+	//
+	// 为什么要回传它们：用户的原话是"上传以后无法判断 BGM 的音量"。
+	// 音乐文件的响度差异极大（常见 -3 到 -25 dBFS），而配乐音量是**相对基准**
+	// 的偏移 —— 不知道文件本身多响，滑块该往哪边拖就只能靠猜。
+	//
+	// 字段是指针：探测失败（文件古怪、ffmpeg 不可用）时应当是 `null` 而不是 0 ——
+	// 0 dBFS 意味着"满刻度"，那会把"没测到"显示成"非常响"。
+	MeanVolumeDBFS *float64 `json:"mean_volume_dbfs,omitempty"`
+	PeakVolumeDBFS *float64 `json:"peak_volume_dbfs,omitempty"`
+	// PeakWarning 为真表示峰值已贴近 0 dBFS，源文件很可能已经削顶（爆音）。
+	// 那是**源文件的问题**，再怎么调音量也救不回来，因此单独提示。
+	PeakWarning bool `json:"peak_warning,omitempty"`
 }
 
 // PreviewRequest 是"渲染一段效果预览"的请求体。

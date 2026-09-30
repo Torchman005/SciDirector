@@ -103,10 +103,22 @@ export function App() {
 
   // BGM：上传后记住 asset_id。**只传 id，不传路径** ——
   // 路径由服务端从素材库解析，请求方拿不到"读服务端任意文件"的能力。
-  const [bgm, setBgm] = useState<{ assetId: string; filename: string; durationSec: number } | null>(
-    null,
-  )
+  //
+  // meanDb/peakDb 是服务端**实测**的电平：音乐文件响度差异极大（常见 -3 到 -25
+  // dBFS），而音量滑块是**相对基准**的偏移 —— 不知道文件本身多响，滑块该往哪边
+  // 拖就只能靠猜。这正是"上传以后无法判断音量"的症结。
+  const [bgm, setBgm] = useState<{
+    assetId: string
+    filename: string
+    durationSec: number
+    meanDb: number | null
+    peakDb: number | null
+    peakWarning: boolean
+  } | null>(null)
   const [bgmBusy, setBgmBusy] = useState(false)
+  // 配乐音量偏移（dB）。0 = 基准响度（服务端把配乐归一到 -20 LUFS）。
+  // 缺省 0 而不是负数：基准本身已经比对白低一截，"再减一点"是多余的。
+  const [bgmVolumeDb, setBgmVolumeDb] = useState(0)
 
   // 表单联动：色调决定强度滑块是否可用，烧录开关决定字幕样式是否可用。
   // 用 useWatch 而不是自己再存一份 state —— 两份真相迟早会不一致。
@@ -204,7 +216,14 @@ export function App() {
     setBgmBusy(true)
     try {
       const resp = await api.uploadAsset(file)
-      setBgm({ assetId: resp.asset_id, filename: resp.filename, durationSec: resp.duration_sec })
+      setBgm({
+        assetId: resp.asset_id,
+        filename: resp.filename,
+        durationSec: resp.duration_sec,
+        meanDb: resp.mean_volume_dbfs ?? null,
+        peakDb: resp.peak_volume_dbfs ?? null,
+        peakWarning: resp.peak_warning === true,
+      })
       message.success(`已上传 ${resp.filename}（${formatTime(resp.duration_sec)}）`)
     } catch (err) {
       setBgm(null)
@@ -234,7 +253,9 @@ export function App() {
           margin_v: values.subtitle_margin_v,
         }
       }
-      if (bgm) effects.bgm = { asset_id: bgm.assetId, loop: true }
+      // volume_db 是**相对基准**的偏移（服务端先把配乐归一到 -20 LUFS）。
+      // 之前这里漏了这个字段，滑块因此形同虚设 —— 服务端只能拿到默认值 0。
+      if (bgm) effects.bgm = { asset_id: bgm.assetId, loop: true, volume_db: bgmVolumeDb }
 
       const req: GenerateRequest = {
         raw_script: values.raw_script.trim(),
@@ -474,17 +495,70 @@ export function App() {
 
               <Form.Item label="背景音乐" style={{ marginBottom: 8 }}>
                 {bgm ? (
-                  <Space wrap>
-                    <Tag color="green" bordered={false}>
-                      {bgm.filename}
-                    </Tag>
-                    <Text type="secondary">{formatTime(bgm.durationSec)}</Text>
+                  <Space direction="vertical" style={{ width: '100%' }} size={8}>
+                    <Space wrap>
+                      <Tag color="green" bordered={false}>
+                        {bgm.filename}
+                      </Tag>
+                      <Text type="secondary">{formatTime(bgm.durationSec)}</Text>
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        比成片短的部分会自动循环
+                      </Text>
+                      <Button size="small" danger onClick={() => setBgm(null)}>
+                        移除
+                      </Button>
+                    </Space>
+
+                    {/* 试听：不给听就只能靠猜音量。原生 audio 自带播放与进度条，
+                        接口支持 Range 因此可以拖动。 */}
+                    <audio
+                      controls
+                      preload="none"
+                      style={{ width: '100%', height: 32 }}
+                      src={api.assetUrl(bgm.assetId)}
+                    />
+
+                    {/* 实测电平：滑块是"相对基准"的偏移，不知道源文件多响就没法调。 */}
                     <Text type="secondary" style={{ fontSize: 12 }}>
-                      比成片短的部分会自动循环
+                      {bgm.meanDb !== null && bgm.peakDb !== null ? (
+                        <>
+                          源文件实测：平均 {bgm.meanDb.toFixed(1)} dB / 峰值{' '}
+                          {bgm.peakDb.toFixed(1)} dB
+                          {bgm.peakWarning && (
+                            <Text type="danger" style={{ fontSize: 12 }}>
+                              {' '}
+                              · 峰值已贴近满刻度，源文件可能已经削顶（爆音），调音量救不回来
+                            </Text>
+                          )}
+                        </>
+                      ) : (
+                        '未能测出源文件电平（不影响使用）'
+                      )}
                     </Text>
-                    <Button size="small" danger onClick={() => setBgm(null)}>
-                      移除
-                    </Button>
+
+                    <Space>
+                      <Text style={{ fontSize: 12, whiteSpace: 'nowrap' }}>配乐音量</Text>
+                      <input
+                        type="range"
+                        min={-24}
+                        max={12}
+                        step={1}
+                        value={bgmVolumeDb}
+                        onChange={(e) => setBgmVolumeDb(Number(e.target.value))}
+                        style={{ width: 200 }}
+                      />
+                      <Text style={{ fontSize: 12, width: 110 }}>
+                        {bgmVolumeDb > 0 ? `+${bgmVolumeDb}` : bgmVolumeDb} dB
+                        {bgmVolumeDb === 0 ? '（基准）' : ''}
+                      </Text>
+                      <Button size="small" onClick={() => setBgmVolumeDb(0)}>
+                        复位
+                      </Button>
+                    </Space>
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      0 dB 已是"垫在旁白下面"的基准响度（约 -20 LUFS），通常不需要再调小；
+                      听不清旁白时再往左拖。
+                    </Text>
                   </Space>
                 ) : (
                   <Upload.Dragger

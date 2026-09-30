@@ -201,6 +201,12 @@ export interface UploadAssetResponse {
   filename: string
   duration_sec: number
   size_bytes: number
+  /** 实测平均电平（dBFS，越接近 0 越响）。探测失败时为 null。 */
+  mean_volume_dbfs?: number | null
+  /** 实测峰值电平。 */
+  peak_volume_dbfs?: number | null
+  /** 峰值贴近满刻度 = 源文件很可能已经削顶，调音量救不回来。 */
+  peak_warning?: boolean
 }
 
 export interface GenerateResponse {

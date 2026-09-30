@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -15,6 +16,7 @@ import (
 	"github.com/itJinYu/SciDirector/backend/internal/assets"
 	"github.com/itJinYu/SciDirector/backend/internal/domain"
 	"github.com/itJinYu/SciDirector/backend/internal/logging"
+	"github.com/itJinYu/SciDirector/backend/internal/media"
 )
 
 // 上传限制。数值取的是"够用且不至于被拿来当网盘"的量级：
@@ -32,6 +34,44 @@ const (
 // 不该让网关整个起不来。
 type AudioProber interface {
 	ProbeAudio(ctx context.Context, path string) (float64, error)
+	// ProbeAudioLevel 测平均/峰值电平，用于上传后告诉用户"这个文件多响"。
+	ProbeAudioLevel(ctx context.Context, path string) (media.AudioLevel, error)
+}
+
+// assetIDRe 校验素材 id 的形式（会参与拼路径，因此必须严格）。
+var assetIDRe = regexp.MustCompile(`^[0-9a-f]{16,64}$`)
+
+// HandleGetAsset 把上传的素材原样交回浏览器，用于**试听**。
+//
+// 走 c.File（内部是 http.ServeFile）而不是自己读文件：它自带 Range 支持，
+// 浏览器才能拖动音频进度条。
+//
+// 这里必须防目录穿越：id 直接参与拼路径，因此先用正则卡死形式 ——
+// 素材 id 是服务端签发的十六进制串，任何别的东西都不该匹配上。
+func (s *Server) HandleGetAsset(c *gin.Context) {
+	id := c.Param("assetID")
+	if !assetIDRe.MatchString(id) {
+		// 非法 id 直接 404：它不可能是我们签发的。
+		abortWith(c, http.StatusNotFound, ErrCodeNotFound, "素材不存在", nil)
+		return
+	}
+	store, err := s.assetStore()
+	if err != nil {
+		mapError(c, err)
+		return
+	}
+	// Resolve 只接受合法 id，并且只在**该租户自己的目录**里找。
+	path, err := store.Resolve(tenantOf(c), id)
+	if err != nil {
+		abortWith(c, http.StatusNotFound, ErrCodeNotFound, "素材不存在或已被清理", err)
+		return
+	}
+	st, serr := os.Stat(path)
+	if serr != nil || st.IsDir() {
+		abortWith(c, http.StatusNotFound, ErrCodeNotFound, "素材不存在或已被清理", serr)
+		return
+	}
+	c.File(path)
 }
 
 // assetStore 按需构造素材库。
@@ -132,10 +172,35 @@ func (s *Server) HandleUploadAsset(c *gin.Context) {
 	}
 
 	tenant := tenantOf(c)
-	id, _, err := store.Save(tenant, tmpPath, ext)
+	id, dst, err := store.Save(tenant, tmpPath, ext)
 	if err != nil {
 		mapError(c, err)
 		return
+	}
+
+	// 顺带测出这个文件多响。
+	//
+	// **必须探 dst 而不是 tmpPath**：Save 已经把临时文件 Rename 走了，
+	// 再去探原路径会得到"文件不存在" —— 而它表现为"电平字段莫名缺席"，
+	// 不是报错，所以第一次很容易漏掉。
+	//
+	// **尽力而为**：测不到就不给数字（字段为 null），而不是因此拒绝上传 ——
+	// 电平是"帮用户判断"的辅助信息，不该成为上传的门槛。
+	resp := UploadAssetResponse{
+		AssetID:     id,
+		Kind:        "audio",
+		Filename:    filepath.Base(header.Filename),
+		DurationSec: duration,
+		SizeBytes:   header.Size,
+	}
+	if lv, lerr := s.deps.AssetProber.ProbeAudioLevel(ctx, dst); lerr == nil {
+		resp.MeanVolumeDBFS = &lv.MeanDBFS
+		resp.PeakVolumeDBFS = &lv.PeakDBFS
+		// 峰值贴近满刻度 = 源文件很可能已经削顶。那是**源文件的问题**，
+		// 调音量救不回来，所以要单独提示，而不是让用户白折腾滑块。
+		resp.PeakWarning = lv.PeakDBFS > -1.0
+	} else {
+		lg.Warn("素材电平探测失败，上传响应不含电平", "error", lerr.Error())
 	}
 	lg.Info("素材已上传", "asset_id", id, "kind", "audio",
 		"duration_sec", duration, "size_bytes", header.Size)
@@ -143,13 +208,7 @@ func (s *Server) HandleUploadAsset(c *gin.Context) {
 	// 用 respondOK 而不是直接 c.JSON：所有成功响应都必须带 {ok,data} 信封。
 	// 这一条不是洁癖 —— 前端的 request() 统一按信封拆包，漏掉信封会让
 	// 调用方拿到 undefined 而**不报错**（本项目已经踩过一次，整个页面静默空白）。
-	respondOK(c, UploadAssetResponse{
-		AssetID:     id,
-		Kind:        "audio",
-		Filename:    filepath.Base(header.Filename),
-		DurationSec: duration,
-		SizeBytes:   header.Size,
-	})
+	respondOK(c, resp)
 }
 
 // resolveEffects 把请求里的 effects 变成可以落库的形态，并在失败时写好响应。

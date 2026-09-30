@@ -118,6 +118,9 @@ export const api = {
   artifactUrl: (jobId: string) =>
     `/api/v1/jobs/${encodeURIComponent(jobId)}/artifact`,
 
+  /** 上传素材的试听地址（浏览器直接播，支持 Range）。 */
+  assetUrl: (assetId: string) => `/api/v1/assets/${encodeURIComponent(assetId)}`,
+
   /**
    * 按脚本估算成片时长。
    *
