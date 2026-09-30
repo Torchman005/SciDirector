@@ -105,6 +105,16 @@ class Settings(BaseSettings):
     # `volc.service_type.10029` / `volc.megatts.*`）。留空 = 不带这个头，
     # 保持与既有行为一致（既有行为见 docs/ROADMAP 的"未验证"标注）。
     doubao_resource_id: str = ""
+    #: **新版鉴权**（V3）用的 API Key。
+    doubao_api_key: str = ""
+    #: 鉴权代次：`bearer`（老版 Authorization: Bearer;<token>）/ `api_key`（新版 X-Api-Key）。
+    #
+    # 两代不只是换个头：请求体与**响应体**都不同（新版是分块/SSE）。拿一套头去打
+    # 另一代的端点，只会得到一句含糊的「鉴权失败/未开通」—— 它不会告诉你用错了哪代。
+    # 因此代次是**显式配置**，而不是自动猜。
+    doubao_auth_mode: Literal["bearer", "api_key"] = "bearer"
+    #: 请求/响应形态：`v1`（app/audio/request，整段 base64）/ `v3`（user/req_params，分块）。
+    doubao_api_style: Literal["v1", "v3"] = "v1"
 
     # Fish Audio。
     fish_api_key: str = ""

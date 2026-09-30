@@ -1,4 +1,4 @@
-"""豆包（火山引擎）TTS 适配器的请求头测试。
+﻿"""豆包（火山引擎）TTS 适配器的请求头测试。
 
 这一条针对的是一个**没有报错、只有含糊失败码**的坑：同一个端点靠
 `Resource-Id` 请求头区分"开通了哪个产品"，而声音复刻出的 speaker_id
@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import base64
+import json
 from pathlib import Path
 
 import pytest
@@ -30,7 +31,10 @@ class _FakeResponse:
 
     @property
     def text(self) -> str:
-        return ""
+        # 适配器现在读 `resp.text` 而不是 `resp.json()`：新版（V3）的响应是
+        # **分块/SSE**，必须逐行解析，`resp.json()` 那种整体解析对它是错的。
+        # 老版单个 JSON 也是"一行"，因此同一套代码能覆盖两代。
+        return json.dumps(self._body)
 
 
 def _provider(**kw) -> DoubaoTTSProvider:
