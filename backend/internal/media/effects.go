@@ -467,12 +467,28 @@ const (
 	duckReleaseMs = 350.0
 )
 
+// bgmReferenceLUFS 是配乐的**基准响度**。
+//
+// 为什么需要基准而不是直接调 `volume`：上传的音乐文件响度千差万别
+// （有的整轨在 -3 LUFS、有的在 -25 LUFS）。同一个 `volume_db` 作用在它们身上
+// 得到的结果完全不同 —— 用户会觉得"这个音量滑块时灵时不灵"。
+//
+// 先归一到基准，`volume_db` 才成为**相对基准的偏移**，滑块才有可预期性。
+//
+// 取 -20 而不是对白目标的 -16：配乐是**垫底**的，本就该比对白低一截。
+// 这同时也是"默认 BGM 太响"的根因 —— 原来纯 BGM 的成片会被最后那道
+// `loudnorm=I=-16` 直接拽到对白响度，而它本该比旁白轻。
+const bgmReferenceLUFS = -20.0
+
 // BuildBgmTrack 把背景音乐配成**与成片等长**的一条音轨。
 //
 // 三种情形都要处理，且都不能报错收场：
 //   - 配乐比成片短 -> 循环（Loop=true 时用 `-stream_loop`）；
 //   - 配乐比成片长 -> 裁到成片长度；
 //   - 两端 -> 淡入淡出，避免开头"啪"地切入和结尾突然截断。
+//
+// 另外会**先**把配乐归一到 bgmReferenceLUFS，**再**施加 `volume_db` 偏移 ——
+// 顺序不能反：先加偏移再归一，偏移量会被归一化抹掉，滑块就完全失效了。
 func (r *Runner) BuildBgmTrack(ctx context.Context, in, out string, targetSec float64, spec BgmSpec) error {
 	if strings.TrimSpace(in) == "" {
 		return fmt.Errorf("media: 背景音乐路径为空")
@@ -487,6 +503,8 @@ func (r *Runner) BuildBgmTrack(ctx context.Context, in, out string, targetSec fl
 	fadeIn, fadeOut := fitFades(spec.FadeInSec, spec.FadeOutSec, targetSec)
 
 	filters := []string{
+		// 先归一到基准响度，让后面的 volume 偏移可预期（见 bgmReferenceLUFS）。
+		fmt.Sprintf("loudnorm=I=%.1f:TP=-1.5:LRA=11", bgmReferenceLUFS),
 		fmt.Sprintf("atrim=0:%.3f", targetSec),
 		// 裁切后必须重排时间戳，否则被裁掉的前段会让后续滤镜看到错位的时间轴。
 		"asetpts=N/SR/TB",
@@ -587,8 +605,14 @@ func (r *Runner) MixSoundtrack(ctx context.Context, voicePath, bgmPath, out stri
 		args = append(args, "-i", voicePath)
 		graph = fmt.Sprintf("[0:a]%s[voice];[voice]%s[out]", audioFormatFilter, loudnorm)
 	default:
+		// 只有配乐：**刻意不做**最后那道响度归一。
+		//
+		// 它是**对白口径**（-16 LUFS）。把纯音乐拽到那个响度，正是"背景音乐太响"
+		// 的直接原因 —— 用户听到的是一整轨按人声响度播的音乐。
+		// 配乐在 BuildBgmTrack 里已经归一到 bgmReferenceLUFS(-20)，
+		// 这里再归一一次不但多余，还会把它重新拉响。
 		args = append(args, "-i", bgmPath)
-		graph = fmt.Sprintf("[0:a]%s[bgm];[bgm]%s[out]", audioFormatFilter, loudnorm)
+		graph = fmt.Sprintf("[0:a]%s[out]", audioFormatFilter)
 	}
 
 	args = append(args,
