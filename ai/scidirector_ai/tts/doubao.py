@@ -62,6 +62,10 @@ API_STYLE_V3 = "v3"  # user / req_params，分块或 SSE
 #: 两代各自的成功码。
 SUCCESS_CODE_V1 = 3000
 SUCCESS_CODE_V3 = 0
+#: 兼容旧名（等于老版成功码）。
+#: 保留它是因为改名曾经**打断了既有调用方**（`test_tts.py` 就此收集失败）——
+#: 一个仍在使用的公开名字不该无声消失。
+SUCCESS_CODE = SUCCESS_CODE_V1
 
 MAX_TEXT_CHARS = 1000
 
@@ -193,6 +197,7 @@ class DoubaoTTSProvider:
         code: int | None = None
         message = ""
         chunks: list[bytes] = []
+        parsed_any = False
 
         for line in raw.splitlines():
             line = line.strip()
@@ -206,10 +211,12 @@ class DoubaoTTSProvider:
             try:
                 obj = json.loads(line)
             except ValueError:
-                # 不是 JSON 的行（心跳、纯文本错误）不该让整次解析失败。
+                # 不是 JSON 的行（心跳、纯文本错误）不该让整次解析失败 ——
+                # SSE 里混着心跳是常态。
                 continue
             if not isinstance(obj, dict):
                 continue
+            parsed_any = True
             if obj.get("code") is not None:
                 code = obj["code"]
             if obj.get("message"):
@@ -222,6 +229,17 @@ class DoubaoTTSProvider:
                     continue
                 if chunk:
                     chunks.append(chunk)
+
+        # **一行 JSON 都没解析出来**且没有音频时，把"响应根本不是 JSON"这件事说清楚。
+        #
+        # 这一条必须保留：最常见的现场是反向代理/网关把请求挡下来，
+        # 返回一页 HTML 错误。此时如果只说"没有音频数据"，排查会毫无方向 ——
+        # 而原文一眼就能看出问题在哪。
+        #
+        # 空响应（`raw` 为空）也算在内：那同样"没有可解析的 JSON"，
+        # 而"服务端什么都没返回"本身就是要报出去的事实。
+        if not parsed_any and not chunks:
+            message = f"响应不是可解析的 JSON（前 200 字：{raw[:200]!r}）"
 
         # 整段是一个 JSON（V1）时上面的逐行解析同样成立 —— 单行也是行。
         return code, message, b"".join(chunks)

@@ -467,7 +467,8 @@ class PipelineNodes:
         # 而「因为 TTS 抖动就丢掉整个镜头」是把外部依赖的问题升级成内容事故。
         # 但**必须留痕**：不配音是可见的质量差异（成片没声音），
         # 静默降级会让人以为「TTS 接好了但没生效」，方向完全错。
-        artifact.audio_path = self._synthesize_narration(shot, out_dir)
+        audio_path, tts_error = self._synthesize_narration(shot, out_dir)
+        artifact.audio_path = audio_path
 
         artifacts = dict(state.get("artifacts") or {})
         artifacts[shot.shot_id] = artifact
@@ -481,20 +482,39 @@ class PipelineNodes:
                 "elapsed_sec": round(elapsed, 2),
             },
         )
+        events = [
+            make_event(
+                state, node=NODE_RENDER,
+                message=(
+                    f"渲染完成：{result.duration_sec:.1f}s / "
+                    f"{result.width}x{result.height} / {len(frames)} 帧抽帧"
+                ),
+                status="CRITIQUING", shot=shot, attempt=attempt, artifact=artifact,
+            )
+        ]
+        # 配音失败**单独上报**，不能只写服务端日志。
+        #
+        # 这里的教训很具体：用户配好了 TTS、成片却是哑的，而失败只躺在 AI 服务的
+        # 日志里 —— 界面上没有任何提示，于是排查方向完全跑偏（怀疑音色、怀疑播放器、
+        # 怀疑音量），而真正的原因是服务端一句"并发配额不足"或"鉴权失败"。
+        # 降级本身是对的（画面才是主体），但**降级必须可见**。
+        if tts_error:
+            events.append(
+                make_event(
+                    state, node=NODE_RENDER,
+                    message=(
+                        f"镜头 #{shot.index} 配音未生成，该镜头将没有旁白：{tts_error}"
+                    ),
+                    status="CRITIQUING", shot=shot, attempt=attempt,
+                    payload_json=json.dumps({"tts_failed": True, "tts_error": tts_error},
+                                            ensure_ascii=False),
+                )
+            )
         return {
             "artifacts": artifacts,
             "render_error": "",
             "route_hint": HINT_CRITIQUE,
-            "events": [
-                make_event(
-                    state, node=NODE_RENDER,
-                    message=(
-                        f"渲染完成：{result.duration_sec:.1f}s / "
-                        f"{result.width}x{result.height} / {len(frames)} 帧抽帧"
-                    ),
-                    status="CRITIQUING", shot=shot, attempt=attempt, artifact=artifact,
-                )
-            ],
+            "events": events,
         }
 
     # ==================================================================
@@ -502,21 +522,27 @@ class PipelineNodes:
     # ==================================================================
 
 
-    def _synthesize_narration(self, shot: "ShotSpec", out_dir: Path) -> str:
-        """为该镜头合成配音，返回音频路径；未启用或失败时返回空串。
+    def _synthesize_narration(self, shot: "ShotSpec", out_dir: Path) -> tuple[str, str]:
+        """为该镜头合成配音。
+
+        返回 `(音频路径, 失败原因)`：成功时原因为空串。
 
         失败**只降级不抛出**：画面才是主体，没有旁白的镜头仍是可用产物，
         而「因为 TTS 抖动就丢掉整个镜头」是把外部依赖的问题升级成内容事故。
-        但一定留痕 —— 成片没声音是可见的质量差异，静默降级会让人误以为
-        「TTS 接好了却没生效」，排查方向会完全跑偏。
+        但**失败原因必须回传给调用方**，由它写进事件流 —— 只记服务端日志
+        是不够的：用户配好了 TTS、成片却是哑的，界面上却毫无提示，
+        排查方向会完全跑偏（怀疑音色、播放器、音量），而真正的原因
+        往往只是服务端一句「并发配额不足」。
         """
         provider = self.deps.tts
         if provider is None:
-            return ""
+            # 没配 TTS 是**刻意的配置选择**（不是失败）：成片本来就不该有旁白，
+            # 因此不报错也不上报 —— 否则每一帧都刷一条"失败"会把真正的问题淹掉。
+            return "", ""
 
         narration = (shot.narration or "").strip()
         if not narration:
-            return ""
+            return "", ""
 
         # resolve：这个路径要跨进程交给 Go worker，两边的 CWD 不同，
         # 相对路径在生产端看着没问题、到消费端就是「文件不存在」。
@@ -532,16 +558,17 @@ class PipelineNodes:
                 backoff_sec=getattr(self.deps.settings, "tts_retry_backoff_sec", 1.0),
             )
         except Exception as exc:  # noqa: BLE001 - TTSError 或适配器未预期的异常
+            reason = str(exc)[:300] or type(exc).__name__
             logger.warning(
                 "配音合成失败，该镜头将没有配音",
                 extra={
                     "shot_id": shot.shot_id,
                     "provider": getattr(provider, "name", "?"),
                     "retryable": getattr(exc, "retryable", None),
-                    "error": str(exc)[:300],
+                    "error": reason,
                 },
             )
-            return ""
+            return "", reason
 
         # 时间戳 sidecar：Go 侧据此把字幕对到真实句子起止。
         # 不给时间戳的服务商也写一份（marks 为空），这样 Go 能区分
@@ -563,7 +590,7 @@ class PipelineNodes:
                 "marks": len(result.marks),
             },
         )
-        return str(result.audio_path)
+        return str(result.audio_path), ""
 
     @traced_node("critique")
     def critique(self, state: PipelineState) -> dict[str, Any]:

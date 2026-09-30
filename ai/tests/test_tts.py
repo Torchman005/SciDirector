@@ -124,8 +124,14 @@ class TestMarksSidecar:
 
 class TestFactory:
     def test_disabled_by_default(self) -> None:
-        """缺省不合成：没配 TTS 必须是一条能跑通的路径。"""
-        assert build_tts_provider(Settings(env="test")) is None
+        """缺省不合成：没配 TTS 必须是一条能跑通的路径。
+
+        `tts_provider=""` 必须**显式传**：Settings 会读进程环境，
+        而本机的 `.env` 里配了 SCID_TTS_PROVIDER=doubao ——
+        不显式清掉的话，这条"缺省"用例会被开发机环境搞红，
+        那种红既不指向缺陷、又天天挡路。
+        """
+        assert build_tts_provider(Settings(env="test", tts_provider="")) is None
 
     @pytest.mark.parametrize("value", ["", "none", "NONE", "off", "disabled"])
     def test_disabled_spellings(self, value: str) -> None:
