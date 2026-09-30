@@ -136,6 +136,13 @@ func (s *Server) HandleGenerate(c *gin.Context) {
 		abortWith(c, http.StatusBadRequest, ErrCodeBadRequest, "调色方案非法", err)
 		return
 	}
+	// 背景样式同理：Python 拿到未知 id 会抛异常，而那时任务已经受理、
+	// 分镜都开始拆了 —— 用户看到的是一条"提交成功然后失败"的任务。
+	// 本地能判的就别留到那边去。
+	if err := validateStyleGuide(req.StyleGuide); err != nil {
+		abortWith(c, http.StatusBadRequest, ErrCodeBadRequest, "风格参数非法", err)
+		return
+	}
 
 	effects, err := s.resolveEffects(c, tenant, req.Effects)
 	if err != nil {

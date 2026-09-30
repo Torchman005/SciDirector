@@ -1,12 +1,38 @@
 import { useEffect, useState } from 'react'
+import {
+  Alert,
+  App as AntApp,
+  Badge,
+  Button,
+  Card,
+  Col,
+  Collapse,
+  Descriptions,
+  Divider,
+  Form,
+  Input,
+  InputNumber,
+  Layout,
+  Progress,
+  Row,
+  Select,
+  Slider,
+  Space,
+  Statistic,
+  Switch,
+  Tag,
+  Typography,
+  Upload,
+} from 'antd'
+import { InboxOutlined, ReloadOutlined } from '@ant-design/icons'
 
 import { api, errorText } from './api'
 import { EventTimeline } from './components/EventTimeline'
-import { ShotRow } from './components/ShotRow'
+import { ShotTable } from './components/ShotTable'
 import { deriveStat, shotsOf } from './stream'
 import { useJobStream } from './useJobStream'
-import { formatTime, jobStatus } from './display'
-import type { ConnectionState, Effects } from './types'
+import { BACKGROUND_STYLES, STYLE_PRESETS, formatTime, jobStatus } from './display'
+import type { ConnectionState, Effects, GenerateRequest } from './types'
 
 /**
  * SciDirector 分镜审核台。
@@ -21,54 +47,91 @@ import type { ConnectionState, Effects } from './types'
  * 用户只会以为「系统卡住了」，然后刷新页面 —— 而实际上它正在自动恢复。
  */
 
-const CONNECTION_TEXT: Record<ConnectionState, { label: string; color: string }> = {
-  connecting: { label: '连接中…', color: '#8a94a6' },
-  open: { label: '实时', color: '#2ecc71' },
-  reconnecting: { label: '重连中…', color: '#f1c40f' },
-  closed: { label: '已断开', color: '#e74c3c' },
+const { Header, Content } = Layout
+const { Title, Text, Paragraph } = Typography
+
+const CONNECTION: Record<
+  ConnectionState,
+  { label: string; status: 'processing' | 'success' | 'warning' | 'error' }
+> = {
+  connecting: { label: '连接中…', status: 'processing' },
+  open: { label: '实时', status: 'success' },
+  reconnecting: { label: '重连中…', status: 'warning' },
+  closed: { label: '已断开', status: 'error' },
+}
+
+const GRADES = [
+  { value: 'none', label: '不调色' },
+  { value: 'warm', label: '暖' },
+  { value: 'cool', label: '冷' },
+  { value: 'high_contrast', label: '高对比' },
+  { value: 'film', label: '胶片感' },
+]
+
+interface SubmitForm {
+  raw_script: string
+  /** null = 留空 = 按脚本自动估算（提交时转成 0）。 */
+  target_duration_sec: number | null
+  preset: string
+  background_style: string
+  grade: string
+  grade_strength: number
+  fade_in_sec: number
+  fade_out_sec: number
+  burn_subtitles: boolean
+  subtitle_font_size: number
+  subtitle_color: string
+  subtitle_margin_v: number
+}
+
+/** 从 URL 读任务号，让审核页可以分享 / 刷新不丢。 */
+function jobFromUrl(): string | null {
+  const v = new URLSearchParams(window.location.search).get('job')
+  return v && v.trim() ? v.trim() : null
 }
 
 export function App() {
-  const [script, setScript] = useState('')
-  // 时长留空 = 按脚本自动估算。用 '' 而不是 0 是为了让输入框真的空着 ——
-  // 显示一个 0 或一个假缺省值，用户会以为那就是实际会用的时长。
-  const [duration, setDuration] = useState<number | ''>('')
-  const [estimate, setEstimate] = useState<number | null>(null)
-  const [estimateBasis, setEstimateBasis] = useState('')
-  const [jobId, setJobId] = useState<string | null>(null)
-  const [submitError, setSubmitError] = useState('')
+  const { message } = AntApp.useApp()
+  const [form] = Form.useForm<SubmitForm>()
+  const [jobId, setJobId] = useState<string | null>(jobFromUrl)
   const [submitting, setSubmitting] = useState(false)
   const [refreshTick, setRefreshTick] = useState(0)
+  const [estimate, setEstimate] = useState<number | null>(null)
+  const [estimateBasis, setEstimateBasis] = useState('')
   // 提交后服务端实际采用的时长与来源（留空时才知道它选了多久）。
   const [resolved, setResolved] = useState<{ sec: number; source: string } | null>(null)
 
-  // --- 风格（影响生成）与后期效果（影响合成）---
-  //
-  // 这两组配置刻意分开放：前者会被注入提示词、决定模型"画什么颜色"，
-  // 后者是合成阶段的 ffmpeg 处理。混在一起用户就分不清自己改的是哪一段。
-  const [preset, setPreset] = useState('default')
-  const [grade, setGrade] = useState('none')
-  const [gradeStrength, setGradeStrength] = useState(1)
-  const [fadeIn, setFadeIn] = useState(0)
-  const [fadeOut, setFadeOut] = useState(0)
-  const [burnSubtitles, setBurnSubtitles] = useState(false)
-  // 字幕样式只在烧录时有效（软字幕的样式由播放器决定，容器里存不下）。
-  // 0 / 空 = 自动，由服务端按画面高度推算。
-  const [subtitleFontSize, setSubtitleFontSize] = useState(0)
-  const [subtitleColor, setSubtitleColor] = useState('#ffffff')
-  const [subtitleMarginV, setSubtitleMarginV] = useState(0)
-
   // BGM：上传后记住 asset_id。**只传 id，不传路径** ——
   // 路径由服务端从素材库解析，请求方拿不到"读服务端任意文件"的能力。
-  const [bgm, setBgm] = useState<{ assetId: string; filename: string; durationSec: number } | null>(null)
-  const [bgmVolume, setBgmVolume] = useState(-8)
+  const [bgm, setBgm] = useState<{ assetId: string; filename: string; durationSec: number } | null>(
+    null,
+  )
   const [bgmBusy, setBgmBusy] = useState(false)
-  const [bgmError, setBgmError] = useState('')
+
+  // 表单联动：色调决定强度滑块是否可用，烧录开关决定字幕样式是否可用。
+  // 用 useWatch 而不是自己再存一份 state —— 两份真相迟早会不一致。
+  const script = Form.useWatch('raw_script', form) ?? ''
+  const grade = Form.useWatch('grade', form) ?? 'none'
+  const burnSubtitles = Form.useWatch('burn_subtitles', form) ?? false
+  const duration = Form.useWatch('target_duration_sec', form)
+  // 子标题颜色也在这里 watch：**不能**写在 JSX 里，
+  // 因为那处 JSX 属于 `{!jobId && …}` 分支 —— 有任务时它不会执行，
+  // hooks 数量随渲染变化，React 会直接抛错。
+  const subtitleColor = Form.useWatch('subtitle_color', form) ?? '#ffffff'
 
   const { state, connection, lastError, reconnect, mergeDetail } = useJobStream({
     jobId,
     onNeedJobRefresh: () => setRefreshTick((n) => n + 1),
   })
+
+  // 任务号写回 URL：刷新页面不会丢掉正在看的那条任务，
+  // 也让它变成一条可以直接发给别人的链接。
+  useEffect(() => {
+    const url = new URL(window.location.href)
+    if (jobId) url.searchParams.set('job', jobId)
+    else url.searchParams.delete('job')
+    window.history.replaceState(null, '', url)
+  }, [jobId])
 
   // 回源任务明细。
   //
@@ -96,12 +159,6 @@ export function App() {
       cancelled = true
     }
   }, [jobId, refreshTick, mergeDetail])
-
-  const stat = deriveStat(state)
-  const shots = shotsOf(state.job)
-  const js = jobStatus(state.job?.status ?? 'PENDING')
-  const conn = CONNECTION_TEXT[connection]
-  const pending = stat.awaiting_human
 
   // 时长留空时，跟着脚本实时估算 —— 否则用户提交前完全不知道成片会有多长，
   // 而这正是"自动判断时长"最容易被质疑的地方。
@@ -134,374 +191,524 @@ export function App() {
     }
   }, [script])
 
-  async function uploadBgm(file: File) {
-    setBgmBusy(true)
-    setBgmError('')
-    try {
-      const resp = await api.uploadAsset(file)
-      setBgm({ assetId: resp.asset_id, filename: resp.filename, durationSec: resp.duration_sec })
-    } catch (err) {
-      setBgm(null)
-      setBgmError(errorText(err))
-    } finally {
-      setBgmBusy(false)
-    }
-  }
-
-  async function submit() {
-    setSubmitting(true)
-    setSubmitError('')
-    try {
-      const effects: Effects = {}
-      if (grade !== 'none') {
-        effects.grade = grade
-        effects.grade_strength = gradeStrength
-      }
-      if (fadeIn > 0) effects.fade_in_sec = fadeIn
-      if (fadeOut > 0) effects.fade_out_sec = fadeOut
-      if (burnSubtitles) effects.burn_subtitles = true
-      // 只在烧录时带上样式：服务端会对"设了样式却没开烧录"直接报 400，
-      // 与其让用户提交后才看到错误，不如在这里就不发。
-      if (burnSubtitles) {
-        effects.subtitle_style = {
-          font_size: subtitleFontSize,
-          primary_color: subtitleColor,
-          margin_v: subtitleMarginV,
-        }
-      }
-      if (bgm) effects.bgm = { asset_id: bgm.assetId, volume_db: bgmVolume, loop: true }
-
-      const resp = await api.generate({
-        raw_script: script.trim(),
-        // 留空传 0：服务端据此走"按脚本自动估算"。
-        target_duration_sec: duration === '' ? 0 : duration,
-        locale: 'zh-CN',
-        style_guide: { preset },
-        effects,
-      })
-      setResolved({
-        sec: resp.target_duration_sec ?? 0,
-        source: resp.duration_source ?? 'explicit',
-      })
-      setJobId(resp.job_id)
-    } catch (err) {
-      setSubmitError(errorText(err))
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
   // 时长提示必须**如实反映本次会用哪个值**：留空时说清"按脚本自动估算"，
   // 填了就说清"不再自动估算"。否则用户无法判断自己填的数字有没有被采纳。
   const durationHint =
-    duration !== ''
+    duration !== null && duration !== undefined
       ? `将使用你指定的 ${duration} 秒（不再自动估算）`
       : estimate !== null
         ? `时长留空 → 按脚本自动估算：约 ${estimate} 秒`
         : '时长留空 → 按脚本自动估算'
 
+  async function uploadBgm(file: File) {
+    setBgmBusy(true)
+    try {
+      const resp = await api.uploadAsset(file)
+      setBgm({ assetId: resp.asset_id, filename: resp.filename, durationSec: resp.duration_sec })
+      message.success(`已上传 ${resp.filename}（${formatTime(resp.duration_sec)}）`)
+    } catch (err) {
+      setBgm(null)
+      message.error(errorText(err))
+    } finally {
+      setBgmBusy(false)
+    }
+  }
+
+  async function submit(values: SubmitForm) {
+    setSubmitting(true)
+    try {
+      const effects: Effects = {}
+      if (values.grade && values.grade !== 'none') {
+        effects.grade = values.grade
+        effects.grade_strength = values.grade_strength
+      }
+      if (values.fade_in_sec > 0) effects.fade_in_sec = values.fade_in_sec
+      if (values.fade_out_sec > 0) effects.fade_out_sec = values.fade_out_sec
+      if (values.burn_subtitles) effects.burn_subtitles = true
+      // 只在烧录时带上样式：服务端会对"设了样式却没开烧录"直接报 400，
+      // 与其让用户提交后才看到错误，不如在这里就不发。
+      if (values.burn_subtitles) {
+        effects.subtitle_style = {
+          font_size: values.subtitle_font_size,
+          primary_color: values.subtitle_color,
+          margin_v: values.subtitle_margin_v,
+        }
+      }
+      if (bgm) effects.bgm = { asset_id: bgm.assetId, loop: true }
+
+      const req: GenerateRequest = {
+        raw_script: values.raw_script.trim(),
+        // 留空传 0：服务端据此走"按脚本自动估算"。
+        target_duration_sec: values.target_duration_sec ?? 0,
+        locale: 'zh-CN',
+        style_guide: {
+          preset: values.preset,
+          background_style: values.background_style,
+        },
+        effects,
+      }
+      const resp = await api.generate(req)
+      setResolved({
+        sec: resp.target_duration_sec ?? 0,
+        source: resp.duration_source ?? 'explicit',
+      })
+      setJobId(resp.job_id)
+      message.success('任务已受理，正在拆解脚本')
+    } catch (err) {
+      message.error(errorText(err))
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const shots = shotsOf(state.job)
+  const stat = deriveStat(state)
+  const js = jobStatus(state.job?.status ?? 'PENDING')
+  const conn = CONNECTION[connection]
+  const pending = stat.awaiting_human
+
+  // 合成完成后回报的"实际生效的效果"。写在这里而不是只写日志：
+  // 用户问"为什么没有背景音乐"时，答案要能在界面上看到。
+  const effectsApplied = [...state.events]
+    .reverse()
+    .find((ev) => ev.node === 'compose' && ev.payload && 'effects' in ev.payload)?.payload
+    ?.effects as Record<string, unknown> | undefined
+
   return (
-    <main className="app">
-      <header className="app-header">
-        <div>
-          <h1>SciDirector · 分镜审核台</h1>
-          <p className="muted">导演 → 编码 → 渲染 → 视觉审查 → 人类反馈闭环</p>
-        </div>
-        <div className="conn" title={lastError || undefined}>
-          <span className="dot" style={{ background: conn.color }} />
-          <span style={{ color: conn.color }}>{conn.label}</span>
-          {connection === 'reconnecting' && (
-            <button className="btn btn-sm" onClick={reconnect}>
-              立即重试
-            </button>
-          )}
-        </div>
-      </header>
+    <Layout style={{ minHeight: '100vh' }}>
+      <Header className="app-header">
+        <Space size={12} align="center">
+          <Title level={4} style={{ margin: 0 }}>
+            SciDirector · 分镜审核台
+          </Title>
+          <Text type="secondary" className="app-subtitle">
+            导演 → 编码 → 渲染 → 视觉审查 → 人类反馈闭环
+          </Text>
+        </Space>
+        <Space size={12}>
+          {/*
+            没有任务时不显示连接状态：此时前端根本没建立 WebSocket，
+            而一个红色的「已断开」会让人以为系统出了问题 ——
+            它描述的是一件当时并不存在的事。
+          */}
+          {jobId ? (
+            <>
+              <Badge status={conn.status} text={conn.label} />
+              {connection === 'reconnecting' && (
+                <Button size="small" icon={<ReloadOutlined />} onClick={reconnect}>
+                  立即重试
+                </Button>
+              )}
+            </>
+          ) : null}
+        </Space>
+      </Header>
 
-      {lastError && connection !== 'open' && (
-        <p className="banner banner-warn">连接提示：{lastError}</p>
-      )}
-
-      {!jobId && (
-        <section className="card">
-          <h2>提交脚本</h2>
-          <textarea
-            className="script-input"
-            rows={6}
-            value={script}
-            onChange={(e) => setScript(e.target.value)}
-            placeholder="把要讲解的科学内容贴进来，例如：用三分钟解释傅里叶变换的直觉……"
+      <Content className="app-content">
+        {lastError && connection !== 'open' && (
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginBottom: 16 }}
+            message={`连接提示：${lastError}`}
+            description="界面仍在自动重连，无需刷新页面。"
           />
-          <p className="muted" title={estimateBasis || undefined}>
-            {durationHint}
-          </p>
-          <div className="row">
-            <label>
-              目标时长（秒，可留空）
-              <input
-                type="number"
-                min={5}
-                max={1800}
-                placeholder="留空＝按脚本自动"
-                value={duration}
-                onChange={(e) => {
-                  const v = e.target.value.trim()
-                  // 清空输入框 = 交回"自动"，而不是回落到某个数字 ——
-                  // 回落会让用户没法表达"我不关心，你定"。
-                  setDuration(v === '' ? '' : Number(v))
-                }}
-              />
-            </label>
-            <button
-              className="btn btn-primary"
-              disabled={submitting || script.trim().length < 20}
-              onClick={() => void submit()}
+        )}
+
+        {!jobId && (
+          <Card title="提交脚本">
+            <Form<SubmitForm>
+              form={form}
+              layout="vertical"
+              onFinish={(values) => void submit(values)}
+              initialValues={{
+                target_duration_sec: null,
+                preset: 'default',
+                background_style: 'auto',
+                grade: 'none',
+                grade_strength: 1,
+                fade_in_sec: 0,
+                fade_out_sec: 0,
+                burn_subtitles: false,
+                subtitle_font_size: 0,
+                subtitle_color: '#ffffff',
+                subtitle_margin_v: 0,
+              }}
             >
-              {submitting ? '提交中…' : '开始生成'}
-            </button>
-            {script.trim().length > 0 && script.trim().length < 20 && (
-              <span className="muted">脚本至少 20 字</span>
-            )}
-          </div>
+              <Form.Item
+                name="raw_script"
+                rules={[
+                  { required: true, message: '请输入脚本' },
+                  { min: 20, message: '脚本至少 20 字' },
+                ]}
+              >
+                <Input.TextArea
+                  rows={6}
+                  placeholder="把要讲解的科学内容贴进来，例如：用三分钟解释傅里叶变换的直觉……"
+                />
+              </Form.Item>
 
-          {/* 风格：影响**生成**（会进提示词）。 */}
-          <details className="effects">
-            <summary>风格与效果（可选）</summary>
-            <div className="row">
-              <label>
-                风格预设
-                <select value={preset} onChange={(e) => setPreset(e.target.value)}>
-                  <option value="default">默认（蓝）</option>
-                  <option value="tech">科技（青绿）</option>
-                  <option value="warm">暖色（橙）</option>
-                  <option value="minimal">极简（灰白）</option>
-                  <option value="nature">自然（绿）</option>
-                  <option value="sunset">日落（粉紫）</option>
-                </select>
-              </label>
+              <Row gutter={16} align="top">
+                <Col xs={24} sm={12} md={4}>
+                  <Form.Item
+                    name="target_duration_sec"
+                    label="目标时长（秒）"
+                    // 提示写在 label 下方：它是"会发生什么"的说明，
+                    // 不是校验错误，因此不用 validateStatus 染色。
+                    extra={<Text type="secondary" title={estimateBasis || undefined} style={{ fontSize: 12 }}>{durationHint}</Text>}
+                  >
+                    <InputNumber
+                      min={5}
+                      max={1800}
+                      style={{ width: '100%' }}
+                      placeholder="留空＝按脚本自动"
+                    />
+                  </Form.Item>
+                </Col>
+                <Col xs={12} sm={6} md={4}>
+                  <Form.Item
+                    name="preset"
+                    label="配色预设"
+                    tooltip="影响生成：决定模型画面用哪套颜色"
+                  >
+                    <Select options={STYLE_PRESETS} />
+                  </Form.Item>
+                </Col>
+                <Col xs={12} sm={6} md={4}>
+                  <Form.Item
+                    name="background_style"
+                    label="背景样式"
+                    tooltip="影响生成：背景长什么样（纯色/网格/扫描线…）。与配色是两件独立的事"
+                  >
+                    <Select options={BACKGROUND_STYLES} />
+                  </Form.Item>
+                </Col>
+                <Col xs={12} sm={6} md={6}>
+                  <Form.Item name="grade" label="后期色调" tooltip="影响成片：合成阶段整体调色">
+                    <Select options={GRADES} />
+                  </Form.Item>
+                </Col>
+                <Col xs={12} sm={6} md={6}>
+                  <Form.Item name="grade_strength" label="调色强度">
+                    <Slider min={0.1} max={1} step={0.1} disabled={grade === 'none'} />
+                  </Form.Item>
+                </Col>
+              </Row>
 
-              <label>
-                后期色调
-                <select value={grade} onChange={(e) => setGrade(e.target.value)}>
-                  <option value="none">不调色</option>
-                  <option value="warm">暖</option>
-                  <option value="cool">冷</option>
-                  <option value="high_contrast">高对比</option>
-                  <option value="film">胶片感</option>
-                </select>
-              </label>
+              <Divider orientation="left" plain style={{ marginTop: 0 }}>
+                后期效果
+              </Divider>
 
-              <label>
-                强度 {Math.round(gradeStrength * 100)}%
-                <input
-                  type="range"
-                  min={10}
-                  max={100}
-                  value={Math.round(gradeStrength * 100)}
-                  disabled={grade === 'none'}
-                  onChange={(e) => setGradeStrength(Number(e.target.value) / 100)}
-                />
-              </label>
-            </div>
+              <Row gutter={16}>
+                <Col xs={12} sm={6} md={4}>
+                  <Form.Item name="fade_in_sec" label="片头淡入（秒）">
+                    <InputNumber min={0} max={5} step={0.5} style={{ width: '100%' }} />
+                  </Form.Item>
+                </Col>
+                <Col xs={12} sm={6} md={4}>
+                  <Form.Item name="fade_out_sec" label="片尾淡出（秒）">
+                    <InputNumber min={0} max={5} step={0.5} style={{ width: '100%' }} />
+                  </Form.Item>
+                </Col>
+                <Col xs={24} sm={12} md={6}>
+                  <Form.Item
+                    name="burn_subtitles"
+                    label="字幕"
+                    valuePropName="checked"
+                    tooltip="烧进画面：任何播放器都看得到，代价是必须重编码"
+                  >
+                    <Switch checkedChildren="烧进画面" unCheckedChildren="软字幕" />
+                  </Form.Item>
+                </Col>
+              </Row>
 
-            <div className="row">
-              <label>
-                片头淡入（秒）
-                <input
-                  type="number" min={0} max={5} step={0.5} value={fadeIn}
-                  onChange={(e) => setFadeIn(Number(e.target.value) || 0)}
-                />
-              </label>
-              <label>
-                片尾淡出（秒）
-                <input
-                  type="number" min={0} max={5} step={0.5} value={fadeOut}
-                  onChange={(e) => setFadeOut(Number(e.target.value) || 0)}
-                />
-              </label>
-              <label className="check">
-                <input
-                  type="checkbox" checked={burnSubtitles}
-                  onChange={(e) => setBurnSubtitles(e.target.checked)}
-                />
-                字幕烧进画面
-              </label>
-            </div>
+              {/* 字幕样式：不开烧录就没有意义，因此整体置灰而不是藏起来 ——
+                  藏起来用户会以为"没有这个功能"。 */}
+              <Row gutter={16}>
+                <Col xs={12} sm={6} md={4}>
+                  <Form.Item name="subtitle_font_size" label="字幕字号">
+                    <InputNumber
+                      min={0}
+                      max={200}
+                      disabled={!burnSubtitles}
+                      placeholder="0＝自动"
+                      style={{ width: '100%' }}
+                    />
+                  </Form.Item>
+                </Col>
+                <Col xs={12} sm={6} md={4}>
+                  <Form.Item name="subtitle_color" label="字幕颜色">
+                    {/*
+                      用原生 color 输入而不是 antd ColorPicker：后者的值是
+                      一个 Color 对象，要转成 #RRGGBB 才能进 effects，
+                      而这一处只需要一个色值，不值得多一层转换。
+                    */}
+                    <input
+                      type="color"
+                      className="native-color"
+                      disabled={!burnSubtitles}
+                      value={subtitleColor}
+                      onChange={(e) => form.setFieldValue('subtitle_color', e.target.value)}
+                    />
+                  </Form.Item>
+                </Col>
+                <Col xs={12} sm={6} md={4}>
+                  <Form.Item name="subtitle_margin_v" label="距底边">
+                    <InputNumber
+                      min={0}
+                      max={400}
+                      disabled={!burnSubtitles}
+                      placeholder="0＝自动"
+                      style={{ width: '100%' }}
+                    />
+                  </Form.Item>
+                </Col>
+                <Col xs={24} sm={6} md={8}>
+                  {!burnSubtitles && (
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      字幕样式只在「字幕烧进画面」时生效（软字幕的样式由播放器决定）。
+                    </Text>
+                  )}
+                </Col>
+              </Row>
 
-            {/* 字幕样式：不开烧录就没有意义，因此整体置灰而不是藏起来 ——
-                藏起来用户会以为"没有这个功能"。 */}
-            <div className="row">
-              <label>
-                字幕字号（0＝自动）
-                <input
-                  type="number" min={0} max={200} value={subtitleFontSize}
-                  disabled={!burnSubtitles}
-                  onChange={(e) => setSubtitleFontSize(Number(e.target.value) || 0)}
-                />
-              </label>
-              <label>
-                字幕颜色
-                <input
-                  type="color" value={subtitleColor}
-                  disabled={!burnSubtitles}
-                  onChange={(e) => setSubtitleColor(e.target.value)}
-                />
-              </label>
-              <label>
-                距底边（0＝自动）
-                <input
-                  type="number" min={0} max={400} value={subtitleMarginV}
-                  disabled={!burnSubtitles}
-                  onChange={(e) => setSubtitleMarginV(Number(e.target.value) || 0)}
-                />
-              </label>
-            </div>
-            {!burnSubtitles && (
-              <p className="muted">字幕样式只在「字幕烧进画面」时生效（软字幕的样式由播放器决定）。</p>
-            )}
+              <Form.Item label="背景音乐" style={{ marginBottom: 8 }}>
+                {bgm ? (
+                  <Space wrap>
+                    <Tag color="green" bordered={false}>
+                      {bgm.filename}
+                    </Tag>
+                    <Text type="secondary">{formatTime(bgm.durationSec)}</Text>
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      比成片短的部分会自动循环
+                    </Text>
+                    <Button size="small" danger onClick={() => setBgm(null)}>
+                      移除
+                    </Button>
+                  </Space>
+                ) : (
+                  <Upload.Dragger
+                    accept="audio/*,.mp3,.wav,.m4a,.aac,.flac,.ogg,.opus"
+                    maxCount={1}
+                    showUploadList={false}
+                    disabled={bgmBusy}
+                    // 返回 false：拦住 antd 自己的上传，改由我们走
+                    // api.uploadAsset（它要处理 {ok,data} 信封与错误文案）。
+                    beforeUpload={(file) => {
+                      void uploadBgm(file)
+                      return false
+                    }}
+                  >
+                    <p className="ant-upload-drag-icon">
+                      <InboxOutlined />
+                    </p>
+                    <p className="ant-upload-text">{bgmBusy ? '上传中…' : '点击或拖拽音频文件到此处'}</p>
+                    <p className="ant-upload-hint">
+                      支持 mp3 / wav / m4a / aac / flac / ogg / opus，单个不超过 20MB
+                    </p>
+                  </Upload.Dragger>
+                )}
+              </Form.Item>
 
-            <div className="row">
-              <label>
-                背景音乐
-                <input
-                  type="file"
-                  accept="audio/*,.mp3,.wav,.m4a,.aac,.flac,.ogg,.opus"
-                  disabled={bgmBusy}
-                  onChange={(e) => {
-                    const f = e.target.files?.[0]
-                    if (f) void uploadBgm(f)
-                  }}
-                />
-              </label>
-              <label>
-                配乐音量 {bgmVolume} dB
-                <input
-                  type="range" min={-30} max={0} value={bgmVolume}
-                  disabled={!bgm}
-                  onChange={(e) => setBgmVolume(Number(e.target.value))}
-                />
-              </label>
-            </div>
+              <Button type="primary" size="large" htmlType="submit" loading={submitting}>
+                开始生成
+              </Button>
+            </Form>
+          </Card>
+        )}
 
-            {bgmBusy && <p className="muted">上传中…</p>}
-            {bgm && (
-              <p className="muted">
-                已选择：{bgm.filename}（{formatTime(bgm.durationSec)}）
-                {/* 比成片短时会自动循环，提前说清楚，免得用户以为是 bug。 */}
-                <button className="btn btn-sm" onClick={() => setBgm(null)}>移除</button>
-              </p>
-            )}
-            {bgmError && <p className="banner banner-error">{bgmError}</p>}
-          </details>
-          {submitError && <p className="banner banner-error">{submitError}</p>}
-        </section>
-      )}
-
-      {jobId && (
-        <>
-          <section className="card">
-            <div className="row row-between">
-              <h2>
-                任务 <code>{jobId}</code>
-              </h2>
-              <div className="row">
-                <span className="pill" style={{ background: js.color }}>
-                  {js.label}
-                </span>
-                <button className="btn btn-sm" onClick={() => setJobId(null)}>
+        {jobId && (
+          <Space direction="vertical" size={16} style={{ width: '100%' }}>
+            <Card
+              title={
+                <Space size={8} wrap>
+                  <span>任务</span>
+                  <Text code copyable style={{ fontSize: 13 }}>
+                    {jobId}
+                  </Text>
+                  <Tag color={js.tag} bordered={false}>
+                    {js.label}
+                  </Tag>
+                </Space>
+              }
+              extra={
+                <Button size="small" onClick={() => setJobId(null)}>
                   新建任务
-                </button>
-              </div>
-            </div>
+                </Button>
+              }
+            >
+              {!state.loaded && <Text type="secondary">正在获取任务快照…</Text>}
 
-            {!state.loaded && <p className="muted">正在获取任务快照…</p>}
+              {resolved && resolved.sec > 0 && (
+                <Paragraph type="secondary" style={{ marginBottom: 8 }}>
+                  目标时长 {formatTime(resolved.sec)}
+                  {resolved.source === 'auto' ? '（按脚本自动估算）' : '（你指定的）'}
+                </Paragraph>
+              )}
 
-            {resolved && resolved.sec > 0 && (
-              <p className="muted">
-                目标时长 {formatTime(resolved.sec)}
-                {resolved.source === 'auto' ? '（按脚本自动估算）' : '（你指定的）'}
-              </p>
-            )}
+              <Progress
+                percent={Math.round(state.progress * 100)}
+                status={js.terminal && state.job?.status === 'FAILED' ? 'exception' : 'active'}
+              />
 
-            <div className="progress">
-              <div className="progress-bar" style={{ width: `${Math.round(state.progress * 100)}%` }} />
-            </div>
-            <div className="row row-stat">
-              <span>进度 {Math.round(state.progress * 100)}%</span>
-              <span>共 {stat.total} 个分镜</span>
-              <span className="ok">已通过 {stat.approved}</span>
-              <span className="warn">待人工 {stat.awaiting_human}</span>
-              <span className="danger">失败 {stat.failed}</span>
-              <span>进行中 {stat.in_progress}</span>
-            </div>
-
-            {state.job?.final_video_path && (
-              <div className="film">
-                {/* 直接播，而不是只给一个文件路径让用户自己去文件夹里找。
-                    artifact 接口支持 Range，所以进度条能拖动。 */}
-                <video controls preload="metadata" src={api.artifactUrl(String(jobId))} />
-                <p className="shot-artifact">
-                  成片：<code>{state.job.final_video_path}</code>
-                </p>
-              </div>
-            )}
-            {state.job?.error && <p className="banner banner-error">{state.job.error}</p>}
-          </section>
-
-          {pending > 0 && (
-            <p className="banner banner-action">
-              有 {pending} 个镜头自动重试已达上限，需要你确认：可以「打回重做」给出具体修改意见，
-              也可以「放行并继续」接受当前效果。
-            </p>
-          )}
-
-          <section className="card">
-            <h2>分镜表</h2>
-            {shots.length === 0 ? (
-              <p className="muted">
-                {state.loaded ? '导演智能体尚未拆解出分镜。' : '加载中…'}
-              </p>
-            ) : (
-              <div className="shot-list">
-                {shots.map((s) => (
-                  <ShotRow
-                    key={s.shot_id}
-                    jobId={jobId}
-                    shot={s}
-                    // 任务已进入终态时禁止再操作，避免发出注定被拒的请求。
-                    disabled={js.terminal === true}
-                    onChanged={() => setRefreshTick((n) => n + 1)}
+              <Row gutter={16} style={{ marginTop: 8 }}>
+                <Col xs={8} sm={5} md={4}>
+                  <Statistic title="共" value={stat.total} suffix="个分镜" />
+                </Col>
+                <Col xs={8} sm={5} md={4}>
+                  <Statistic title="已通过" value={stat.approved} valueStyle={{ color: '#2ecc71' }} />
+                </Col>
+                <Col xs={8} sm={5} md={4}>
+                  <Statistic
+                    title="待人工"
+                    value={stat.awaiting_human}
+                    valueStyle={{ color: pending > 0 ? '#ff9f43' : undefined }}
                   />
-                ))}
-              </div>
+                </Col>
+                <Col xs={8} sm={5} md={4}>
+                  <Statistic title="失败" value={stat.failed} valueStyle={{ color: '#e74c3c' }} />
+                </Col>
+                <Col xs={8} sm={4} md={4}>
+                  <Statistic title="进行中" value={stat.in_progress} />
+                </Col>
+              </Row>
+
+              {state.job?.error && (
+                <Alert type="warning" showIcon style={{ marginTop: 16 }} message={state.job.error} />
+              )}
+
+              {state.job?.final_video_path && (
+                <>
+                  <Divider orientation="left" plain>
+                    成片
+                  </Divider>
+                  {/* artifact 接口支持 Range，所以进度条能拖动。 */}
+                  <video
+                    className="film-video"
+                    controls
+                    preload="metadata"
+                    src={api.artifactUrl(jobId)}
+                  />
+                  <Descriptions
+                    size="small"
+                    column={1}
+                    style={{ marginTop: 12 }}
+                    items={[
+                      {
+                        key: 'path',
+                        label: '文件',
+                        children: (
+                          <Text code copyable style={{ fontSize: 12 }}>
+                            {state.job.final_video_path}
+                          </Text>
+                        ),
+                      },
+                      {
+                        key: 'effects',
+                        label: '实际生效的效果',
+                        children: effectsApplied ? (
+                          <Space size={6} wrap>
+                            <Tag
+                              color={effectsApplied.bgm_applied ? 'green' : 'default'}
+                              bordered={false}
+                            >
+                              {effectsApplied.bgm_applied ? '背景音乐 ✓' : '无背景音乐'}
+                            </Tag>
+                            <Tag
+                              color={effectsApplied.post_applied ? 'blue' : 'default'}
+                              bordered={false}
+                            >
+                              {effectsApplied.post_applied
+                                ? `后期处理 ✓（${String(effectsApplied.grade || 'none')}）`
+                                : '无后期处理'}
+                            </Tag>
+                            {effectsApplied.burn_subtitles ? (
+                              <Tag color="purple" bordered={false}>
+                                字幕已烧录
+                              </Tag>
+                            ) : null}
+                          </Space>
+                        ) : (
+                          <Text type="secondary">合成事件尚未上报</Text>
+                        ),
+                      },
+                    ]}
+                  />
+                </>
+              )}
+            </Card>
+
+            {pending > 0 && (
+              <Alert
+                type="warning"
+                showIcon
+                message={`有 ${pending} 个镜头自动重试已达上限，需要你确认`}
+                description="可以「打回重做」给出具体修改意见，也可以「放行并继续」接受当前效果。待人工的镜头已在下方默认展开。"
+              />
             )}
-          </section>
 
-          <section className="card">
-            <div className="row row-between">
-              <h2>事件时间线</h2>
-              <span className="muted">
-                共 {state.events.length} 条 · 已同步至 #{state.lastSeq}
-              </span>
-            </div>
-            <EventTimeline events={state.events} />
-          </section>
+            <Card title="分镜表" extra={<Text type="secondary">共 {shots.length} 个</Text>}>
+              {shots.length === 0 ? (
+                <Text type="secondary">
+                  {state.loaded ? '导演智能体尚未拆解出分镜。' : '加载中…'}
+                </Text>
+              ) : (
+                <ShotTable
+                  jobId={jobId}
+                  shots={shots}
+                  // 任务已进入终态时禁止再操作，避免发出注定被拒的请求。
+                  disabled={js.terminal === true}
+                  onChanged={() => setRefreshTick((n) => n + 1)}
+                />
+              )}
+            </Card>
 
-          {state.job && (
-            <section className="card card-quiet">
-              <h2>任务概览</h2>
-              <p className="muted">
-                目标时长 {formatTime(state.job.target_duration_sec)} · 语言 {state.job.locale} ·
-                创建于 {new Date(state.job.created_at).toLocaleString('zh-CN')}
-              </p>
-              <details>
-                <summary>原始脚本</summary>
-                <pre className="script-view">{state.job.raw_script}</pre>
-              </details>
-            </section>
-          )}
-        </>
-      )}
-    </main>
+            <Card
+              title="事件时间线"
+              extra={
+                <Text type="secondary">
+                  共 {state.events.length} 条 · 已同步至 #{state.lastSeq}
+                </Text>
+              }
+            >
+              <EventTimeline events={state.events} />
+            </Card>
+
+            {state.job && (
+              <Card title="任务概览" size="small">
+                <Descriptions
+                  size="small"
+                  column={{ xs: 1, sm: 2, md: 3 }}
+                  items={[
+                    {
+                      key: 'duration',
+                      label: '目标时长',
+                      children: formatTime(state.job.target_duration_sec),
+                    },
+                    { key: 'locale', label: '语言', children: state.job.locale },
+                    {
+                      key: 'created',
+                      label: '创建时间',
+                      children: new Date(state.job.created_at).toLocaleString('zh-CN'),
+                    },
+                  ]}
+                />
+                <Collapse
+                  ghost
+                  style={{ marginTop: 8 }}
+                  items={[
+                    {
+                      key: 'script',
+                      label: '原始脚本',
+                      children: <pre className="script-view">{state.job.raw_script}</pre>,
+                    },
+                  ]}
+                />
+              </Card>
+            )}
+          </Space>
+        )}
+      </Content>
+    </Layout>
   )
 }

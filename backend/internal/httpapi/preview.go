@@ -190,9 +190,10 @@ func (s *Server) resolvePreviewPalette(styleGuide map[string]any) (bg, primary, 
 		primary = v
 	}
 	style = stringField(styleGuide, "background_style")
-	if !media.IsBackgroundStyle(style) {
-		return "", "", "", fmt.Errorf("未知的背景样式 %q；可用：%s",
-			style, strings.Join(media.BackgroundStyleIDs(), ", "))
+	// 与 /generate 共用同一份校验：两处各写一遍的话，
+	// 迟早出现"预览能选、提交却报错"（或反过来）的分叉。
+	if err := validateStyleGuide(styleGuide); err != nil {
+		return "", "", "", err
 	}
 	return bg, primary, style, nil
 }

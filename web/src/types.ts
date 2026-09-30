@@ -74,6 +74,14 @@ export interface Shot {
   artifact?: Artifact | null
   feedbacks?: Feedback[]
   error?: string
+  /**
+   * 逐镜头的背景样式覆盖（空串 = 跟随全片的 style_guide.preset）。
+   *
+   * 取值与风格预设同一套 id（见 display.ts 的 BACKGROUND_STYLES）——
+   * 后端刻意复用同一张表：两套名字会让"全片风格"和"这一镜的风格"
+   * 看起来像两个不相干的概念。
+   */
+  background_style?: string
   updated_at?: string
 }
 
@@ -148,6 +156,8 @@ export interface GenerateRequest {
 
 export interface StyleGuide {
   preset?: string
+  /** 背景**图案**：auto / solid / gradient / grid / vignette / noise / scanlines。 */
+  background_style?: string
   primary_color?: string
   background_color?: string
   min_font_size?: number
@@ -252,6 +262,8 @@ export interface PatchShotRequest {
   visual_brief?: string
   redo?: boolean
   comment?: string
+  /** 逐镜头的背景样式覆盖；传空串表示恢复为全片统一设置。 */
+  background_style?: string
 }
 
 export interface PatchShotResponse {
