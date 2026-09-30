@@ -579,22 +579,59 @@ func TestPlanSubtitleStyleRejectsBadColour(t *testing.T) {
 	}
 }
 
+// subtitleFontSizePx 从样式串里把字号**换算回像素**。
+//
+// 必须换算回来才能断言"自动值随画面高度变化"：ASS 的 FontSize 是脚本坐标，
+// 720p 与 1080p 下的脚本单位可能巧合地相同（都取整到 10），
+// 但换算成像素后分别约 25px 与约 37px —— 差异正发生在这一层。
+func subtitleFontSizePx(t *testing.T, style string, frameHeight int) float64 {
+	t.Helper()
+	m := regexp.MustCompile(`FontSize=([\d.]+)`).FindStringSubmatch(style)
+	if m == nil {
+		t.Fatalf("样式串里没有 FontSize：%s", style)
+	}
+	units, err := strconv.ParseFloat(m[1], 64)
+	if err != nil {
+		t.Fatalf("解析 FontSize 失败: %v", err)
+	}
+	return units * float64(frameHeight) / srtToAssPlayResY
+}
+
 func TestPlanSubtitleStyleAutoScalesWithFrameHeight(t *testing.T) {
-	// 自动值必须随画面高度走：同一套配置在 720p 与 1080p 上观感才一致。
-	small, err := PlanSubtitleStyle(SubtitleStyle{}, 720)
+	// **这条测的是"字号真的是像素"**，而不是"样式串长什么样"。
+	//
+	// 背景（实测）：libass 把 SRT 转 ASS 时用默认 PlayResY=288，所以 1080p 下
+	// FontSize 会被放大 3.75 倍 —— 请求 45px 实际渲染出约 169px 的字
+	// （6 个汉字宽约 800px）。少了这层换算，用户只会觉得"怎么调都太大"。
+	cases := []struct {
+		height int
+		wantPx float64
+	}{
+		{720, 24},
+		{1080, 36},
+		{2160, 72},
+	}
+	for _, c := range cases {
+		style, err := PlanSubtitleStyle(SubtitleStyle{}, c.height)
+		if err != nil {
+			t.Fatalf("PlanSubtitleStyle(%d) 报错: %v", c.height, err)
+		}
+		gotPx := subtitleFontSizePx(t, style, c.height)
+		if diff := gotPx - c.wantPx; diff > 2 || diff < -2 {
+			t.Errorf("%dp 的自动字号应约 %.0fpx，实际 %.1fpx（样式串：%s）",
+				c.height, c.wantPx, gotPx, style)
+		}
+	}
+
+	// 用户显式给像素值时，也必须如实落到像素上（这是 API 文档的承诺）。
+	style, err := PlanSubtitleStyle(SubtitleStyle{FontSize: 48}, 1080)
 	if err != nil {
 		t.Fatalf("PlanSubtitleStyle 报错: %v", err)
 	}
-	large, err := PlanSubtitleStyle(SubtitleStyle{}, 1080)
-	if err != nil {
-		t.Fatalf("PlanSubtitleStyle 报错: %v", err)
+	if got := subtitleFontSizePx(t, style, 1080); got < 47 || got > 49 {
+		t.Errorf("显式 font_size=48 应当渲染成约 48px，实际 %.1fpx（%s）", got, style)
 	}
-	if small == large {
-		t.Fatalf("720p 与 1080p 的自动字幕样式不该相同：%s", small)
-	}
-	if !strings.Contains(large, "FontSize=45") {
-		t.Errorf("1080p 的自动字号应当是 45px，实际样式串：%s", large)
-	}
+
 	// 没有画面高度时不能崩，也不能产出空样式让字幕变成 libass 的默认大小。
 	fallback, err := PlanSubtitleStyle(SubtitleStyle{}, 0)
 	if err != nil {

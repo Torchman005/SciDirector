@@ -89,18 +89,46 @@ type SubtitleStyle struct {
 // 字幕自动样式的推算基准。
 const (
 	// subtitleFontDivisor：1080p 下得到 45px，是科普视频的常见字号。
-	subtitleFontDivisor = 24
+	subtitleFontDivisor = 30
 	// subtitleMarginDivisor：1080p 下得到 60px 底边距。
 	subtitleMarginDivisor = 18
-	minSubtitleFontSize   = 14
-	maxSubtitleFontSize   = 160
+	minSubtitleFontSize   = 12
+	maxSubtitleFontSize   = 200
 )
+
+// srtToAssPlayResY 是 libass 把 SRT 转成 ASS 时使用的**默认脚本高度**。
+//
+// 这是个必须知道的事实，否则字号会错得离谱：ASS 的 `FontSize`/`Outline`/`MarginV`
+// 都是**脚本坐标**，而 libass 对 SRT 沿用 ASS 的传统默认 PlayResY=288。
+// 于是 1080p 下所有值被乘以 `1080/288 ≈ 3.75` —— 请求 45px 实际渲染出约 169px 的字
+// （实测：6 个汉字宽约 800px）。
+//
+// 也就是说 `effects.subtitle_style.font_size` 声称的"成片像素"，必须经过这层换算
+// 才成立。实测对照：同一句 6 个汉字，SRT 路径每字约 133px，而自带
+// `PlayResY=1080` 的 ASS 每字约 36px。
+//
+// 更彻底的修法是直接生成带 PlayRes 的 ASS（那就不需要这层换算），
+// 这里先按最小改动把"像素"这个语义做对。
+const srtToAssPlayResY = 288.0
+
+// toScriptUnit 把**成片像素**换算成 ASS 的脚本坐标。
+//
+// frameHeight <= 0 时按 1:1 处理：推不出比例时不做换算，好过瞎乘一个系数。
+func toScriptUnit(px float64, frameHeight int) float64 {
+	if frameHeight <= 0 {
+		return px
+	}
+	return px * srtToAssPlayResY / float64(frameHeight)
+}
 
 // PlanSubtitleStyle 把字幕样式翻成 libass 的 `force_style` 串。
 //
-// **颜色字节序是个经典的坑**：ASS 用的是 `&HAABBGGRR` —— 与 `#RRGGBB`
-// 相比红蓝是**反的**。照直觉写成 `&H00RRGGBB` 不会报错，只会让红色显示成蓝色，
-// 而这种"配色不对"极难从成片反推到配置上。有一条单测专门钉住这个转换。
+// **两个坑都在这里被挡住**：
+//
+//  1. 颜色字节序：ASS 用的是 `&HAABBGGRR` —— 与 `#RRGGBB` 相比红蓝是**反的**。
+//     照直觉写成 `&H00RRGGBB` 不会报错，只会让红色显示成蓝色。
+//  2. 字号单位：`FontSize` 是**脚本坐标**而不是像素（见 srtToAssPlayResY）。
+//     少了这层换算，界面里填 36 会渲染成约 135 —— 用户只会觉得"怎么调都太大"。
 func PlanSubtitleStyle(s SubtitleStyle, frameHeight int) (string, error) {
 	if frameHeight <= 0 {
 		// 没有画面高度就推不出自动值；退回 1080p 的常见值，
@@ -108,27 +136,30 @@ func PlanSubtitleStyle(s SubtitleStyle, frameHeight int) (string, error) {
 		frameHeight = 1080
 	}
 
-	fontSize := s.FontSize
-	if fontSize <= 0 {
-		fontSize = frameHeight / subtitleFontDivisor
+	// 先在**像素**口径上把三个值算清楚并夹取。
+	// 顺序很重要：换算之后再夹取会夹错（脚本单位的数比像素小 3.75 倍，
+	// 拿像素区间去夹会把本该 12px 的字夹成 45px）。
+	fontSizePx := s.FontSize
+	if fontSizePx <= 0 {
+		fontSizePx = frameHeight / subtitleFontDivisor
 	}
-	fontSize = clampInt(fontSize, minSubtitleFontSize, maxSubtitleFontSize)
+	fontSizePx = clampInt(fontSizePx, minSubtitleFontSize, maxSubtitleFontSize)
 
-	outline := s.OutlineWidth
-	if outline <= 0 {
+	outlinePx := s.OutlineWidth
+	if outlinePx <= 0 {
 		// 描边与字号成正比：字越大，细描边就越显得没用。
-		outline = math.Max(1, math.Round(float64(fontSize)/18))
+		outlinePx = math.Max(1, math.Round(float64(fontSizePx)/18))
 	}
-	if outline > 8 {
-		return "", fmt.Errorf("media: 字幕描边过宽（%.1f，上限 8）", outline)
+	if outlinePx > 8 {
+		return "", fmt.Errorf("media: 字幕描边过宽（%.1f，上限 8）", outlinePx)
 	}
 
-	margin := s.MarginV
-	if margin <= 0 {
-		margin = frameHeight / subtitleMarginDivisor
+	marginPx := s.MarginV
+	if marginPx <= 0 {
+		marginPx = frameHeight / subtitleMarginDivisor
 	}
-	if margin < 0 || margin > frameHeight {
-		return "", fmt.Errorf("media: 字幕底边距越界（%d，画面高 %d）", margin, frameHeight)
+	if marginPx < 0 || marginPx > frameHeight {
+		return "", fmt.Errorf("media: 字幕底边距越界（%d，画面高 %d）", marginPx, frameHeight)
 	}
 
 	colour := s.PrimaryColor
@@ -140,8 +171,18 @@ func PlanSubtitleStyle(s SubtitleStyle, frameHeight int) (string, error) {
 		return "", err
 	}
 
-	return fmt.Sprintf("FontSize=%d,PrimaryColour=%s,Outline=%.1f,MarginV=%d",
-		fontSize, ass, outline, margin), nil
+	// 最后统一换算到脚本坐标。三者都要换 —— 只换字号会让描边与底边距在
+	// 720p/1080p 上表现不一致，而那种问题看起来像"随机"。
+	//
+	// 字号与底边距用**浮点**输出而不是取整：脚本单位取整会引入量化误差，
+	// 而它回头会被乘以 frameHeight/288 —— 2160p 下 ±0.5 单位就是 ±3.75px。
+	// 实测取整后 2160p 的目标 72px 变成 75px。libass 能解析浮点字号。
+	return fmt.Sprintf("FontSize=%.2f,PrimaryColour=%s,Outline=%.2f,MarginV=%.2f",
+		toScriptUnit(float64(fontSizePx), frameHeight),
+		ass,
+		toScriptUnit(outlinePx, frameHeight),
+		toScriptUnit(float64(marginPx), frameHeight),
+	), nil
 }
 
 // assColour 把 `#RRGGBB` 转成 ASS 的 `&HAABBGGRR`。
