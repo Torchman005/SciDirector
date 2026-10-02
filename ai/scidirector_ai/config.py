@@ -254,6 +254,14 @@ class Settings(BaseSettings):
     shot_max_attempts: int = Field(default=3, ge=1, le=10)
     # 抽帧数量：覆盖整体节奏；实现上还会额外补首末帧。
     critic_frame_samples: int = Field(default=4, ge=2, le=12)
+    #: 每次渲染注入的 few-shot 示例条数。
+    #:
+    #: **token 账上最直接的一个旋钮**：语料里每条示例约 850 token，而它会被
+    #: **每次渲染**注入（7 镜头 × 平均 2 次尝试 ≈ 14 次调用）。
+    #: 默认 2：只留 1 条太少 —— 示例承担着输出格式与代码风格的锚定，
+    #: 只剩一条时模型容易退回自己的习惯写法（本项目在别处吃过"示例锚定"的亏）；
+    #: 3 条则明显偏贵。
+    rag_few_shot_k: int = Field(default=2, ge=0, le=7)
     #: 送审抽帧的缩放宽度（像素）。
     #:
     #: **这个值必须同时告诉审查智能体**，否则会出现一个很隐蔽的单位错配：

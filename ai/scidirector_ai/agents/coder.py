@@ -140,7 +140,17 @@ class CoderAgent(Agent):
         if engine not in LLM_ENGINES:
             return self._programmatic_ambient(shot, engine)
 
-        examples = self.retriever.retrieve(shot, k=3)
+        # few-shot 条数可配，**默认 2 而不是原来的硬编码 3**。
+        #
+        # 这是 token 账上最直接的一刀：语料里每条示例约 850 token，而这段
+        # 会被**每次渲染**注入（7 镜头 × 平均 2 次尝试 = 14 次）。3 -> 2
+        # 每次省约 850 token，一轮下来约 12k。
+        #
+        # 降到 1 太狠：示例承担的是"输出格式与代码风格"的锚定，
+        # 只剩一条时模型容易退回自己习惯的写法（本项目已在别处吃过
+        # "示例锚定"的亏）。所以默认留在 2，需要更省再往下降。
+        k = int(getattr(self.settings, "rag_few_shot_k", 2) or 2)
+        examples = self.retriever.retrieve(shot, k=k)
         user_prompt = self._build_user_prompt(
             shot=shot,
             style_guide=style_guide,
