@@ -102,13 +102,27 @@ function ConvertFrom-DotEnvLine {
 }
 
 $applied = 0
+# 冲突：环境里已有一个**不同**的值，于是 .env 里这个键被静默跳过。
+#
+# 为什么必须把它喊出来：「显式优先」本身是对的（`set SCID_LLM_PROVIDER=x`
+# 就该盖过文件）。但当那个"显式值"是**上一次会话残留的**时，它会把用户刚在
+# .env 里改对的值静默盖掉 —— 表现就是"我明明改了配置却完全不生效"。
+# 本项目为此白花过好几轮排查（端点被旧值覆盖成训练端点，配音全部 400，
+# 而成片只是"没有声音"，看不出跟配置有任何关系）。
+$conflicts = @()
+
 foreach ($raw in [System.IO.File]::ReadAllLines($Path, [System.Text.Encoding]::UTF8)) {
     $entry = ConvertFrom-DotEnvLine -Line $raw
     if ($null -eq $entry) { continue }
 
     # 显式设置优先：本进程已有非空值就不动它。
     $existing = [Environment]::GetEnvironmentVariable($entry.Key)
-    if (-not [string]::IsNullOrEmpty($existing)) { continue }
+    if (-not [string]::IsNullOrEmpty($existing)) {
+        if ($existing -ne $entry.Value) {
+            $conflicts += , @($entry.Key, $existing, $entry.Value)
+        }
+        continue
+    }
 
     if ($Format -eq 'cmd') {
         # 交给 .bat 去 set。用双引号包住整条 set，值里的空格不会被吃掉。
@@ -118,6 +132,34 @@ foreach ($raw in [System.IO.File]::ReadAllLines($Path, [System.Text.Encoding]::U
         Set-Item -Path ("Env:" + $entry.Key) -Value $entry.Value
     }
     $applied++
+}
+
+# 报告冲突。**必须走 stderr / 主机流，不能走 stdout** ——
+# `-Format cmd` 的 stdout 正被 dev.bat 的 `for /f` 逐行消费，
+# 多写一行普通文本会被当成 `set` 语句执行，直接搞坏启动流程。
+if ($conflicts.Count -gt 0) {
+    $secret = 'KEY|TOKEN|SECRET|PASSWORD|DSN'
+    $out = New-Object System.Collections.Generic.List[string]
+    $out.Add("⚠ 有 $($conflicts.Count) 个变量被环境里的旧值覆盖，.env 中改过的值**不会生效**：")
+    foreach ($c in $conflicts) {
+        $k = $c[0]
+        $env_v = if ($k -match $secret) { '<已设置，值省略>' } else { $c[1] }
+        $file_v = if ($k -match $secret) { '<已设置，值省略>' } else { $c[2] }
+        $out.Add("    $k")
+        $out.Add("        环境变量（实际生效）= $env_v")
+        $out.Add("        .env    （被覆盖）  = $file_v")
+        $out.Add("        想用 .env 的值：Remove-Item Env:$k")
+    }
+    $out.Add("  提示：这类残留通常来自 `$PROFILE 或启动 DSH 时的包装脚本，清掉一次即可。")
+
+    foreach ($line in $out) {
+        if ($Format -eq 'cmd') {
+            [Console]::Error.WriteLine($line)
+        }
+        else {
+            Write-Host $line -ForegroundColor Yellow
+        }
+    }
 }
 
 if ($Format -eq 'ps') {
