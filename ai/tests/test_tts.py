@@ -287,13 +287,17 @@ class TestFishRequestShape:
             return _FakeResponse(200, None, content=b"ID3-fake-mp3")
 
         monkeypatch.setattr("scidirector_ai.tts.fish.httpx.post", fake_post)
-        res = FishAudioTTSProvider(api_key="k", model="s2-pro", reference_id="ref1").synthesize(
+        # 用**真实形状**的音色 id（32 位十六进制）：fish.py 现在会先验形状再发请求，
+        # 占位符 `ref1` 会被当场拦下 —— 那正是为了拦住"SCID_TTS_VOICE 里
+        # 留着别家音色名"这类事故。旧的占位符本来也不是合法的 Fish id。
+        ref = "0dcdcfacd3934bb799c38498b507e5c5"
+        res = FishAudioTTSProvider(api_key="k", model="s2-pro", reference_id=ref).synthesize(
             "你好", out_path=tmp_path / "f.mp3"
         )
 
         assert captured["headers"]["Authorization"] == "Bearer k"
         assert captured["headers"]["model"] == "s2-pro"
-        assert captured["json"]["reference_id"] == "ref1"
+        assert captured["json"]["reference_id"] == ref
         assert captured["json"]["text"] == "你好"
         assert res.audio_path.read_bytes() == b"ID3-fake-mp3"
 

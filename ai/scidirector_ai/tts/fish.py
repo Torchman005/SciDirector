@@ -29,6 +29,7 @@ Fish Audio 另有 `POST /v1/tts/stream/with-timestamp`（SSE，返回音频分�
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import httpx
@@ -37,6 +38,9 @@ from .base import SynthesisResult, TTSError, write_audio
 
 DEFAULT_ENDPOINT = "https://api.fish.audio/v1/tts"
 DEFAULT_MODEL = "s1"
+
+#: Fish Audio 的音色 id 形如 32 位十六进制（见官方示例）。
+_REFERENCE_ID_RE = re.compile(r"^[0-9a-fA-F]{32}$")
 
 MAX_TEXT_CHARS = 4000
 
@@ -94,6 +98,24 @@ class FishAudioTTSProvider:
         # voice 参数在这里表示 Fish Audio 的音色模型 id（reference_id）。
         ref = voice or self.reference_id
         if ref:
+            # **先验形状，再发请求。**
+            #
+            # 这是一道防呆，来历很具体：切换 TTS 服务商时，`SCID_TTS_VOICE` 里
+            # 常常还留着上一家的音色名（例如豆包的 `custom_zh_clone_agent`），
+            # 而它在这里**优先于** `SCID_FISH_REFERENCE_ID`。于是请求带着一个
+            # 别家的音色名发出去，服务端只会回一个与"音色配错了"毫无关系的错，
+            # 排查方向直接跑偏。
+            #
+            # Fish 的音色 id 是 32 位十六进制，形状足够特征化，值得当场拦下。
+            if not _REFERENCE_ID_RE.match(ref.strip()):
+                raise TTSError(
+                    f"音色 id {ref!r} 不是 Fish Audio 的 reference_id"
+                    "（应为 32 位十六进制，例如 0dcdcfacd3934bb799c38498b507e5c5）。"
+                    " 最常见的原因是 SCID_TTS_VOICE 里还留着**别的服务商**的音色名 ——"
+                    "它优先于 SCID_FISH_REFERENCE_ID。请把它换成 Fish 的音色 id，或清空。",
+                    retryable=False,
+                    provider=self.name,
+                )
             payload["reference_id"] = ref
 
         headers = {
