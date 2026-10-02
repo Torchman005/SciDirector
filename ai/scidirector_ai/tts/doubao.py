@@ -67,6 +67,35 @@ SUCCESS_CODE_V3 = 0
 #: 一个仍在使用的公开名字不该无声消失。
 SUCCESS_CODE = SUCCESS_CODE_V1
 
+#: 已知失败码 -> **可操作**的中文提示。
+#:
+#: 为什么值得维护这么一张小表：服务端只回一个数字（如 45000292），
+#: 而它对应的行动（"去控制台确认并发配额"）与这个数字之间没有任何线索。
+#: 用户看到的是"返回失败码 45000292"，方向只能靠猜 —— 这个项目已经为
+#: 「报错说了等于没说」付过好几次代价（哑成片、静默降级都是同一类问题）。
+#:
+#: 只放**已经真机见过**的码；猜的宁可不要，错提示比没有提示更坏。
+KNOWN_ERROR_HINTS: dict[int, str] = {
+    45000292: (
+        "并发配额不足。到火山引擎控制台确认「声音复刻 / 语音合成大模型」的**并发数**"
+        "是否已开通 —— 并发为 0 或已用满都会报这个；它与「音色数量」是两项不同的额度"
+    ),
+    45000000: (
+        "请求被网关拒绝，通常是**端点与请求体形态不匹配** ——"
+        "例如把复刻/训练端点（/api/v3/tts/voice_clone）当合成端点用"
+    ),
+}
+
+
+def error_hint(code: object) -> str:
+    """把失败码翻成可操作提示；没有登记的码返回空串（不编）。"""
+    if code is None:
+        return ""
+    try:
+        return KNOWN_ERROR_HINTS.get(int(code), "")
+    except (TypeError, ValueError):
+        return ""
+
 MAX_TEXT_CHARS = 1000
 
 
@@ -306,11 +335,15 @@ class DoubaoTTSProvider:
             )
 
         code, message, audio = self._parse_response_body(resp.text)
+        hint = error_hint(code)
         if not self._is_success(code):
             raise TTSError(
                 f"豆包 TTS 返回失败码 code={code} message={message!r}"
                 f"（{self.api_style} 形态的成功码应为 "
-                f"{SUCCESS_CODE_V3 if self.api_style == API_STYLE_V3 else SUCCESS_CODE_V1}）",
+                f"{SUCCESS_CODE_V3 if self.api_style == API_STYLE_V3 else SUCCESS_CODE_V1}）"
+                # 把数字翻成"该去做什么"：界面上只显示一串错误码，
+                # 用户无从判断是配额、鉴权还是音色问题（这已经让排查跑偏过好几轮）。
+                + (f"\n可能的原因：{hint}" if hint else ""),
                 # 失败码多为参数 / 权限问题，重试同样会失败；限流属少数派，
                 # 交由上层按整体策略决定是否重投任务。
                 retryable=False,
@@ -319,7 +352,8 @@ class DoubaoTTSProvider:
         if not audio:
             raise TTSError(
                 f"豆包 TTS 没有返回音频数据（code={code} message={message!r}，"
-                f"响应前 200 字：{resp.text[:200]!r}）",
+                f"响应前 200 字：{resp.text[:200]!r}）"
+                + (f"\n可能的原因：{hint}" if hint else ""),
                 retryable=True,
                 provider=self.name,
             )
