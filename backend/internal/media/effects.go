@@ -501,7 +501,17 @@ const (
 // `loudnorm=I=-16` 直接拽到对白响度，而它本该比旁白轻。
 const bgmReferenceLUFS = -20.0
 
-// BuildBgmTrack 把背景音乐配成**与成片等长**的一条音轨。
+// : 配乐轨在目标时长之外**多铺一点**（秒）。
+// :
+// : 下游 `MuxFinal` 会带 `-shortest`，把音轨裁到画面长度 —— 所以**长一点永远是安全的**，
+// : 短一点则表现为"结尾突然没声音"。
+// :
+// : 这个余量不是凭空加的：扫过 15 条真实任务，其中一条的配乐轨 24.90s 而成片 25.00s，
+// : 结尾差了 **0.10s** —— 那是 ffmpeg 的时长取整。只断言"时长约等于目标"的用例
+// : （容差通常是零点几秒）**发现不了**这种缺口，但耳朵能听出来。
+const bgmTailMarginSec = 0.5
+
+// BuildBgmTrack 把背景音乐配成**覆盖整片**的一条音轨。
 //
 // 三种情形都要处理，且都不能报错收场：
 //   - 配乐比成片短 -> 循环（Loop=true 时用 `-stream_loop`）；
@@ -510,6 +520,9 @@ const bgmReferenceLUFS = -20.0
 //
 // 另外会**先**把配乐归一到 bgmReferenceLUFS，**再**施加 `volume_db` 偏移 ——
 // 顺序不能反：先加偏移再归一，偏移量会被归一化抹掉，滑块就完全失效了。
+//
+// 产出的轨会**略长于** `targetSec`（多 `bgmTailMarginSec`），由下游按画面长度裁掉。
+// 方向不能反：短一点点就是"结尾没声音"，而这在成片里是听得出来的缺陷。
 func (r *Runner) BuildBgmTrack(ctx context.Context, in, out string, targetSec float64, spec BgmSpec) error {
 	if strings.TrimSpace(in) == "" {
 		return fmt.Errorf("media: 背景音乐路径为空")
@@ -521,12 +534,15 @@ func (r *Runner) BuildBgmTrack(ctx context.Context, in, out string, targetSec fl
 		return fmt.Errorf("media: 背景音乐目标时长必须为正，实际 %.3f", targetSec)
 	}
 
+	// 淡入淡出按**画面长度**算，不按加了余量的长度算：
+	// 否则淡出会被推到画面之外，成片听起来就成了"结尾被硬切"。
 	fadeIn, fadeOut := fitFades(spec.FadeInSec, spec.FadeOutSec, targetSec)
+	span := targetSec + bgmTailMarginSec
 
 	filters := []string{
 		// 先归一到基准响度，让后面的 volume 偏移可预期（见 bgmReferenceLUFS）。
 		fmt.Sprintf("loudnorm=I=%.1f:TP=-1.5:LRA=11", bgmReferenceLUFS),
-		fmt.Sprintf("atrim=0:%.3f", targetSec),
+		fmt.Sprintf("atrim=0:%.3f", span),
 		// 裁切后必须重排时间戳，否则被裁掉的前段会让后续滤镜看到错位的时间轴。
 		"asetpts=N/SR/TB",
 	}
@@ -556,7 +572,8 @@ func (r *Runner) BuildBgmTrack(ctx context.Context, in, out string, targetSec fl
 		"-af", strings.Join(filters, ","),
 		// `-t` 是硬保险：`-stream_loop -1` 遇到解析异常的容器时可能读不完，
 		// 没有它，一条配乐能撑出几个小时的文件。
-		"-t", fmt.Sprintf("%.3f", targetSec),
+		// 这里用 span（含余量）而不是 targetSec —— 见 bgmTailMarginSec。
+		"-t", fmt.Sprintf("%.3f", span),
 		"-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
 		"-movflags", "+faststart",
 		out,
@@ -590,6 +607,10 @@ func fitFades(fadeIn, fadeOut, target float64) (float64, float64) {
 //   - 只有旁白 -> 只做响度归一化；
 //   - 只有配乐 -> 只做响度归一化（用户关了 TTS 但仍想要背景音乐）。
 //
+// **长度永远取较长的那一路**（见下方 duration=longest 的注释）：混音这一步
+// 只允许把音轨变长，不允许变短 —— 变短就是"结尾没声音"，而下游 MuxFinal
+// 的 `-shortest` 会按画面长度裁掉多余部分，所以变长没有代价。
+//
 // 末尾统一过 loudnorm：没有它，"配乐开大一点"就会让成片整体响度飘忽，
 // 而响度不一致是观众最容易察觉、又最难说清的一类问题。
 func (r *Runner) MixSoundtrack(ctx context.Context, voicePath, bgmPath, out string, loudnessLUFS float64) error {
@@ -610,13 +631,32 @@ func (r *Runner) MixSoundtrack(ctx context.Context, voicePath, bgmPath, out stri
 		args = append(args, "-i", voicePath, "-i", bgmPath)
 		graph = fmt.Sprintf(
 			"[0:a]%s[voice];[1:a]%s[bgm];"+
+				// 侧链必须先**无限补静音**（apad）。
+				//
+				// `sidechaincompress` 的输出长度跟随**侧链**，而侧链是旁白 ——
+				// 旁白比配乐短时，它会在这一步就把混音截到旁白长度，
+				// 之后再怎么设 amix 的 duration 都补救不了。
+				// 实测（旁白 2s + 配乐 5s）：duration=first 得 2.01s、
+				// duration=longest 也只得 2.01s，**加了 apad 才得到 5.01s**。
+				//
+				// 补静音不会改变闪避本身：旁白停下来之后侧链是静音，
+				// 压缩器不再压低配乐 —— 那正是我们想要的恢复行为。
+				"[voice]apad[voiceP];"+
 				// 以旁白为侧链触发闪避：配乐让路，旁白始终清楚。
-				"[bgm][voice]sidechaincompress=threshold=%.3f:ratio=%.1f:"+
+				"[bgm][voiceP]sidechaincompress=threshold=%.3f:ratio=%.1f:"+
 				"attack=%.1f:release=%.1f:makeup=1[ducked];"+
-				// duration=first + normalize=0：长度跟随旁白（它已被配成与成片等长），
-				// 且**不做自动归一化** —— amix 默认会把两路各减半，
+				// duration=**longest** + normalize=0。
+				//
+				// 长度取两路里较长的那条，**不能**用 duration=first：
+				// first 是旁白轨，一旦旁白比配乐短，配乐就会被截断在那里 ——
+				// 而 MuxFinal 的 -shortest 还会把成片一起截到同一长度。
+				// 表现是"结尾没有配乐"，严重时整片被截短；而这两种症状
+				// 都不会有任何报错。取较长的一条之后，多出来的部分由
+				// MuxFinal 按画面长度裁掉，因此**永远不会少**。
+				//
+				// normalize=0 是另一件事：amix 默认会把两路各减半，
 				// 那会把辛苦调好的配乐音量又莫名其妙压下去。
-				"[voice][ducked]amix=inputs=2:duration=first:normalize=0[mixed];"+
+				"[voice][ducked]amix=inputs=2:duration=longest:normalize=0[mixed];"+
 				"[mixed]%s[out]",
 			audioFormatFilter, audioFormatFilter,
 			duckThreshold, duckRatio, duckAttackMs, duckReleaseMs,

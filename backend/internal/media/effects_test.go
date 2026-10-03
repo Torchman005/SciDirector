@@ -410,9 +410,13 @@ func TestBuildBgmTrackLoopsShortAudioToTarget(t *testing.T) {
 		t.Fatalf("BuildBgmTrack 失败: %v", err)
 	}
 	got := probeAudioSec(t, out)
-	// 1 秒素材循环到 4 秒，允许容器粒度误差。
-	if got < 3.5 || got > 4.5 {
-		t.Errorf("配乐时长应为 ~4s，实际 %.2fs（循环没生效？）", got)
+	// 1 秒素材循环到 4 秒。产出的轨会比目标**略长**（bgmTailMarginSec），
+	// 那是刻意的：短一点就是"结尾没声音"，长一点会被下游 -shortest 裁掉。
+	if got < 4.0 {
+		t.Errorf("配乐轨不得短于目标 4s，实际 %.2fs（循环没生效？）", got)
+	}
+	if got > 4.0+bgmTailMarginSec+0.3 {
+		t.Errorf("配乐轨超出目标太多：%.2fs（余量应只有 %.1fs）", got, bgmTailMarginSec)
 	}
 }
 
@@ -431,8 +435,84 @@ func TestBuildBgmTrackTrimsLongerAudio(t *testing.T) {
 		t.Fatalf("BuildBgmTrack 失败: %v", err)
 	}
 	got := probeAudioSec(t, out)
-	if got < 1.5 || got > 2.5 {
-		t.Errorf("配乐时长应被裁到 ~2s，实际 %.2fs", got)
+	if got < 2.0 || got > 2.0+bgmTailMarginSec+0.3 {
+		t.Errorf("配乐应被裁到 [2s, 2s+余量]，实际 %.2fs", got)
+	}
+}
+
+// TestBuildBgmTrackTailIsNotSilent 是本组里最该存在的一条。
+//
+// 它守的是用户直接提出来的要求：**配乐要循环铺满，不能"视频长了后面没有 BGM"**。
+// 关键在于断言的是**内容**而不是时长 —— 一个时长完全正确、后半段却是静音的实现
+// 能通过所有"时长约等于目标"的用例，而它正是用户听到的那个缺陷。
+func TestBuildBgmTrackTailIsNotSilent(t *testing.T) {
+	requireFFmpeg(t)
+	if testing.Short() {
+		t.Skip("短模式跳过真实媒体集成测试")
+	}
+	r := newTestRunner(t, 1)
+	dir := t.TempDir()
+	bgm := filepath.Join(dir, "bgm.m4a")
+	out := filepath.Join(dir, "bgm_track.m4a")
+	// 1.5 秒素材循环到 6 秒：后面 4.5 秒**全部**来自循环。
+	makeEvalAudio(t, r, bgm, "0.5*sin(2*PI*220*t)", 1.5)
+
+	if err := r.BuildBgmTrack(context.Background(), bgm, out, 6.0, BgmSpec{Loop: true}); err != nil {
+		t.Fatalf("BuildBgmTrack 失败: %v", err)
+	}
+
+	for _, c := range []struct {
+		name string
+		ss   float64
+	}{{"开头", 0.2}, {"中段", 2.4}, {"结尾", 5.2}} {
+		if lv := windowMeanVolumeDB(t, out, c.ss, 0.6, ""); lv < -60 {
+			t.Errorf("%s 是静音（%.1f dB）—— 配乐没有铺满整片", c.name, lv)
+		}
+	}
+
+	// 反向对照：同一套测量对**真的静音**必须能读出来。
+	// 少了它，上面三条断言在"测量函数永远返回一个不小的数"时同样会通过。
+	// 这里用带淡出的同一次构建：淡出结束于 6.0s，而轨长 6.5s，
+	// 所以 [6.2, 6.4] 是确定无疑的数字静音。
+	faded := filepath.Join(dir, "bgm_faded.m4a")
+	if err := r.BuildBgmTrack(context.Background(), bgm, faded, 6.0, BgmSpec{
+		Loop: true, FadeOutSec: 1.0,
+	}); err != nil {
+		t.Fatalf("BuildBgmTrack 失败: %v", err)
+	}
+	if lv := windowMeanVolumeDB(t, faded, 6.2, 0.2, ""); lv > -60 {
+		t.Errorf("反向对照失败：淡出之后的窗口读到了 %.1f dB，测量手段不可信", lv)
+	}
+}
+
+// TestMixSoundtrackSpansLongestInput 钉住"混音只允许变长、不允许变短"。
+//
+// 原先用的是 `amix=duration=first`，而 first 是**旁白**轨 —— 只要旁白比配乐短，
+// 配乐就被截断在那里，接着 `MuxFinal` 的 `-shortest` 还会把成片一起截短。
+// 两个后果都不会报错：一个是"结尾没配乐"，一个是整片变短。
+func TestMixSoundtrackSpansLongestInput(t *testing.T) {
+	requireFFmpeg(t)
+	if testing.Short() {
+		t.Skip("短模式跳过真实媒体集成测试")
+	}
+	r := newTestRunner(t, 1)
+	dir := t.TempDir()
+	voice := filepath.Join(dir, "voice.m4a")
+	bgm := filepath.Join(dir, "bgm.m4a")
+	out := filepath.Join(dir, "mixed.m4a")
+	makeEvalAudio(t, r, voice, "0.7*sin(2*PI*2000*t)", 2.0) // 旁白短
+	makeEvalAudio(t, r, bgm, "0.5*sin(2*PI*220*t)", 5.0)    // 配乐长
+
+	if err := r.MixSoundtrack(context.Background(), voice, bgm, out, 0); err != nil {
+		t.Fatalf("MixSoundtrack 失败: %v", err)
+	}
+	got := probeAudioSec(t, out)
+	if got < 4.5 {
+		t.Errorf("混音应覆盖较长的配乐（~5s），实际 %.2fs —— 被较短的旁白截断了", got)
+	}
+	// 配乐在旁白结束之后必须仍有声音（这正是"结尾没有 BGM"的判据）。
+	if lv := windowMeanVolumeDB(t, out, 4.2, 0.5, ""); lv < -60 {
+		t.Errorf("旁白结束后的窗口是静音（%.1f dB）—— 配乐没有覆盖到结尾", lv)
 	}
 }
 
