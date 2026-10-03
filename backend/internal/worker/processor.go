@@ -127,6 +127,19 @@ func (p *Processor) HandleGenerateJob(ctx context.Context, task GenerateTask) er
 		Locale:             job.Locale,
 		// 用 job_id 作为 LangGraph 的线程 ID：两侧天然对齐，便于对账与断点恢复。
 		CheckpointThreadId: jobID,
+		// **重试投递时必须续跑。**
+		//
+		// 这里原本恒为 false（零值），于是每次 Asynq 重试都把整条流水线从头
+		// 再跑一遍 —— 包括**已经通过审查的镜头**。用户看到的正是这个：
+		// "已通过审查的有时会重新生成"。
+		//
+		// 代价随失败次数成倍放大：TaskTimeout 默认 45 分钟、MaxRetry 默认 5，
+		// 所以一部超时的长视频最坏会把全部工作做 6 遍 ——
+		// 这也解释了为什么"长视频失败率高"且"整体生成时间过长"。
+		// 三个症状是同一个根因。
+		//
+		// 首跑仍然用 false：那时没有任何 checkpoint，续跑语义为空。
+		Resume: isRetryDelivery(ctx),
 	}
 
 	// 消费事件流。onEvent 返回错误会主动终止流。
@@ -713,6 +726,16 @@ func shotStyleGuide(job *domain.Job, shot *domain.Shot) map[string]any {
 		out["background_style"] = shot.BackgroundStyle
 	}
 	return out
+}
+
+// isRetryDelivery 报告当前这次执行是不是 Asynq 的**重投**（而非首跑）。
+//
+// Asynq 把重试次数放在 context 里；拿不到时按"不是重试"处理 ——
+// 首跑就用续跑语义没有意义（还没有 checkpoint），而误判成重试也只是
+// 让首跑带上 resume=true，Python 侧找不到 checkpoint 时会从头跑。
+func isRetryDelivery(ctx context.Context) bool {
+	n, ok := asynq.GetRetryCount(ctx)
+	return ok && n > 0
 }
 
 // mustJSON 序列化为 JSON 字符串；失败返回 "{}"。
