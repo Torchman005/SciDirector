@@ -255,12 +255,34 @@ class ManimRenderer:
 # 这种两边各说各话的情况。这里只做转发，不再复制一份逻辑。
 
 
+#: HTML 引擎中间帧的格式、质量与并发页面数。
+#:
+#: 这三项**直接决定渲染耗时**：实测一个 8 秒镜头要 63 秒渲染，占整条流水线
+#: 约 70%（12 次渲染累计 759 秒 / 18.3 分钟）。8s × 30fps = 240 帧，
+#: 原本每帧都是一次 1080p PNG 截图 —— PNG 无损、又慢又大（1~3MB/张），
+#: 而这些帧马上会被 x264 以 crf20 重编码，无损那部分几乎全被丢掉。
+#:
+#: 改成 JPEG 90 + 多页面并行之后，同一镜头的实测耗时见 Agent.md v0.6.15。
+#: 并发数不在这里写死：由 `html_capture.py` 按 CPU 核数决定（上限 8），
+#: 这样换机器不用改配置，也不会在别的镜头并行时把整机吃满。
+_HTML_FRAME_FORMAT = "jpeg"
+_HTML_FRAME_QUALITY = 90
+
+#: 帧文件名的 pattern，必须与 `html_capture.frame_name` 的扩展名一致。
+#: 不一致的表现是 ffmpeg 读不到帧序列 → "帧序列编码失败"（响亮地失败，不是静默出错片），
+#: 另有一条测试把两边钉在一起。
+_FRAME_PATTERN = {"jpeg": "frame_%05d.jpg", "png": "frame_%05d.png"}
+
+
 class HtmlRenderer:
-    """基于 headless 浏览器的渲染器（D3 / ECharts / 代码动画共用）。
+    """基于 headless 浏览器的渲染器（D3 / ECharts / 代码动画 / 动效共用）。
 
     **逐帧截图**而不是录屏：录屏会丢帧、抖动，且不同机器结果不一致；
     逐帧截图配合页面暴露的 ``window.__seek(t)`` 是确定性的 ——
     同一份代码在任何机器上产出同一段视频。
+
+    截图本身在**沙盒子进程**里完成（见 `html_capture.py`）：被渲染的是 LLM
+    生成的页面，里面带着它的 JS，必须在网络隔离/只读/seccomp 之下运行。
     """
 
     def __init__(self, settings: Settings, engine: str) -> None:
@@ -313,7 +335,14 @@ class HtmlRenderer:
 
         mp4 = work / f"{request.shot_id}_{self.engine}.mp4"
         try:
-            encode_frames(frames_dir, mp4, runner, fps=fps, duration_sec=render_duration)
+            encode_frames(
+                frames_dir,
+                mp4,
+                runner,
+                fps=fps,
+                duration_sec=render_duration,
+                pattern=_FRAME_PATTERN[_HTML_FRAME_FORMAT],
+            )
             info = probe(mp4, runner)
         except MediaToolError as exc:
             # 统一归一化为 RendererError：让流水线只需处理一种失败形态，
@@ -363,6 +392,10 @@ class HtmlRenderer:
             "--width", str(request.width),
             "--height", str(request.height),
             "--start-sec", f"{start_sec:.6f}",
+            # 只管"存成什么格式"，不管"怎么编码成视频" —— 后者在 encode_frames。
+            # 两处的扩展名必须由同一个常量推导（见 _FRAME_PATTERN 的说明）。
+            "--format", _HTML_FRAME_FORMAT,
+            "--quality", str(_HTML_FRAME_QUALITY),
         ]
         # 环境里浏览器 build 号与 Playwright 期望不一致时（本机就是这样），
         # 允许显式指一个可执行文件；仅用于联调与测试。
