@@ -379,6 +379,20 @@ func PlanVideoChain(opts PostOptions, durationSec float64, subtitleFilterName st
 		}
 		parts = append(parts, fmt.Sprintf("fade=t=out:st=%.3f:d=%.3f", start, opts.Fade.OutSec))
 	}
+	// **必须把像素格式压回 yuv420p**，这是整条链的最后一步、也是不能省的一步。
+	//
+	// 踩过的坑很贵：`eq` / `curves` / `colortemperature` 在 RGB 空间工作，
+	// `subtitles`(libass) 也会改像素格式，于是走完这条链就是 yuv444p ——
+	// 而 libx264 会据此自动选 **High 4:4:4 Predictive**，那是专业中间格式，
+	// QQ 影音 / 微信 / 手机 / 电视盒子**一律播不了**（VLC 软解能播，所以在
+	// 开发机上完全看不出来）。
+	//
+	// 也就是说：**只要开了调色或烧录字幕，成片就会变成社交软件播不了的格式。**
+	// 表现是"我这儿能看，发出去别人打不开"，而根因离表象非常远。
+	// Normalize 那条链末尾有同样的 `format=yuv420p`，这里是补上漏掉的一处。
+	if len(parts) > 0 {
+		parts = append(parts, "format=yuv420p")
+	}
 	return strings.Join(parts, ","), nil
 }
 
@@ -431,6 +445,13 @@ func (r *Runner) PostProcess(ctx context.Context, in, out string, opts PostOptio
 		"-map", "0:v:0", "-map", "0:a?",
 		"-vf", chain,
 		"-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+		// 显式写死像素格式，与滤镜链末尾的 format=yuv420p **双保险**。
+		//
+		// 少了它（或少了链尾那道 format），libx264 会跟着输入的 yuv444p 走，
+		// 编出 High 4:4:4 Predictive —— 那是 QQ / 微信 / 手机都播不了的格式。
+		// 两个都写上是因为它们防的是不同的东西：链尾的 format 保证送进编码器的
+		// 是 420，这里的 -pix_fmt 保证编码器不会自作主张再改。
+		"-pix_fmt", "yuv420p",
 		// 音轨原样带走：这一层只动画面，重编码音频既无收益也多一次损失。
 		"-c:a", "copy",
 		// 与 Normalize 保持同一套色彩标记，否则调色后的成片与片段观感会不一致。
