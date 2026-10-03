@@ -369,9 +369,29 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 		}
 
 		if anyNarration {
+			// **必须按「转场感知的窗口」而不是逐镜头原始时长来拼配音轨。**
+			//
+			// 这里踩过一个典型的累积漂移（用户反馈"语音和字幕经常对不起"，
+			// 而且越到后面越明显）：
+			//
+			//   转场是**交叠**而不是插入，所以成片比各片段之和短 (n-1)×T。
+			//   视频里镜头 i 从 Σd − i×T 开始，而按原始时长拼接的配音轨里
+			//   镜头 i 从 Σd 开始 —— 每过一个转场旁白就晚 T 秒，**线性累积**。
+			//   T=0.4s、7 个镜头时，最后一个镜头的旁白晚了 2.4 秒。
+			//
+			// 片头几乎看不出来，越往后越偏 —— 这正是"最难发现"的那一类。
+			// 字幕早就是这么定位的（subtitle.go 的 PlanShotWindows 有同一段推导），
+			// 配音轨当时漏了这一步。
+			windows := media.PlanShotWindows(durations, plan)
 			parts := make([]media.NarrationPart, len(items))
 			for i := range items {
-				parts[i] = media.NarrationPart{AudioPath: items[i].audioPath, TargetSec: durations[i]}
+				target := durations[i]
+				if i < len(windows) {
+					// 用该镜头在成片里的**可见时长**（已扣掉与其相邻的交叠）。
+					// 各段可见时长之和恰好等于成片长度，因此拼接后与画面对齐。
+					target = windows[i].End - windows[i].Start
+				}
+				parts[i] = media.NarrationPart{AudioPath: items[i].audioPath, TargetSec: target}
 			}
 			track := filepath.Join(workDir, "narration.m4a")
 			if berr := p.media.BuildNarrationTrack(ctx, parts, track); berr != nil {
