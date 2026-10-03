@@ -622,7 +622,14 @@ ws://localhost:8080/ws/jobs/{jobID}
 | `job_id` | 任务标识，同时作为 LangGraph 的线程 ID |
 | `raw_script` / `style_guide_json` / `target_duration_sec` / `locale` | 生成参数 |
 | `max_attempts_per_shot` | 每镜头重试上限（熔断阈值） |
-| `resume` / `checkpoint_thread_id` | 断点续跑（需 Postgres checkpointer） |
+| `resume` / `checkpoint_thread_id` | 断点续跑。`resume=true` 且该线程有**未完成**的 checkpoint 时从断点继续；checkpoint 显示**已完成**时直接跳过（不再喂初始状态 —— 那会把进度清空，等于重跑） |
+
+> **`resume` 的生效条件**：Python 侧自 v0.6.14 起才真正消费该字段
+> （此前 Go 会发、Python 从不读，于是"续跑"实际从未生效）。
+> 它需要 **checkpointer 里还留着该线程的状态**：
+> 同进程内重试（任务超时/取消后的 Asynq 重投）有效；
+> **AI 进程重启后只有配了 Postgres 才有效** —— 内存 checkpointer 下
+> 会如实回落到"从头跑"并在日志里说明原因。
 
 响应：`stream PipelineEvent`（见 `common.proto`）。
 

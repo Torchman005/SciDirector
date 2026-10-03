@@ -77,6 +77,13 @@ class PipelineState(TypedDict, total=False):
     feedback: dict[str, CriticFeedback]
     attempts: dict[str, int]        # 每镜头已尝试次数（熔断依据）
     human_feedback: dict[str, str]  # 人类打回意见（HITL 注入点）
+    #: 每镜头的历次审查得分（按时间顺序）。
+    #:
+    #: 为什么需要历史：只留最后一次 feedback 看不出**趋势**，
+    #: 而趋势是"还要不要再重做一次"唯一有信息量的依据 ——
+    #: 实测有镜头连着三次拿到同一段审查意见、分数还从 0.64 掉到 0.45，
+    #: 那两轮重做纯属白烧渲染与 token。
+    score_history: dict[str, list[float]]
 
     # ------------------------------------------------------------------
     # 事件与统计（用 reducer 累加，允许并发节点合并写入）
@@ -135,6 +142,7 @@ def initial_state(
         feedback={},
         attempts={},
         human_feedback={},
+        score_history={},
         route_hint="",
         events=[],
         errors=[],

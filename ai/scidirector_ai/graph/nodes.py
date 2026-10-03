@@ -74,6 +74,14 @@ class PipelineError(RuntimeError):
     """流水线级别的致命错误（无法通过重试解决）。"""
 
 
+#: 「无进展熔断」的分数下限。
+#:
+#: 得分低于它就认为"离及格还很远"，配合"没有进步"才提前转人工。
+#: 取 0.5 的理由：实测被反复打回的镜头稳定落在 0.30~0.45 区间，而慢热但能翻盘的
+#: 镜头通常在 0.5~0.7 波动 —— 这条线正好把两者分开。
+_HOPELESS_SCORE = 0.5
+
+
 @dataclass
 class PipelineDeps:
     """节点所需的全部依赖。
@@ -630,6 +638,12 @@ class PipelineNodes:
         feedback_map = dict(state.get("feedback") or {})
         feedback_map[shot.shot_id] = outcome.feedback
 
+        # 记录本镜头的历次得分，供 revise 判断"重做到底有没有让画面变好"。
+        # 只留最后一次的 feedback 不足以判断趋势 —— 而趋势正是"该不该继续重试"
+        # 唯一有信息量的依据。
+        history_map = {k: list(v) for k, v in (state.get("score_history") or {}).items()}
+        history_map.setdefault(shot.shot_id, []).append(float(outcome.feedback.score))
+
         if outcome.degraded:
             hint, status = HINT_HUMAN, "AWAITING_HUMAN"
             message = f"无法自动审查，已转人工：{outcome.degradation_reason[:120]}"
@@ -651,6 +665,7 @@ class PipelineNodes:
         )
         return {
             "feedback": feedback_map,
+            "score_history": history_map,
             "route_hint": hint,
             "events": [
                 make_event(
@@ -720,6 +735,47 @@ class PipelineNodes:
                     )
                 ],
             }
+
+        # 「重做没有让画面变好」也要熔断。
+        #
+        # 实测依据（一条 8 镜头的真实任务）：两个镜头各重试到上限，三次拿到的
+        # 审查意见**一字不差**，分数还一路走低（0.64→0.45→0.45、0.32→0.30→0.36），
+        # 最后都靠人工放行。那两次重做是纯粹的浪费：一次渲染 + 一次编码调用
+        # + 一次 VLM 调用，而且因为流水线是串行的，它还把后面的镜头一起拖住。
+        #
+        # 判据刻意**保守**，两条同时满足才提前熔断：
+        #   * 最新一次得分没有超过此前的最高分（完全没有进步）；
+        #   * 最新得分仍明显低于及格线（`_HOPELESS_SCORE`）—— 离及格很近的
+        #     镜头（例如 0.6 上下波动）仍有靠下一轮翻盘的可能，不该被掐掉。
+        # 只满足"没进步"就熔断会把"0.55→0.58→0.95"这类慢热镜头误杀。
+        history = list((state.get("score_history") or {}).get(shot.shot_id) or [])
+        if len(history) >= 2:
+            latest = history[-1]
+            best_before = max(history[:-1])
+            if latest <= best_before and latest < _HOPELESS_SCORE:
+                logger.warning(
+                    "重做没有让画面变好，提前转人工（省下一轮渲染与两次模型调用）",
+                    extra={
+                        "shot_id": shot.shot_id,
+                        "attempt": attempt,
+                        "history": [round(s, 3) for s in history],
+                    },
+                )
+                return {
+                    "route_hint": HINT_HUMAN,
+                    "events": [
+                        make_event(
+                            state, node=NODE_REVISE, shot=shot, attempt=attempt,
+                            message=(
+                                f"连续 {len(history)} 次审查得分没有进步"
+                                f"（{'→'.join(f'{s:.2f}' for s in history)}），"
+                                f"重做下去大概率还是同一结果，提前转人工"
+                            ),
+                            status="AWAITING_HUMAN",
+                            error=state.get("render_error", "")[:500],
+                        )
+                    ],
+                }
 
         if attempt >= max_attempts:
             logger.warning(

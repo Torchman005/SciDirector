@@ -159,16 +159,24 @@ class _StubCoder:
 
 
 class _StubCritic:
-    def __init__(self, verdicts: list[bool]) -> None:
+    def __init__(self, verdicts: list[bool], scores: list[float] | None = None) -> None:
         self.verdicts = list(verdicts)
+        #: 可选的分数序列。不给就按"通过 0.9 / 不通过 0.4"的固定值 ——
+        #: 而固定值恰好会让「无进展熔断」生效，所以需要**趋势可控**的用例
+        #: （例如逐次升高的分数）来单独验证「额度熔断」。
+        self.scores = list(scores or [])
         self.calls = 0
 
     def review(self, *, shot: ShotSpec, attempt: int, **kwargs: Any) -> CritiqueOutcome:
         self.calls += 1
         passed = self.verdicts.pop(0) if self.verdicts else True
+        if self.scores:
+            score = self.scores.pop(0)
+        else:
+            score = 0.9 if passed else 0.4
         feedback = CriticFeedback(
             passed=passed,
-            score=0.9 if passed else 0.4,
+            score=score,
             issues=[] if passed else ["字号过小"],
             suggestions=[] if passed else ["把字号从 24 提到 48"],
             source=FeedbackSource.VLM,
@@ -213,6 +221,7 @@ def make_deps(
     *,
     shots: list[ShotSpec],
     verdicts: list[bool] | None = None,
+    scores: list[float] | None = None,
     policy_ok: bool = True,
     renderer: _StubRenderer | None = None,
 ) -> tuple[PipelineDeps, _StubDirector, _StubCoder, _StubCritic, _StubRenderer]:
@@ -220,7 +229,7 @@ def make_deps(
     llm = LLMClient(settings)
     director = _StubDirector(shots)
     coder = _StubCoder(policy_ok=policy_ok)
-    critic = _StubCritic(verdicts or [])
+    critic = _StubCritic(verdicts or [], scores=scores)
     render = renderer or _StubRenderer()
     deps = PipelineDeps(
         settings=settings, llm=llm,
@@ -319,9 +328,17 @@ class TestEndToEndWithStubs:
     def test_circuit_breaker_stops_retrying(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """**成本控制的核心**：连续不合格时必须在尝试上限处熔断，而不是无限重试。"""
+        """**成本控制的核心**：连续不合格时必须在尝试上限处熔断，而不是无限重试。
+
+        这里刻意给**逐次升高的分数**（0.55 → 0.60 → 0.65，都没过）。它们都高于
+        「无进展熔断」的下限，因此走到这里的是纯粹的**额度熔断** ——
+        否则这条用例会被另一条规则提前截断，就测不到额度本身了。
+        """
         deps, _, coder, critic, _ = make_deps(
-            tmp_path, shots=make_shots(1), verdicts=[False, False, False, False, False]
+            tmp_path,
+            shots=make_shots(1),
+            verdicts=[False, False, False, False, False],
+            scores=[0.55, 0.60, 0.65],
         )
         events = run_graph(deps, max_attempts=3, monkeypatch=monkeypatch)
 
@@ -329,6 +346,65 @@ class TestEndToEndWithStubs:
         assert critic.calls == 3
         assert any(e["status"] == "AWAITING_HUMAN" for e in events)
         assert any("转人工" in (e.get("message") or "") for e in events)
+
+    def test_no_progress_breaker_stops_before_budget(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """**无进展熔断**：分数一路不涨且离及格很远时，提前转人工。
+
+        实测依据（一条 8 镜头的真实任务）：两个镜头各重试到上限，三次拿到**一字不差**
+        的审查意见，分数还走低（0.64→0.45→0.45、0.32→0.30→0.36），最后都靠人工放行。
+        那两次重做是纯浪费：一次渲染 + 一次编码调用 + 一次 VLM 调用，
+        而且流水线是串行的，它还会把后面的镜头一起拖住。
+        """
+        deps, _, coder, critic, _ = make_deps(
+            tmp_path,
+            shots=make_shots(1),
+            verdicts=[False, False, False],
+            scores=[0.40, 0.40, 0.40],
+        )
+        events = run_graph(deps, max_attempts=3, monkeypatch=monkeypatch)
+
+        assert coder.calls == [1, 2], f"第 2 次后就该停下，实际 {coder.calls}"
+        assert critic.calls == 2
+        assert any(e["status"] == "AWAITING_HUMAN" for e in events)
+        assert any("没有进步" in (e.get("message") or "") for e in events), (
+            "事件里必须写明为什么提前停下，否则用户会以为额度被吃掉了"
+        )
+
+    def test_no_progress_breaker_keeps_retrying_when_score_rises(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """反向对照：分数在涨就不能提前熔断，哪怕它还没及格。
+
+        这条守的是"别把慢热镜头误杀"：0.55 → 0.60 虽然都没过，
+        但趋势是好的，第 3 次仍有翻盘可能。
+        """
+        deps, _, coder, _, _ = make_deps(
+            tmp_path,
+            shots=make_shots(1),
+            verdicts=[False, False, True],
+            scores=[0.55, 0.62, 0.95],
+        )
+        events = run_graph(deps, max_attempts=3, monkeypatch=monkeypatch)
+
+        assert coder.calls == [1, 2, 3], f"分数在涨就该继续试，实际 {coder.calls}"
+        assert any(e["status"] == "APPROVED" for e in events)
+
+    def test_no_progress_breaker_keeps_high_scores(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """分数在及格线附近波动时也不算"无进展"——离及格近就值得再试一次。"""
+        deps, _, coder, _, _ = make_deps(
+            tmp_path,
+            shots=make_shots(1),
+            verdicts=[False, False, False, False],
+            scores=[0.68, 0.66, 0.70],
+        )
+        events = run_graph(deps, max_attempts=3, monkeypatch=monkeypatch)
+
+        assert coder.calls == [1, 2, 3], f"0.6x 的波动不该被熔断，实际 {coder.calls}"
+        assert any(e["status"] == "AWAITING_HUMAN" for e in events)
 
     def test_circuit_breaker_does_not_block_other_shots(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

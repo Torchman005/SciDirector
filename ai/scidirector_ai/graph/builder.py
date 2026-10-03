@@ -30,6 +30,7 @@ from ..logging import get_logger
 from ..sandbox.runner import SandboxRunner
 from ..tts.factory import build_tts_provider
 from .checkpoint import CheckpointHandle, build_checkpointer
+from .reconcile import read_snapshot
 from .nodes import (
     PipelineDeps,
     PipelineError,
@@ -59,6 +60,14 @@ NODES_PER_ATTEMPT = 6
 
 #: 镜头数的保守上界（导演智能体对 90 秒视频通常产出 8~15 个镜头）。
 ASSUMED_MAX_SHOTS = 24
+
+#: ``_resume_decision`` 的三种结果。
+#:
+#: 用字符串常量而不是枚举：它们只在本模块内流转，并且会被原样写进日志 ——
+#: 日志里出现 "skip_finished" 比出现 "<ResumeDecision.SKIP_FINISHED: 3>" 好读。
+_FRESH = "fresh"
+_CONTINUE = "continue"
+_SKIP_FINISHED = "skip_finished"
 
 
 def build_graph(deps: PipelineDeps, checkpointer: Any = None) -> Any:
@@ -215,10 +224,34 @@ class PipelineRunner:
             yield _fatal_event(job_id, f"构造流水线初始状态失败：{exc}")
             return
 
+        tid = request.checkpoint_thread_id or job_id
         config = {
-            "configurable": {"thread_id": request.checkpoint_thread_id or job_id},
+            "configurable": {"thread_id": tid},
             "recursion_limit": self._recursion_limit(request),
         }
+
+        # 决定这次是「从断点续跑」还是「从头开始」。
+        #
+        # Go 侧在**重试投递**时会带 resume=true（见 worker/processor.go 的注释，
+        # 那里已经把这个 bug 的成因与代价写清楚了），但这里原先**完全没有读它** ——
+        # 于是"续跑"从未生效：每次重试都拿一份全新的 initial_state 喂进同一个
+        # thread，把 shots / cursor / artifacts / attempts 全部清空，
+        # 等于从头再跑一遍，**包括已经通过审查的镜头**。
+        # 用户看到的正是"已通过审查的有时会重新生成"，而代价随失败次数成倍放大
+        # （TaskTimeout 45 分钟 × MaxRetry 5 → 最坏把全部工作做 6 遍）。
+        decision, note = self._resume_decision(request, config)
+        if decision == _SKIP_FINISHED:
+            # 上一轮已经全部跑完：**什么都不做**才是对的。
+            # 再喂一遍初始状态会清空进度；而"什么都不跑"是安全的 ——
+            # Go 侧在 RunPipeline 返回后会**自己从库里重算任务状态**并按需入队合成
+            # （worker/processor.go），并不依赖这一次的镜头事件。
+            logger.info(
+                "检测到已完成的 checkpoint，跳过重跑",
+                extra={"job_id": job_id, "thread_id": tid, "detail": note},
+            )
+            yield _final_event(job_id, self.llm)
+            return
+        graph_input: PipelineState | None = None if decision == _CONTINUE else state
 
         logger.info(
             "流水线开始",
@@ -228,12 +261,14 @@ class PipelineRunner:
                 "max_attempts": request.max_attempts_per_shot,
                 "checkpoint_backend": self.checkpointer.backend,
                 "durable": self.checkpointer.durable,
+                "resume_decision": decision,
+                "resume_note": note,
             },
         )
 
         emitted = 0
         try:
-            for chunk in self.app.stream(state, config=config, stream_mode="updates"):
+            for chunk in self.app.stream(graph_input, config=config, stream_mode="updates"):
                 for _node_name, update in (chunk or {}).items():
                     if not isinstance(update, dict):
                         continue
@@ -261,6 +296,31 @@ class PipelineRunner:
         estimated = ASSUMED_MAX_SHOTS * attempts * NODES_PER_ATTEMPT
         # 至少 100：即使只有一个镜头，重试路径也可能走很多步。
         return max(100, estimated + 50)
+
+    def _resume_decision(self, request: Any, config: dict[str, Any]) -> tuple[str, str]:
+        """判断本次运行该"续跑"还是"从头来"。
+
+        返回 (决策, 说明)。三种决策：
+
+          ``_FRESH``        —— 首跑，或没有可用的 checkpoint。喂入完整初始状态。
+          ``_CONTINUE``     —— 有未完成的 checkpoint。喂 ``None``，让 LangGraph
+                               从断点继续（喂新状态会把它清空，见 run 的注释）。
+          ``_SKIP_FINISHED``—— checkpoint 显示上一轮已经跑完。什么都不跑。
+
+        **拿不到 checkpoint 时必须回落到从头跑，而不是报错**：内存 checkpointer
+        在 AI 进程重启后就是空的（日志里会明确告警 durable=False），
+        此时"没有断点"是完全正常的情况。
+        """
+        if not bool(getattr(request, "resume", False)):
+            return _FRESH, "首跑（resume=false）"
+
+        tid = config["configurable"]["thread_id"]
+        snap = read_snapshot(self, getattr(request, "job_id", ""), tid)
+        if not snap.found:
+            return _FRESH, f"没有可续跑的 checkpoint（{snap.detail}），从头开始"
+        if snap.finished:
+            return _SKIP_FINISHED, f"上一轮已跑完（cursor={snap.cursor}）"
+        return _CONTINUE, f"从 cursor={snap.cursor} 继续"
 
 
 def _fatal_event(job_id: str, message: str) -> dict[str, Any]:
