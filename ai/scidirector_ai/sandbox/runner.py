@@ -534,6 +534,19 @@ class SandboxRunner:
         "USERPROFILE", "HOMEDRIVE", "HOMEPATH",
         # 缓存/配置目录：matplotlib、Qt、字体缓存等都会读取。
         "APPDATA", "LOCALAPPDATA",
+        # Windows 的 `%VAR%` 展开依赖这些变量**存在**。
+        # 少了 SystemDrive，子进程里 `os.path.expandvars("%SystemDrive%\\ProgramData")`
+        # 会**原样返回未展开的字符串**（实测：SystemDrive=None 时返回
+        # `'%SystemDrive%\\ProgramData'`）。Windows 程序把这种字面串当**相对路径**
+        # 用时，就会在**当前工作目录**（也就是镜头工作目录）下造出一个
+        # 名叫 `%SystemDrive%` 的目录。
+        #
+        # 这不是理论问题：实测 53 个任务的镜头目录里都躺着
+        # `shot_000/%SystemDrive%/ProgramData/SogouInput/...` —— 是输入法注入
+        # 浏览器的 DLL 写进去的。它不影响出片，但让工作目录变脏，也说明
+        # 子进程拿到的环境是**不完整**的；同类缺失哪天落在"必须正确的路径"上
+        # （而不是输入法缓存）就会变成很难查的故障。
+        "SystemDrive", "ALLUSERSPROFILE", "ProgramData",
         "SCID_RENDER_WIDTH", "SCID_RENDER_HEIGHT", "SCID_RENDER_FPS",
         # Playwright 的浏览器目录。它是一个**路径**配置而不是密钥，白名单里没有它
         # 会让沙盒里的浏览器找不到自己 —— 表现为截图全部失败，
