@@ -259,6 +259,24 @@ func (p *Processor) applyPipelineEvent(ctx context.Context, jobID string, ev *pb
 			return nil
 		}
 
+		// `code` 节点会把**生成的源码**放在 payload 里。必须把它落库。
+		//
+		// 这是"人工打回重做效果不好"的根因：Go 原先只在**重做路径**里回写代码
+		// （见 HandleRenderShot），主流水线从不保存 —— 于是镜头记录里的 `code`
+		// 一直是空的。打回时 `pbconv.ShotToPB(shot)` 带过去一个空 code，
+		// Python 侧 `previous_code=""`，提示词里**根本不会出现"上一版代码"**
+		// 那一块，模型只能凭一句意见从零重画。
+		// 那不是"重做"，是"重写"：已经画对的部分一并丢掉，
+		// 而用户看到的正是"打回之后效果反而更差"。
+		if ev.GetNode() == "code" && ev.GetPayloadJson() != "" {
+			if cerr := syncCodeFromPayload(shot, ev.GetPayloadJson()); cerr != nil {
+				// 与分镜表解析一致：不静默吞，但也**不该因此中断状态同步** ——
+				// 画面已经渲染出来了，丢的只是"下次重做时能参考的源码"。
+				logging.FromContext(ctx).Warn("解析 code 事件里的源码失败（不影响本次渲染，但下次重做会没有上一版可参考）",
+					"job_id", jobID, "shot_id", shot.ShotID, "error", cerr.Error())
+			}
+		}
+
 		if next := pbconv.StatusFromPB(ev.GetStatus()); next != "" {
 			if _, terr := domain.Transition(shot.Status, next); terr != nil {
 				// 边界宽容策略：Python 是语义进度的产出方，若它报出一个我们的
@@ -303,6 +321,42 @@ func (p *Processor) applyPipelineEvent(ctx context.Context, jobID string, ev *pb
 	// 2) 落事件流（内含 Publish，api 侧订阅后推给浏览器）。
 	_, err = p.emit(ctx, &domainEvent)
 	return err
+}
+
+// syncShotsFromPayload 解析导演智能体返回的分镜表快照并同步进任务。
+//
+// 跨语言约定：plan 节点的 PipelineEvent.payload_json 形如
+// {"shots": [ShotSpec...], "outline": "..."}。
+// 用 JSON 而不是 proto 的 repeated 字段，是为了让分镜表的**结构演进**
+// 不必每次都重新生成两侧代码（分镜表仍在快速迭代期）。
+// syncCodeFromPayload 把 `code` 事件里的生成源码写回镜头。
+//
+// 跨语言约定：code 节点的 PipelineEvent.payload_json 形如
+// {"patch": {"shot_id": "...", "code": "...", "language": "..."}}。
+//
+// **为什么必须存**：这段源码是"人工打回重做"时唯一的参考物。不存的话，
+// 打回请求带过去的 `previous_code` 是空串，提示词里不会出现"上一版代码"，
+// 模型只能凭一句意见从零重画 —— 那不是重做，是重写，已经画对的部分一并丢掉。
+// 用户看到的正是"打回之后效果反而更差"。
+//
+// 与分镜表一样走 JSON 而不是 proto 字段：源码是长文本，
+// 塞进 proto 会让每条事件都背上几 KB，而这些内容只有重做时才用得到。
+func syncCodeFromPayload(shot *domain.Shot, payloadJSON string) error {
+	var wrap struct {
+		Patch struct {
+			Code     string `json:"code"`
+			Language string `json:"language"`
+		} `json:"patch"`
+	}
+	if err := json.Unmarshal([]byte(payloadJSON), &wrap); err != nil {
+		return fmt.Errorf("worker: code 事件的 payload_json 不是合法 JSON: %w", err)
+	}
+	if wrap.Patch.Code == "" {
+		return nil
+	}
+	shot.Code = wrap.Patch.Code
+	shot.Language = wrap.Patch.Language
+	return nil
 }
 
 // syncShotsFromPayload 解析导演智能体返回的分镜表快照并同步进任务。

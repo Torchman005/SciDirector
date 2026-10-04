@@ -227,3 +227,47 @@ func TestSyncShotsFromPayloadDerivesID(t *testing.T) {
 		t.Errorf("派生的 shot_id 不稳定：%q", job.Shots[1].ShotID)
 	}
 }
+
+// TestSyncCodeFromPayloadStoresSource 是"人工打回重做"这条链路的地基。
+//
+// 守的是一个真实缺陷：Go 原先只在**重做路径**里回写代码，主流水线从不保存，
+// 于是镜头记录里的 `code` 一直是空的。打回时 `ShotToPB(shot)` 带过去一个空 code，
+// Python 侧 `previous_code=""`，提示词里不会出现"上一版代码"，
+// 模型只能凭一句意见从零重画 —— 那不是重做，是重写。
+// 用户看到的正是"打回之后效果反而更差"。
+func TestSyncCodeFromPayloadStoresSource(t *testing.T) {
+	payload := `{"patch": {"shot_id": "job-x-s000", "code": "window.__seek = (t) => {};",
+	                       "language": "html+js"}}`
+	shot := &domain.Shot{ShotID: "job-x-s000"}
+
+	if err := syncCodeFromPayload(shot, payload); err != nil {
+		t.Fatalf("同步失败: %v", err)
+	}
+	if shot.Code != "window.__seek = (t) => {};" {
+		t.Errorf("源码没有落库：%q", shot.Code)
+	}
+	if shot.Language != "html+js" {
+		t.Errorf("语言没有落库：%q", shot.Language)
+	}
+}
+
+// TestSyncCodeFromPayloadIgnoresEmptyAndBad 空源码与坏 JSON 的处理。
+//
+// 空 patch 必须**原样返回 nil 且不动已有代码** —— 有些 code 事件只报"正在生成"
+// 而不带源码（例如重试前的那条），把已有源码清空会让下一次重做又失去参考物。
+func TestSyncCodeFromPayloadIgnoresEmptyAndBad(t *testing.T) {
+	shot := &domain.Shot{ShotID: "s", Code: "已存在的源码"}
+
+	if err := syncCodeFromPayload(shot, `{"patch": {"shot_id": "s"}}`); err != nil {
+		t.Fatalf("空 patch 不该报错: %v", err)
+	}
+	if shot.Code != "已存在的源码" {
+		t.Errorf("空 patch 不该清空已有源码，实际 %q", shot.Code)
+	}
+	if err := syncCodeFromPayload(shot, "{ 这不是合法 JSON"); err == nil {
+		t.Error("坏 JSON 应当报错，而不是静默当成功")
+	}
+	if err := syncCodeFromPayload(shot, `{"outline": "没有 patch"}`); err != nil {
+		t.Errorf("没有 patch 字段时应当静默忽略: %v", err)
+	}
+}

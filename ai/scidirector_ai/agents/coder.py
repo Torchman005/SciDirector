@@ -283,11 +283,16 @@ class CoderAgent(Agent):
         而不是重新盲写一遍（很可能再犯同样的错）。
         """
         engine = shot.engine.value if shot.engine else ""
+        # 这里**只放违规信息**，不再重复内联一份上一版代码。
+        #
+        # 原实现把 `artifact.code[:6000]` 塞进 feedback（截断），同时又把
+        # `previous_code=artifact.code` 传下去（在 `_build_user_prompt` 里再截断一次），
+        # 于是提示词里出现**两份残缺的**上一版代码 —— 既浪费上下文，
+        # 又让"请重新输出完整代码"这句话与它看到的残缺内容自相矛盾。
+        # 代码由 `_build_user_prompt` 统一注入，只此一处、且会显式标注截断。
         feedback = (
             "【静态安全检查未通过，请修正下列问题后重新输出完整代码】\n"
-            f"{violations}\n\n"
-            "【上一版代码】\n"
-            f"```\n{artifact.code[:6000]}\n```"
+            f"{violations}"
         )
         user_prompt = self._build_user_prompt(
             shot=shot,
@@ -334,7 +339,7 @@ class CoderAgent(Agent):
             if previous_code:
                 feedback_block += (
                     "\n**上一版代码（供参考，不要原样输出）**\n"
-                    f"```\n{previous_code[:6000]}\n```\n"
+                    f"```\n{_clip_code_for_prompt(previous_code)}\n```\n"
                 )
 
         return render_prompt(
@@ -357,6 +362,41 @@ class CoderAgent(Agent):
 # ---------------------------------------------------------------------------
 
 _prompt_cache: dict[str, str] = {}
+
+#: 上一版代码注入提示词时的长度上限。
+#:
+#: 定这个值之前踩过一次代价很大的坑：原值是 **6000**，而实测生成的 HTML 动效代码
+#: 最长到 **6681** 字符 —— 12 个镜头里有 4 个（约三分之一）在"重做 / 修复"时，
+#: 模型看到的上一版是**残缺的**；提示词里却写着"不要原样输出""重新输出完整代码"，
+#: 于是模型很可能把没看到的那一段直接丢掉 —— 而那一端往往正是收尾的
+#: `window.__seek` 与闭合标签，丢了就是渲染契约失败或画面坏掉。
+#:
+#: 最糟的是**这一切没有任何日志**：截断是静默的，只表现为"打回重做效果不好"。
+#:
+#: 现在取 24000（实测最大值的 3.5 倍），足以让真实产物**原样**进提示词；
+#: 真超了也不再静默截断，而是头尾各留一段并**显式标注**中间省略了多少字符。
+_MAX_PREVIOUS_CODE_CHARS = 24000
+
+
+def _clip_code_for_prompt(code: str, *, what: str = "上一版代码") -> str:
+    """把要注入提示词的代码裁到上限内；**绝不静默丢内容**。
+
+    低于上限时原样返回（绝大多数情况）。超过时保留**头与尾**、中间显式标注省略量：
+    头有结构与样式，尾有渲染契约（`window.__seek`）与闭合标签 ——
+    两端都比中间那段更容易被模型当成"可以省掉"的东西，所以都不能丢。
+    """
+    if len(code) <= _MAX_PREVIOUS_CODE_CHARS:
+        return code
+    head_len = int(_MAX_PREVIOUS_CODE_CHARS * 0.6)
+    tail_len = _MAX_PREVIOUS_CODE_CHARS - head_len
+    omitted = len(code) - _MAX_PREVIOUS_CODE_CHARS
+    return (
+        code[:head_len]
+        + f"\n\n# …（{what}过长，此处省略了 {omitted} 个字符，只保留开头与结尾）\n"
+        "# 你必须输出**完整且自洽**的文件；不要因为看不到中间，\n"
+        "# 就删掉结尾的渲染契约（window.__seek）或任何闭合标签。\n\n"
+        + code[-tail_len:]
+    )
 
 
 def load_engine_prompt(
@@ -397,14 +437,21 @@ def load_engine_prompt(
 
 
 def render_examples(examples: list[FewShot]) -> str:
-    """把召回的范例渲染成提示词片段。"""
+    """把召回的范例渲染成提示词片段。
+
+    范例代码同样走 :func:`_clip_code_for_prompt`，**不再静默截断**。
+    原先这里是 ``ex.code[:2500]``，而语料里 7 条范例有 2 条超过 2500 字符
+    （最长 3899）—— 也就是说模型有时会拿到一份**残缺的范例**当作"参考写法"，
+    而残缺的范例比没有范例更糟：它可能照着学，把缺掉收尾（`window.__seek`、
+    闭合标签）的写法一起学过去。
+    """
     if not examples:
         return "（本次没有召回到参考范例，请按系统提示里的范式自行实现）"
     blocks: list[str] = []
     for ex in examples:
         block = f"### 范例：{ex.title}（标签 {ex.tag}）\n要点：{ex.summary}"
         if ex.code.strip():
-            block += f"\n```\n{ex.code[:2500]}\n```"
+            block += f"\n```\n{_clip_code_for_prompt(ex.code, what='范例代码')}\n```"
         blocks.append(block)
     return "\n\n".join(blocks)
 

@@ -96,6 +96,115 @@ def make_shot(tag: SceneTag = SceneTag.MATH, **overrides: object) -> ShotSpec:
     return ShotSpec(**base)  # type: ignore[arg-type]
 
 
+def _code_of_length(n: int, *, marker: str = "") -> str:
+    """造一段长度恰为 ``n`` 的代码，开头与结尾都带可断言的标记。"""
+    head = "<!--HEAD-->"
+    tail = "window.__seek = (t) => {};"
+    mid_marker = marker
+    body_len = max(n - len(head) - len(tail) - len(mid_marker), 0)
+    return head + mid_marker + ("y" * body_len) + tail
+
+
+class TestPreviousCodeInjection:
+    """上一版代码必须**完整**进提示词，或至少截断得**响亮**。
+
+    守的是一个真实缺陷：原实现是 ``previous_code[:6000]``，而实测生成过的 HTML
+    动效代码最长到 **6681** 字符 —— 12 个镜头里有 4 个在"重做 / 修复"时看到的
+    是残缺的上一版，而提示词却写着"重新输出完整代码"。模型于是很可能把没看到的
+    那一段丢掉（往往正是收尾的 ``window.__seek`` 与闭合标签）。
+
+    最糟的是它**没有任何日志**：截断是静默的，只表现为"打回重做效果不好"。
+    """
+
+    #: 实测生成过的最大 HTML 动效代码长度（来自真实任务的事件日志）。
+    OBSERVED_MAX_CODE_CHARS = 6681
+
+    def test_realistic_code_goes_in_verbatim(self) -> None:
+        """**本条就是这个 bug 的回归测试**：真实长度的代码必须原样进提示词。"""
+        agent = make_agent()
+        code = _code_of_length(self.OBSERVED_MAX_CODE_CHARS)
+        prompt = agent._build_user_prompt(
+            shot=make_shot(tag=SceneTag.MOTION),
+            style_guide=StyleGuide(),
+            attempt=2,
+            feedback_text="请把方块数量加到 8 个，并从四角向中心汇聚。",
+            previous_code=code,
+            examples=[],
+        )
+        assert "<!--HEAD-->" in prompt, "开头不见了"
+        assert "window.__seek" in prompt, "结尾的渲染契约被截掉了"
+        assert "省略" not in prompt, f"{self.OBSERVED_MAX_CODE_CHARS} 字符不该触发截断"
+
+    def test_over_long_code_is_clipped_with_a_loud_marker(self) -> None:
+        """真超长时也不许静默：必须显式说明省略了多少，且头尾都在。"""
+        agent = make_agent()
+        code = _code_of_length(90_000)
+        prompt = agent._build_user_prompt(
+            shot=make_shot(tag=SceneTag.MOTION),
+            style_guide=StyleGuide(),
+            attempt=2,
+            feedback_text="改一下配色。",
+            previous_code=code,
+            examples=[],
+        )
+        assert "省略" in prompt, "截断必须显式标注，不能静默"
+        assert "<!--HEAD-->" in prompt, "开头必须保留（结构与样式在那里）"
+        assert "window.__seek" in prompt, "结尾必须保留（渲染契约在那里）"
+        # 尾部那句提醒很重要：模型倾向于把"看不到的中间"连同结尾一起省掉。
+        assert "闭合标签" in prompt
+
+    def test_examples_are_not_silently_truncated(self) -> None:
+        """RAG 范例代码同样不许静默截断。
+
+        语料里 7 条范例有 2 条超过原来的 2500 字符上限（最长 3899）——
+        也就是模型有时会拿到一份**残缺的范例**当作"参考写法"。
+        残缺的范例比没有范例更糟：它可能照着学，把缺掉收尾
+        （`window.__seek`、闭合标签）的写法一起学过去。
+        """
+        long_example = FewShot(
+            id="data-002",
+            tag="DATA",
+            engine="d3",
+            title="桩范例",
+            summary="桩要点",
+            code=_code_of_length(3_899),
+        )
+        rendered = render_examples([long_example])
+        assert "window.__seek" in rendered, "范例的结尾被截掉了"
+        assert "省略" not in rendered, "3899 字符不该触发截断"
+
+    def test_repair_prompt_contains_the_code_only_once(self) -> None:
+        """静态检查修复的提示词里，上一版代码只该出现一次。
+
+        原实现把 ``artifact.code[:6000]`` 塞进 feedback，同时又把
+        ``previous_code=artifact.code`` 传下去（进去再截一次），
+        于是提示词里有两份**残缺**的代码 —— 既浪费上下文，
+        又让"请重新输出完整代码"与它看到的残缺内容自相矛盾。
+        """
+        agent = make_agent()
+        code = _code_of_length(8_000, marker="// UNIQUE_MARKER_XYZ\n")
+        captured: dict[str, str] = {}
+
+        def fake_call(engine: str, system: str, user: str) -> Any:
+            captured["user"] = user
+            return CodeArtifact(code="<ok>", language="html+js")
+
+        agent._call_model = fake_call  # type: ignore[assignment]
+        artifact = CodeArtifact(code=code, language="html+js")
+        agent._repair(
+            make_shot(tag=SceneTag.MOTION),
+            StyleGuide(),
+            artifact,
+            "缺少 window.__seek",
+            [],
+            "（桩系统提示）",
+        )
+
+        user = captured["user"]
+        assert user.count("UNIQUE_MARKER_XYZ") == 1, "上一版代码被注入了不止一次"
+        assert "window.__seek" in user, "上一版代码必须真的在里面"
+
+
 # ===========================================================================
 # 路由
 # ===========================================================================
@@ -433,10 +542,23 @@ class TestRenderExamples:
         rendered = render_examples([example])
         assert "标题" in rendered and "要点说明" in rendered and "print(1)" in rendered
 
-    def test_truncates_long_code(self) -> None:
-        example = FewShot(id="a", title="t", tag="MATH", engine="manim",
-                          summary="s", code="x" * 5000)
-        assert len(render_examples([example])) < 3000
+    def test_long_example_is_kept_whole_or_explicitly_marked(self) -> None:
+        """**这条改写了旧契约。** 旧契约是"超过 2500 就截断"。
+
+        而语料里 7 条范例有 2 条超过 2500（最长 3899）—— 于是模型有时会拿到
+        一份残缺的范例当作"参考写法"，那比不给范例更糟：它可能照着学，
+        把缺掉收尾（`window.__seek`、闭合标签）的写法一起学过去。
+
+        新契约：上限之内**原样**注入；真超限则头尾保留并显式标注省略量。
+        """
+        five_k = FewShot(id="a", title="t", tag="MATH", engine="manim",
+                         summary="s", code="x" * 5_000)
+        rendered = render_examples([five_k])
+        assert "省略" not in rendered, "5000 字符在上限之内，不该截断"
+
+        huge = FewShot(id="b", title="t", tag="MATH", engine="manim",
+                       summary="s", code="y" * 90_000)
+        assert "省略" in render_examples([huge]), "超限必须显式标注，不能静默"
 
 
 class TestCodeArtifact:
