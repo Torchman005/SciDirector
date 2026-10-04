@@ -51,10 +51,19 @@ export interface Artifact {
 
 export interface Feedback {
   passed: boolean
+  /** 四维加权总分（人工打回时可能为 0）。 */
+  score?: number
+  /** 意见来源：VLM（机器审查）/ HUMAN（人工打回）/ SYSTEM（渲染等技术错误）。 */
   source: string
   attempt: number
   issues?: string[]
   suggestions?: string[]
+  /** 四个维度的分数，仅 VLM 审查会有。审核员据此看出"是哪一项拖垮了它"。 */
+  logic_score?: number
+  readability_score?: number
+  pacing_score?: number
+  aesthetics_score?: number
+  model?: string
   created_at: string
 }
 

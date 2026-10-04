@@ -3,6 +3,7 @@ import {
   Alert,
   Button,
   Descriptions,
+  Divider,
   Input,
   Modal,
   Select,
@@ -14,6 +15,7 @@ import {
 
 import { SHOT_BACKGROUND_OPTIONS, backgroundLabel, shotStatus } from '../display'
 import type { Shot } from '../types'
+import { ReviewHistory } from './ReviewHistory'
 import { useShotActions } from './useShotActions'
 
 const { Text, Paragraph } = Typography
@@ -158,6 +160,13 @@ export function ShotDetail({ jobId, shot, disabled, onChanged }: Props) {
           编辑文案
         </Button>
       </Space>
+
+      {/* 审查依据放在**操作按钮之后**：先让审核员看到"能做什么"，
+          再往下读"凭什么这样判断"。反过来会让人在还没看清按钮时就先读了细节。 */}
+      <Divider orientation="left" plain style={{ margin: '4px 0' }}>
+        审查依据
+      </Divider>
+      <ReviewHistory feedbacks={shot.feedbacks} />
 
       {/* --- 打回：把意见回灌给编码智能体 --- */}
       <Modal

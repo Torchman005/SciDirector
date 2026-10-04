@@ -110,3 +110,33 @@ body {
 .event-message {
   color: #e6ecff;
 }
+
+/* --- 审查记录（审核台的核心依据） --- */
+
+.feedback-item {
+  padding: 10px 12px;
+  background: #0d1428;
+  border: 1px solid #1e2740;
+  border-radius: 8px;
+}
+
+.feedback-dims {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: #8a94a6;
+}
+
+/* 低于硬性下限的维度要一眼看出来：它才是判负的直接原因，
+   而加权总分可能仍然不低 —— 不标出来就会变成"分数不低怎么会不过"。 */
+.dim-below {
+  color: #e74c3c;
+  font-weight: 600;
+}
+
+.dim-below em {
+  font-style: normal;
+  font-size: 11px;
+}
