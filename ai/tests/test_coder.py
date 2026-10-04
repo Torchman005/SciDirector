@@ -566,3 +566,39 @@ class TestCodeArtifact:
         artifact = CodeArtifact()
         assert artifact.code == "" and artifact.language == "python"
         assert artifact.explanation == ""
+
+
+class TestMotionPacingContract:
+    """动效提示词必须要求**把整段时长铺满**。
+
+    守的是一条真实事故（job-afdfcd4350073365-s000）：22.83 秒的镜头，
+    模型把界面搭好、动画演了约 3 秒就"完成"，之后 18 秒画面几乎不动。
+    实测相邻抽帧的**变化像素占比**一路塌到 0.06~0.19%（全画面基本静止），
+    审查连续四轮（**正确地**）判它"动画停滞"，而反馈给的
+    "把打字 run_time 从 0.5 延长到 3 秒"这类微调根本填不满那段时间 ——
+    于是代码改来改去画面不变、审查结论一字不差，一直烧到人工介入。
+
+    原提示词里只有"一个镜头只讲一个动作：出现 → 变化 → **停住**"，
+    等于在教模型"演完就停"。这条用例钉住后来补的「时长铺满」要求。
+    """
+
+    def test_motion_prompt_requires_filling_the_duration(self) -> None:
+        prompt = render_engine_prompt("coder_motion")
+        assert "时长铺满" in prompt, "缺少'铺满时长'这一节"
+        # 关键判据：审查是等间隔抽帧比对，所以要求必须按"帧与帧之间"表述。
+        assert "抽" in prompt and "帧" in prompt
+        # 必须给出可操作的做法（分阶段），而不只是"要有节奏"这种口号。
+        assert "阶段" in prompt
+
+    def test_motion_prompt_explains_static_hold_is_not_pacing(self) -> None:
+        """表达"卡住"也不能用静止画面 —— 那是审查抓得最准的一类问题。"""
+        prompt = render_engine_prompt("coder_motion")
+        assert "卡住" in prompt
+        assert "静止画面" in prompt
+
+    def test_motion_prompt_keeps_the_final_state_to_the_end(self) -> None:
+        prompt = render_engine_prompt("coder_motion")
+        assert "最后" in prompt
+        # 实测只写"留到最后"不够：模型仍会在约 70% 处进入完成态然后干等，
+        # 所以提示词要求"最后一个阶段本身仍在进行中"。
+        assert "进行中" in prompt or "仍在" in prompt

@@ -370,3 +370,46 @@ class TestRenderContractAndRoundConsistency:
     ) -> None:
         assert "1.6" in critic_user_prompt, "采样间隔必须真的渲染进提示词"
         assert "{{" not in critic_user_prompt
+
+
+#: 生产代码**实际**传给系统提示词的变量（见 critic.py 的 render_prompt("critic", ...)）。
+#:
+#: 与 PLACEHOLDER_VALUES 的区别很关键：后者是"所有模板用到的值"的**并集**，
+#: 用它渲染会**掩盖**"某个模板引用了一个生产根本没传的变量"这类错误 ——
+#: 那种错误在生产里表现为提示词里留着一个字面的 `{{duration_sec}}`，
+#: 而测试全绿。所以这里单独维护一份"生产真实值"。
+PRODUCTION_SYSTEM_VALUES: dict[str, Any] = {
+    "threshold": "0.75",
+    "background_color": "#0B1020",
+    "min_font_size": 36,
+    "min_font_size_tolerance": 32,
+    "duration_sec": 22.83,
+    "frame_interval_sec": "4.6",
+}
+
+
+class TestProductionVariablesAreEnough:
+    """提示词必须能被**生产实际传的变量**渲染干净。
+
+    守的是一个刚踩过的坑：在 critic.md 里加了 {{duration_sec}} / {{frame_interval_sec}}，
+    却忘了在 critic.py 的 render_prompt("critic", ...) 里补上 ——
+    生产里会留下字面占位符，而用 PLACEHOLDER_VALUES 并集渲染的测试照样全绿。
+    """
+
+    def test_system_prompt_resolves_with_production_values_only(self) -> None:
+        rendered = render_prompt("critic", **PRODUCTION_SYSTEM_VALUES)
+        leftover = _UNRESOLVED.findall(rendered)
+        assert not leftover, (
+            f"系统提示词里残留了 {leftover} —— 生产没传这些变量，"
+            "模型会看到字面的花括号占位符"
+        )
+
+    def test_system_prompt_carries_the_shot_duration(self) -> None:
+        """时长必须真的出现在系统提示词里。
+
+        第四节"建议的量级要配得上问题的量级"必须能引用具体秒数，
+        否则模型不知道这个镜头有多长、也就判断不了"动画是不是早早演完了"。
+        """
+        rendered = render_prompt("critic", **PRODUCTION_SYSTEM_VALUES)
+        assert "22.83" in rendered
+        assert "4.6" in rendered

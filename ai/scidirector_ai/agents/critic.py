@@ -156,12 +156,30 @@ class CriticAgent(Agent):
         # 而重渲之后量到的值往往仍在同一档 —— 白烧成本、画面却没变好。
         # 真正该拦的是"明显读不清"，不是"比标准矮了一点"。
         min_font_size = int(style_guide.min_font_size)
+        # 相邻抽帧的时间间隔 —— 必须显式告诉 VLM。
+        #
+        # 这条信息决定了它**有没有资格**判断连续运动。实测一个 22.83 秒的镜头
+        # 只抽 4 张（默认 critic_frame_samples=4），间隔约 5.7 秒；而审查连续
+        # 四轮都在要求"风扇持续旋转"（1.5 rad/s，约 4.2 秒转一圈）。
+        # 从间隔 5.7 秒的静帧里**根本无法判断**转没转 —— 它却把这写成了判定理由，
+        # 于是每一轮都判负、编码端每一轮都无法满足，一直烧到人工介入。
+        #
+        # 系统提示与用户提示都要给：系统提示里用它把"节奏问题的建议量级"
+        # 说清楚（见 critic.md 第四节），用户提示里用它说明抽帧的疏密。
+        frame_interval_sec = (
+            artifact.duration_sec / max(len(frames) - 1, 1) if len(frames) > 1 else 0.0
+        )
+        interval_text = f"{frame_interval_sec:.1f}"
         system_prompt = render_prompt(
             "critic",
             threshold=f"{self.settings.critic_score_threshold:.2f}",
             background_color=style_guide.background_color,
             min_font_size=min_font_size,
             min_font_size_tolerance=max(int(min_font_size * 0.9), 1),
+            # 时长与采样间隔是"评估节奏"的必要背景：没有它们，
+            # 系统提示里关于"建议量级要配得上问题量级"的规则就没法给出具体数字。
+            duration_sec=round(shot.duration_sec, 2),
+            frame_interval_sec=interval_text,
         )
         # 缩略图换算比例：必须告诉 VLM 它在缩略图上量到的字号要乘多少才是成片字号。
         #
@@ -171,16 +189,6 @@ class CriticAgent(Agent):
         # 每次都白烧一轮 1080p 渲染加一次模型调用。
         preview_width = max(int(self.settings.critic_frame_width), 1)
         preview_scale = max(int(artifact.width or 0), 1) / preview_width
-        # 相邻抽帧的时间间隔 —— 必须显式告诉 VLM。
-        #
-        # 这条信息决定了它**有没有资格**判断连续运动。实测一个 22.83 秒的镜头
-        # 只抽 4 张（默认 critic_frame_samples=4），间隔约 5.7 秒；而审查连续
-        # 四轮都在要求"风扇持续旋转"（1.5 rad/s，约 4.2 秒转一圈）。
-        # 从间隔 5.7 秒的静帧里**根本无法判断**转没转 —— 它却把这写成了判定理由，
-        # 于是每一轮都判负、编码端每一轮都无法满足，一直烧到人工介入。
-        frame_interval_sec = (
-            artifact.duration_sec / max(len(frames) - 1, 1) if len(frames) > 1 else 0.0
-        )
         user_prompt = render_prompt(
             "critic_user",
             index=shot.index,
