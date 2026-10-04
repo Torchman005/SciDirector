@@ -281,9 +281,12 @@ def run_graph(deps: PipelineDeps, *, shots: int = 2, max_attempts: int = 3,
     """跑完整张图，返回所有事件。"""
     if monkeypatch is not None:
         # 抽帧依赖真实 ffmpeg；图测试不验证它，替换成空实现。
+        # 注意替换的是 `extract_frames_with_times`：渲染节点用它才能拿到
+        # 每帧的时间点（节奏检查要回答"第几秒到第几秒没变化"）。
+        # 返回空列表时 `frames` 也是空、节奏检查直接跳过，与原行为一致。
         import scidirector_ai.graph.nodes as nodes_module
 
-        monkeypatch.setattr(nodes_module, "extract_frames", lambda *a, **k: [])
+        monkeypatch.setattr(nodes_module, "extract_frames_with_times", lambda *a, **k: [])
 
     state = initial_state(
         job_id="job-x", raw_script="脚本内容足够长", style_guide=StyleGuide(),

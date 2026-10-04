@@ -159,11 +159,36 @@ def extract_frames(
     out = Path(out_dir).resolve()
     out.mkdir(parents=True, exist_ok=True)
 
-    if duration_sec <= 0:
-        try:
-            duration_sec = probe(target, runner).duration_sec
-        except MediaToolError:
-            duration_sec = 1.0
+    samples = extract_frames_with_times(
+        target, out, runner,
+        count=count, duration_sec=duration_sec, width=width,
+    )
+    return [s.path for s in samples]
+
+
+@dataclass(frozen=True)
+class FrameSample:
+    """一帧采样：图片路径 + 它对应的**时间点**。
+
+    时间点必须跟着帧一起传下去：节奏检查要回答的是
+    "第几秒到第几秒画面没有变化"，没有时间点就只能说"有两帧一样" ——
+    那对编码端毫无指导意义。
+    """
+
+    path: str
+    ts: float
+
+
+def frame_sample_times(duration_sec: float, count: int) -> list[float]:
+    """计算抽帧的时间点（升序、去重）。
+
+    **这是唯一的一份实现。** `extract_frames_with_times` 用它决定抽哪几帧，
+    `analyze_motion` 用它把"相邻两帧"翻译成"第几秒到第几秒"。
+    两处各算一遍的后果不是"稍微不准"，而是**反馈里的秒数与实际抽帧对不上** ——
+    编码端会照着错误的时段去改画面，而且改完还是不动。
+
+    采样策略（与 Critic 的 rubric 对齐）见 `extract_frames` 的文档。
+    """
     duration_sec = max(duration_sec, 0.1)
     count = max(count, 2)
 
@@ -197,9 +222,33 @@ def extract_frames(
         if key not in seen:
             seen.add(key)
             ordered.append(ts)
+    return ordered
+
+
+def extract_frames_with_times(
+    video_path: str | Path,
+    out_dir: str | Path,
+    runner: SandboxRunner,
+    *,
+    count: int = 4,
+    duration_sec: float = 0.0,
+    width: int = 1024,
+) -> list[FrameSample]:
+    """与 :func:`extract_frames` 相同，但每帧**带上时间点**。"""
+    target = Path(video_path).resolve()
+    out = Path(out_dir).resolve()
+    out.mkdir(parents=True, exist_ok=True)
+
+    if duration_sec <= 0:
+        try:
+            duration_sec = probe(target, runner).duration_sec
+        except MediaToolError:
+            duration_sec = 1.0
+
+    ordered = frame_sample_times(duration_sec, count)
 
     ffmpeg = _binary("ffmpeg")
-    frames: list[str] = []
+    samples: list[FrameSample] = []
     for index, ts in enumerate(ordered):
         frame_path = out / f"frame_{index:02d}.png"
         result = runner.run(
@@ -217,13 +266,138 @@ def extract_frames(
             limits=ResourceLimits(timeout_sec=60, max_memory_mb=1024),
         )
         if result.ok and frame_path.is_file():
-            frames.append(str(frame_path))
+            samples.append(FrameSample(path=str(frame_path), ts=ts))
         else:
             logger.debug("抽帧失败，已跳过该帧", extra={"ts": ts, "error": result.tail(200)})
 
-    if not frames:
+    if not samples:
         raise MediaToolError(f"从 {target} 抽帧全部失败，无法进行视觉审查")
-    return frames
+    return samples
+
+
+#: 判定"两个像素算不算变了"的灰阶差阈值。
+#:
+#: 取 20 而不是 1~2：视频有编码噪声，静止画面的相邻帧也会有 1~2 个灰阶的抖动。
+#: 用 1 做阈值的话每一帧都"有变化"，节奏检查会彻底失效。
+_CHANGE_GRAY_LEVEL = 20
+
+#: 判定"这一段画面基本没动"的变化像素占比下限（0.5%）。
+#:
+#: 实测数据支撑：一条 22.83 秒真实镜头里，静止时段的占比是
+#: `0.19% / 0.12% / 0.06%`，而有明显变化的时段是 `4.45% / 11.51%`——
+#: 两者相差一个数量级，0.5% 落在中间，不会误报也不会漏报。
+#: 注意 1~2% 属于"只有局部在动"（例如角落图标），**不算**静止。
+_DEFAULT_MIN_CHANGE_RATIO = 0.005
+
+#: 太短的时间间隔不参与判定（秒）。
+#:
+#: 相邻采样点之间若只隔了零点几秒，画面变化本来就可能很小，
+#: 那是采样密度问题而不是"画面不动"。
+_DEFAULT_MIN_SPAN_SEC = 1.0
+
+
+@dataclass
+class MotionReport:
+    """对抽帧序列做的**可计算**节奏检查结果。"""
+
+    #: 每个相邻采样对的变化像素占比（0~1），长度 = 采样数 - 1。
+    ratios: list[float]
+    #: 被判定为"基本静止"的时段：(起, 止, 变化占比)。
+    static_spans: list[tuple[float, float, float]]
+    #: 判定用到的下限，写进反馈里让编码端知道目标。
+    min_change_ratio: float
+
+    @property
+    def ok(self) -> bool:
+        return not self.static_spans
+
+    def summary(self) -> str:
+        """给编码智能体的**带时间点**的反馈。
+
+        这是整个检查的意义所在：把"节奏不好"这种观感，
+        换成"第 13.3 秒到第 17.1 秒画面没有变化"这种**可核对的事实**。
+        实测反馈里写"把打字 run_time 从 0.5 延长到 3 秒"时，
+        编码端照做了、画面却依然静止 —— 因为它不知道该填哪一段时间。
+        """
+        if self.ok:
+            return ""
+        best = max(self.ratios) if self.ratios else 0.0
+        lines = [
+            "【画面变化的量化测量（系统计算，不是观感）】",
+            "以下时段里画面**几乎没有任何变化**（相邻抽帧的变化像素占比低于 "
+            f"{self.min_change_ratio * 100:.1f}%）：",
+        ]
+        for start, end, ratio in self.static_spans:
+            lines.append(f"- 第 {start:.1f} 秒 → 第 {end:.1f} 秒（变化像素占比 {ratio * 100:.2f}%）")
+        lines.append(
+            f"参考：本镜头变化最明显的时段占比为 {best * 100:.1f}%。"
+            "这不是\"节奏偏慢\"，而是这几段时间里画面**完全不动**。"
+        )
+        lines.append(
+            "请针对**上面这些具体时段**安排可见的变化：把内容拆成阶段让动作延续到那些时刻，"
+            "而不是延长某个已有动画的时长（延长时间填不满这些空档）。"
+        )
+        return "\n".join(lines)
+
+
+def analyze_motion(
+    samples: list[FrameSample],
+    *,
+    min_change_ratio: float = _DEFAULT_MIN_CHANGE_RATIO,
+    min_span_sec: float = _DEFAULT_MIN_SPAN_SEC,
+    ignore_last_interval: bool = True,
+) -> MotionReport:
+    """检查画面是否**贯穿整段时长**都在变化。
+
+    为什么需要（这是"重试几次问题和建议都不变"的根因）：
+    实测一条 22.83 秒的镜头，动画演到约 30% 处就基本静止，
+    之后的变化像素占比一路是 `0.19% / 0.12% / 0.06%`。
+    审查连续四轮判它"动画停滞"——**判断是对的**，但每轮给的都是
+    "把打字 run_time 延长到 3 秒"这类微调，量级上填不满十几秒，
+    于是代码改来改去画面不变、审查结论一字不差，一直烧到人工介入。
+
+    VLM 看几张静帧只能得出"感觉没怎么动"；而这个检查是**算出来的**，
+    能直接告诉编码端"第 13.3 秒到第 17.1 秒没有变化"。
+
+    ``ignore_last_interval``：最后一个间隔不判定。
+    提示词允许收尾处停住（"结束前留 0.5 秒静止"、最终完成态在最后到位），
+    把那里也判成缺陷会逼模型在结尾硬塞动作。
+    """
+    ratios: list[float] = []
+    spans: list[tuple[float, float, float]] = []
+    last_index = len(samples) - 2
+    for i in range(len(samples) - 1):
+        prev, cur = samples[i], samples[i + 1]
+        ratio = _frame_change_ratio(prev.path, cur.path)
+        ratios.append(ratio)
+        if ignore_last_interval and i == last_index:
+            continue
+        span = cur.ts - prev.ts
+        if span < min_span_sec:
+            continue
+        if ratio < min_change_ratio:
+            spans.append((prev.ts, cur.ts, ratio))
+    return MotionReport(ratios=ratios, static_spans=spans, min_change_ratio=min_change_ratio)
+
+
+def _frame_change_ratio(prev_path: str, cur_path: str) -> float:
+    """两帧之间"变化幅度超过阈值"的像素占比（0~1）。
+
+    用**占比**而不是全画面平均差：平均差会被"大面积但幅度小"的变化主导，
+    而"小面积但幅度大"的变化（角落图标在转、指示灯在闪）会被抹平 ——
+    实测一个 22.83 秒镜头里角落风扇的旋转在平均差上只有 0.2~0.3，
+    看起来就像静止。占比对这个量级更敏感，也更容易设阈值。
+    """
+    from PIL import Image, ImageChops
+
+    with Image.open(prev_path) as a_img, Image.open(cur_path) as b_img:
+        a = a_img.convert("L")
+        b = b_img.convert("L")
+        if a.size != b.size:
+            b = b.resize(a.size)
+        hist = ImageChops.difference(a, b).histogram()
+    total = sum(hist) or 1
+    return sum(hist[_CHANGE_GRAY_LEVEL + 1 :]) / total
 
 
 #: 氛围镜头标题字号相对输出高度的比例：标题约占画面高度的 1/12。

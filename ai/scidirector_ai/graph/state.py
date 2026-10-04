@@ -84,6 +84,14 @@ class PipelineState(TypedDict, total=False):
     #: 实测有镜头连着三次拿到同一段审查意见、分数还从 0.64 掉到 0.45，
     #: 那两轮重做纯属白烧渲染与 token。
     score_history: dict[str, list[float]]
+    #: 每镜头的**节奏检查结论**（带具体时段，由系统算出，不是观感）。
+    #:
+    #: 只在检查发现问题时才有条目，并会在下一轮重做时随反馈一起回灌给编码端。
+    #: 它解决的是"建议量级不匹配"：审查说"节奏不好"时编码端不知道该填哪一段，
+    #: 而这里写着"第 13.3 秒到第 17.1 秒画面没有变化"。
+    #: 按 shot_id 索引而不是用单个字段：单字段会在切到下一个镜头时**残留**，
+    #: 把上一个镜头的静止时段算到无关的镜头头上。
+    motion_reports: dict[str, str]
 
     # ------------------------------------------------------------------
     # 事件与统计（用 reducer 累加，允许并发节点合并写入）
@@ -143,6 +151,7 @@ def initial_state(
         attempts={},
         human_feedback={},
         score_history={},
+        motion_reports={},
         route_hint="",
         events=[],
         errors=[],

@@ -34,7 +34,13 @@ from ..agents.director import DirectorAgent
 from ..config import Settings, browser_ready
 from ..llm import LLMClient, LLMError
 from ..logging import get_logger
-from ..media import MediaToolError, extract_frames
+from ..media import (
+    FrameSample,
+    MediaToolError,
+    MotionReport,
+    analyze_motion,
+    extract_frames_with_times,
+)
 from ..pbconv import shots_payload_json
 from ..renderer import LLM_ENGINES, Renderer, RendererError, RenderRequest, build_renderer
 from ..sandbox.runner import SandboxRunner
@@ -436,9 +442,14 @@ class PipelineNodes:
 
         # 抽帧：审查节点依赖它。抽帧失败不应让整个镜头失败 ——
         # 交给审查节点去降级（它会因为"无帧可用"而转人工）。
+        #
+        # 用 `extract_frames_with_times`：节奏检查要回答"第几秒到第几秒没变化"，
+        # 必须拿到每帧的**真实时间点**。时间点由 media 侧统一计算，
+        # 这里不另算一遍 —— 两处各算一遍会让反馈里的秒数与实际抽帧对不上。
         frames: list[str] = []
+        samples: list[FrameSample] = []
         try:
-            frames = extract_frames(
+            samples = extract_frames_with_times(
                 result.video_path,
                 out_dir / "frames",
                 self.deps.runner,
@@ -448,9 +459,51 @@ class PipelineNodes:
                 # 两处各自取默认值就会悄悄分叉（见 config.critic_frame_width）。
                 width=self.deps.settings.critic_frame_width,
             )
+            frames = [s.path for s in samples]
         except MediaToolError as exc:
             logger.warning(
                 "抽帧失败，审查将降级",
+                extra={"shot_id": shot.shot_id, "error": str(exc)[:200]},
+            )
+
+        # 节奏检查：把"画面有没有贯穿整段时长都在变"**算出来**。
+        #
+        # 为什么要算而不是只靠 VLM 看：实测一条 22.83 秒的镜头动画演到约 30% 处
+        # 就静止，审查连续四轮都（正确地）判"动画停滞"，但每轮给的都是
+        # "把打字 run_time 延长到 3 秒"这类**量级不匹配**的微调 ——
+        # 编码端照做了，画面依然静止，于是改来改去画面不变、结论一字不差。
+        # 算出来的结论能带**具体时段**，这才是编码端能执行的反馈。
+        #
+        # **单独抽一次帧**，不复用审查那批：
+        # 审查的张数受 token 成本约束（每张都要传给 VLM），而这里是纯本地计算。
+        # 复用审查那批会漏检 —— 实测同一条镜头，4 张（间隔 5.7s）测出
+        # `11.15 / 2.22 / 1.04 / 1.15` 全部高于阈值，而 10 张才看得出
+        # 中间那三段 `0.19 / 0.12 / 0.06` 的真静止：5.7 秒的窗口里，
+        # 缓慢漂移也能累积出 1% 的变化，把静止抹平了。
+        motion_report = MotionReport(ratios=[], static_spans=[], min_change_ratio=0.0)
+        try:
+            pacing_samples = extract_frames_with_times(
+                result.video_path,
+                out_dir / "frames_pacing",
+                self.deps.runner,
+                count=self.deps.settings.pacing_frame_samples,
+                duration_sec=result.duration_sec,
+                width=self.deps.settings.pacing_frame_width,
+            )
+            motion_report = analyze_motion(
+                pacing_samples,
+                min_change_ratio=self.deps.settings.pacing_min_change_ratio,
+                min_span_sec=self.deps.settings.pacing_min_span_sec,
+            )
+        except MediaToolError as exc:
+            # 抽帧失败只降级：节奏检查是**附加**信号，不能因为没有它就不出片。
+            logger.warning(
+                "节奏检查抽帧失败（不影响出片）",
+                extra={"shot_id": shot.shot_id, "error": str(exc)[:200]},
+            )
+        except Exception as exc:  # noqa: BLE001 - 分析失败同样不该影响出片
+            logger.warning(
+                "节奏检查失败（不影响出片）",
                 extra={"shot_id": shot.shot_id, "error": str(exc)[:200]},
             )
 
@@ -518,8 +571,41 @@ class PipelineNodes:
                                             ensure_ascii=False),
                 )
             )
+
+        # 节奏检查的结论也上报：它是**算出来的**，而审查的判断是观感。
+        # 两者不一致时（审查通过但系统算出有静止时段），事件流里要能看出这件事。
+        motion_reports = dict(state.get("motion_reports") or {})
+        if motion_report.ok:
+            motion_reports.pop(shot.shot_id, None)
+        else:
+            motion_reports[shot.shot_id] = motion_report.summary()
+            events.append(
+                make_event(
+                    state, node=NODE_RENDER,
+                    message=(
+                        f"节奏检查：镜头 #{shot.index} 有 {len(motion_report.static_spans)} "
+                        f"段时间画面没有变化（最早一段 "
+                        f"{motion_report.static_spans[0][0]:.1f}s~"
+                        f"{motion_report.static_spans[0][1]:.1f}s）"
+                    ),
+                    status="CRITIQUING", shot=shot, attempt=attempt,
+                    payload_json=json.dumps(
+                        {
+                            "pacing_static_spans": [
+                                {"start_sec": round(a, 2), "end_sec": round(b, 2),
+                                 "change_ratio": round(c, 5)}
+                                for a, b, c in motion_report.static_spans
+                            ],
+                            "pacing_ratios": [round(r, 5) for r in motion_report.ratios],
+                        },
+                        ensure_ascii=False,
+                    ),
+                )
+            )
+
         return {
             "artifacts": artifacts,
+            "motion_reports": motion_reports,
             "render_error": "",
             "route_hint": HINT_CRITIQUE,
             "events": events,
@@ -943,6 +1029,14 @@ def _collect_feedback(state: PipelineState, shot_id: str) -> str:
     if human:
         # 人工意见优先级最高：它是人看过成片后给出的判断。
         parts.append(f"【人工审核意见（优先级最高）】\n{human}")
+
+    # 节奏检查的结论：**具体的时段**，由系统算出而不是观感。
+    #
+    # 位置放在 VLM 意见**之后**、技术错误之前：它是对"节奏"这一项的具体化，
+    # 应当与审查意见相邻，读的人能看出"审查说节奏不好"到底指哪几秒。
+    motion = (state.get("motion_reports") or {}).get(shot_id)
+    if motion:
+        parts.append(motion)
 
     render_error = (state.get("render_error") or "").strip()
     if render_error:
