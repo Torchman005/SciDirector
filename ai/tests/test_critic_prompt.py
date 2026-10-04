@@ -48,6 +48,10 @@ PLACEHOLDER_VALUES: dict[str, Any] = {
     "style_guide": "- 背景色：#0B1020",
     "previous_feedback": "",
     "frame_count": 6,
+    # 相邻抽帧的时间间隔。这条决定了 VLM**有没有资格**判断连续运动：
+    # 22.83 秒的镜头只抽 4 张，间隔约 5.7 秒 —— 而它连续四轮要求
+    # "风扇持续旋转（约 4.2 秒一圈）"，从这些静帧里根本判断不了。
+    "frame_interval_sec": "1.6",
     # 抽帧缩放宽度与"成片/缩略图"比例。审查提示词必须把它们告诉 VLM，
     # 否则它会拿缩略图上的字号去对成片像素的阈值，系统性索要过大字号。
     "preview_width": 1024,
@@ -318,3 +322,51 @@ class TestSelfConsistency:
         循环就永远收敛不了。
         """
         assert "上一轮" in critic_system_prompt
+
+
+class TestRenderContractAndRoundConsistency:
+    """审查必须知道**哪些手段在这个引擎里根本用不了**，以及**不许自相矛盾**。
+
+    这一组守的是真实事故（job-afdfcd4350073365-s000）：
+      * 我们的动效提示词明令禁止 CSS animation / setTimeout / rAF
+        （HTML 引擎是"逐帧求值 + 截图"，画面只能由 `window.__seek(t)` 决定）；
+      * 而审查连续四轮要求"为风扇图标添加 CSS 动画 animation: spin 1s linear infinite"；
+      * 编码智能体**不能照做**（会被静态检查拦下），于是那一轮"实际没有任何改动"；
+      * 审查下一轮看到同样的画面，再说一遍同样的话 —— 一直烧到人工介入。
+
+    同一事故里审查还**自相矛盾**：前三轮要求"逐字打字 3.0 秒"，第四轮要求
+    "逐字打字在 2 帧内完成（约 0.067 秒）"；前三轮要求"90% 处闪烁"，
+    第四轮要求"90% 处静止 10 秒"。编码端只能满足其中一条。
+    """
+
+    def test_forbids_suggesting_css_animations(self, critic_system_prompt: str) -> None:
+        text = critic_system_prompt
+        assert "animation" in text, "必须点名 CSS animation，否则模型仍会建议它"
+        assert "setTimeout" in text and "requestAnimationFrame" in text
+        assert "__seek" in text, "要说清 HTML 引擎是逐帧求值，画面只由 t 决定"
+        # 必须给出"改成描述画面效果"的替代写法，否则模型只是被禁止而不知所措。
+        assert "画面效果" in text or "观众应该看到什么" in text
+
+    def test_warns_that_still_frames_cannot_prove_motion(
+        self, critic_system_prompt: str
+    ) -> None:
+        text = critic_system_prompt
+        assert "采样间隔" in text, "必须告诉它间隔这件事，它才知道自己判不了"
+        assert "静帧" in text
+        # 关键要求：证不了就别写进判定理由 —— 否则会给出永远无法满足的意见。
+        assert "无法被满足" in text or "不要" in text
+
+    def test_forbids_contradicting_previous_suggestions(
+        self, critic_system_prompt: str
+    ) -> None:
+        text = critic_system_prompt
+        assert "自相矛盾" in text
+        assert "上一轮" in text
+        # 已修好的项必须承认，不能因为"上一轮说过"就继续扣分。
+        assert "已修复" in text or "已经改好" in text
+
+    def test_user_prompt_states_the_sampling_interval(
+        self, critic_user_prompt: str
+    ) -> None:
+        assert "1.6" in critic_user_prompt, "采样间隔必须真的渲染进提示词"
+        assert "{{" not in critic_user_prompt

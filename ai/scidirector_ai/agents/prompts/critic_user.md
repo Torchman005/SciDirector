@@ -30,6 +30,10 @@
 下面附上 {{frame_count}} 张抽帧图片，按**时间先后顺序**排列
 （第一张是首帧，最后一张是末帧，中间为等间隔采样）。
 
+> **相邻两张的间隔约为 {{frame_interval_sec}} 秒。** 比这个间隔更短的运动
+> （转一圈、闪一下、循环一次）在这些静帧上**是看不出来的** ——
+> 不要据此断言"没有动画"。详见系统提示词「补充三」。
+
 > **图片已被缩放到 {{preview_width}}px 宽**，而成片是 {{width}}px 宽。
 > 所以你在图上量到的字号，要乘以 **{{preview_scale}}** 才是成片上的实际字号。
 > 系统提示词里所有以 `px` 给出的阈值（尤其是字号下限）说的都是**成片像素**，
@@ -50,9 +54,21 @@
 不要输出任何解释性文字，不要用 markdown 代码块包裹。
 
 <!--
-模板变量（由 CriticAgent 注入）：
-  {{index}} {{tag}} {{engine}} {{duration_sec}} {{actual_duration}}
-  {{width}} {{height}} {{attempt}} {{narration}} {{visual_brief}}
-  {{style_guide}} {{previous_feedback}} {{frame_count}}
-  {{preview_width}} {{preview_scale}}   抽帧缩放宽度与成片/缩略图的比例
+模板变量（由 CriticAgent 注入）：index / tag / engine / duration_sec /
+actual_duration / width / height / attempt / narration / visual_brief /
+style_guide / previous_feedback / frame_count / preview_width / preview_scale
+（最后一项是抽帧缩放宽度与成片/缩略图的比例）
+
+**这份清单刻意不写成占位符形式。** 渲染器替换的是双花括号包起来的名字，
+而清单若也那样写，就会被**真的替换一遍** —— 后果有两个，都不轻：
+
+  1. `previous_feedback`（上一轮的问题与建议）会被注入**两遍**，
+     等于把"重复上一轮结论"的锚定压力翻倍；
+  2. 本文件排在**提示词的最末尾**，于是"只输出一个 JSON 对象"这条指令后面
+     会跟上一串被替换出来的原始值（形如 `0 MOTION motion 22.83 22.83`），
+     模型最后读到的是**一堆无意义的数字**。
+
+提示词结尾对指令遵循的影响最大，所以第 2 条尤其要避免。
+新加占位符时请同时更新这份清单（用纯名字），守卫用例见
+`tests/test_prompt_templates.py`。
 -->

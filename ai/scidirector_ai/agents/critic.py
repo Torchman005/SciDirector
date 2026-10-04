@@ -171,6 +171,16 @@ class CriticAgent(Agent):
         # 每次都白烧一轮 1080p 渲染加一次模型调用。
         preview_width = max(int(self.settings.critic_frame_width), 1)
         preview_scale = max(int(artifact.width or 0), 1) / preview_width
+        # 相邻抽帧的时间间隔 —— 必须显式告诉 VLM。
+        #
+        # 这条信息决定了它**有没有资格**判断连续运动。实测一个 22.83 秒的镜头
+        # 只抽 4 张（默认 critic_frame_samples=4），间隔约 5.7 秒；而审查连续
+        # 四轮都在要求"风扇持续旋转"（1.5 rad/s，约 4.2 秒转一圈）。
+        # 从间隔 5.7 秒的静帧里**根本无法判断**转没转 —— 它却把这写成了判定理由，
+        # 于是每一轮都判负、编码端每一轮都无法满足，一直烧到人工介入。
+        frame_interval_sec = (
+            artifact.duration_sec / max(len(frames) - 1, 1) if len(frames) > 1 else 0.0
+        )
         user_prompt = render_prompt(
             "critic_user",
             index=shot.index,
@@ -186,6 +196,7 @@ class CriticAgent(Agent):
             style_guide=style_guide_to_text(style_guide),
             previous_feedback=_format_previous(previous_feedback),
             frame_count=len(frames),
+            frame_interval_sec=f"{frame_interval_sec:.1f}",
             preview_width=preview_width,
             preview_scale=f"{preview_scale:.2f}",
         )
