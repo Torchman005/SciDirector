@@ -24,13 +24,16 @@ import pytest
 
 from scidirector_ai.config import Settings
 from scidirector_ai.sandbox.manim import (
+    _TEX_ERROR_MAX_CHARS,
     DEFAULT_SCENE_CLASS,
     ManimRenderRequest,
     ManimSandbox,
     ManimSandboxError,
+    _extract_tex_errors,
     extract_scene_class,
     newest_mp4,
 )
+from scidirector_ai.sandbox.runner import ExecResult
 
 # --- 假 manim 包 -----------------------------------------------------------
 # 命令行接口与真实 Manim 保持一致：
@@ -506,3 +509,102 @@ class TestNewestMp4:
         os.utime(old, (1_000_000, 1_000_000))
         os.utime(new, (2_000_000, 2_000_000))
         assert newest_mp4(tmp_path) == new
+
+
+class TestExtractTexErrors:
+    """真正可执行的 LaTeX 错误必须被提取出来。
+
+    守的是一个**看不见的**缺陷：manim 把 LaTeX 诊断写进 `media/Tex/<hash>.log`，
+    而它的 stdout/stderr 只有 Python 的 traceback。实测一个未定义控制序列的用例：
+    捕获到的 2001 字符输出里**一条 `!` 错误行都没有**，而日志里赫然写着
+    `! Undefined control sequence.`。
+
+    后果有两层：用户看到的是一段指向 tex_file_writing.py 的 traceback
+    （连贴出来求助都贴不到重点），编码智能体拿到的反馈里同样没有真因 ——
+    它只能瞎改，白烧一轮渲染 + 两次模型调用。
+    """
+
+    def _write_log(self, root: Path, text: str) -> Path:
+        log = root / "media" / "Tex" / "abc123.log"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        log.write_text(text, encoding="utf-8")
+        return log
+
+    def test_extracts_error_line_with_context(self, tmp_path: Path) -> None:
+        self._write_log(
+            tmp_path,
+            "This is pdfTeX\n进入一段无关的日志\n"
+            "! Undefined control sequence.\n"
+            "l.42 \\nonexistentmacro\n"
+            "                      {a}{b}\n"
+            "继续其它内容\n",
+        )
+        got = _extract_tex_errors(tmp_path)
+        assert "! Undefined control sequence." in got
+        # 上下文很重要：只给错误行，模型往往不知道改哪里。
+        assert "l.42" in got
+        assert got.startswith("【LaTeX 错误】")
+
+    def test_finds_error_in_captured_output(self, tmp_path: Path) -> None:
+        """有些路径下 manim 会把 LaTeX 输出一并打出来，那也要抓到。"""
+        got = _extract_tex_errors(tmp_path, "无关输出\n! Missing $ inserted.\n后续")
+        assert "! Missing $ inserted." in got
+
+    def test_returns_empty_when_not_a_tex_failure(self, tmp_path: Path) -> None:
+        """与 LaTeX 无关的失败不该被硬塞一段"LaTeX 错误"。"""
+        self._write_log(tmp_path, "普通日志，没有任何叹号开头的行\n")
+        assert _extract_tex_errors(tmp_path, "python traceback only") == ""
+
+    def test_deduplicates_between_log_and_output(self, tmp_path: Path) -> None:
+        """同一条错误同时出现在日志与 stdout 里时只该报一次。"""
+        self._write_log(tmp_path, "! Undefined control sequence.\nl.1 x\n")
+        got = _extract_tex_errors(tmp_path, "! Undefined control sequence.\nl.1 x\n")
+        assert got.count("! Undefined control sequence.") == 1
+
+    def test_output_is_bounded(self, tmp_path: Path) -> None:
+        """日志可能有几千行，提取结果必须有上限。"""
+        body = "\n".join(f"! Error number {i}\n" + "上下文 " * 20 for i in range(200))
+        self._write_log(tmp_path, body)
+        got = _extract_tex_errors(tmp_path)
+        assert len(got) <= _TEX_ERROR_MAX_CHARS + 32
+
+
+class TestFailureMessageCarriesRealCause:
+    """失败时**面向人**的那句话必须带上真因。
+
+    事件时间线里显示的就是这句话；没有它，用户只能看到
+    "Manim 渲染失败：退出码 1"，然后去猜。
+    """
+
+    def _failed_result(self) -> ExecResult:
+        return ExecResult(
+            command=["python", "-m", "manim"],
+            returncode=1,
+            stdout="画框 traceback（很长，且不含真因）",
+            stderr="ValueError: latex error converting to dvi",
+            duration_sec=3.0,
+        )
+
+    def test_message_includes_first_tex_error(self, tmp_path: Path) -> None:
+        log = tmp_path / "media" / "Tex" / "x.log"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        log.write_text("! LaTeX Error: Can be used only in preamble.\nl.5\n", encoding="utf-8")
+
+        sandbox = ManimSandbox(Settings(env="test"))
+        with pytest.raises(ManimSandboxError) as ei:
+            sandbox._raise_if_failed(self._failed_result(), work=tmp_path)
+
+        assert "Can be used only in preamble" in str(ei.value), (
+            "面向人的 message 必须带 LaTeX 真因，否则用户无从下手"
+        )
+        # 回灌给编码智能体的反馈同样必须有真因，否则它改不动、只能白烧一轮。
+        assert "Can be used only in preamble" in ei.value.feedback()
+        # 真因要排在**最前面**：feedback() 会截断 detail，
+        # 排在几千字 traceback 后面等于没有。
+        assert ei.value.detail.index("LaTeX 错误") < ei.value.detail.find("原始输出尾部")
+
+    def test_message_unchanged_when_not_a_tex_failure(self, tmp_path: Path) -> None:
+        sandbox = ManimSandbox(Settings(env="test"))
+        with pytest.raises(ManimSandboxError) as ei:
+            sandbox._raise_if_failed(self._failed_result(), work=tmp_path)
+        assert "LaTeX" not in str(ei.value)

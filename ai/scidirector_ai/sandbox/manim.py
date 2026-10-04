@@ -92,8 +92,101 @@ class ManimSandboxError(RuntimeError):
         if self.policy is not None and self.policy.violations:
             parts.append("静态检查未通过：" + self.policy.summary())
         if self.detail:
-            parts.append("渲染输出：\n" + self.detail[:1500])
+            # 上限从 1500 放宽到 2600：detail 现在是「【LaTeX 错误】+【原始输出尾部】」
+            # 两段，1800 + 1200 的预算需要它才装得下。
+            # 顺序上 LaTeX 错误在前，所以即使再被截，**真因也一定留得住** ——
+            # 原先那种"从头截 1500 字符"会把整段画框 traceback 塞满，
+            # 真因（`! Undefined control sequence.`）一个字都进不来。
+            parts.append("渲染输出：\n" + self.detail[:2600])
         return "\n\n".join(parts)
+
+
+#: LaTeX 的错误行以 `!` 开头，其后数行是出错上下文（宏展开 / `l.<行号>`）。
+_TEX_ERROR_LINE = re.compile(r"^!.*$", re.MULTILINE)
+
+#: 每条 `!` 错误向后多带几行上下文。LaTeX 会把「出错位置」与一段宏展开
+#: 紧跟在错误行之后，只给错误行本身往往看不出该改哪里。
+_TEX_ERROR_CONTEXT_LINES = 6
+
+#: 提取结果的总长度上限。日志可能有几千行，但真正可执行的信息只有开头那几行。
+_TEX_ERROR_MAX_CHARS = 1800
+
+
+def _extract_tex_errors(work: Path, output: str = "") -> str:
+    """从渲染目录里的 TeX 日志中提取**真正的** LaTeX 错误。
+
+    为什么必须单独做这件事：manim 把 LaTeX 的诊断写进 ``media/Tex/<hash>.log``，
+    而它的 stdout/stderr 只有 Python 的 traceback。
+
+    实测（一个未定义控制序列的用例）：捕获到的 **2001 字符输出里一条 `!` 错误行
+    都没有**，而同一目录的日志里赫然写着 ``! Undefined control sequence.``。
+
+    后果有两层，都很贵：
+
+    * **用户**看到的是一段指向 `tex_file_writing.py` 的 traceback，
+      真因（哪一行 LaTeX 错了）完全不可见 —— 连贴出来求助都贴不到重点；
+    * **编码智能体**拿到的反馈里同样没有真因，它只能瞎改，
+      于是白烧一轮渲染 + 两次模型调用，而这正是"失败率偏高"与
+      "打回重做效果不好"的共同来源。
+
+    返回空串表示没找到（例如失败与 LaTeX 无关）。
+    """
+    blocks: list[str] = []
+
+    # 1) 先看日志文件（真因几乎总在这里）。
+    try:
+        logs = sorted(work.rglob("*.log"))
+    except OSError:  # pragma: no cover - 目录被删/无权限时不该让报错本身失败
+        logs = []
+    for log in logs[:4]:
+        try:
+            text = log.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for block in _tex_error_blocks(text):
+            blocks.append(f"{block}\n（来自 {log.name}）")
+
+    # 2) 再看捕获到的输出：有些路径下 manim 会把 LaTeX 输出一并打出来。
+    for block in _tex_error_blocks(output):
+        blocks.append(block)
+
+    if not blocks:
+        return ""
+
+    # 去重（stdout 与日志常常重复同一条），并限制总长度。
+    seen: set[str] = set()
+    unique: list[str] = []
+    for b in blocks:
+        key = b.splitlines()[0] if b else b
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(b)
+
+    joined = "\n\n".join(unique)[:_TEX_ERROR_MAX_CHARS]
+    return "【LaTeX 错误】\n" + joined
+
+
+def _tex_error_blocks(text: str) -> list[str]:
+    """把 ``!`` 错误行连同其后若干行上下文切成块。"""
+    if "!" not in text:
+        return []
+    lines = text.splitlines()
+    blocks: list[str] = []
+    for i, line in enumerate(lines):
+        if not line.startswith("!"):
+            continue
+        ctx = lines[i : i + 1 + _TEX_ERROR_CONTEXT_LINES]
+        blocks.append("\n".join(part.rstrip() for part in ctx if part.strip()))
+    return blocks
+
+
+def _first_tex_error_line(tex_errors: str) -> str:
+    """从提取结果里取第一行错误，用于拼进**面向人**的那句 message。"""
+    for line in tex_errors.splitlines():
+        if line.startswith("!"):
+            return line.strip()[:140]
+    return ""
 
 
 @dataclass
@@ -405,12 +498,25 @@ class ManimSandbox:
             )
 
         missing_dep = any(marker in stderr_lower for marker in _ENV_ERROR_MARKERS)
-        raise ManimSandboxError(
-            "Manim 渲染失败：" + result.summary(),
-            # 缺依赖属于**环境问题**：重试多少次都一样，必须转人工。
-            retryable=not missing_dep,
-            detail=result.tail(2000),
-        )
+
+        # 把**真正的** LaTeX 错误提到最前面。
+        #
+        # 顺序是刻意的：编码智能体拿到的 `feedback()` 会截断 detail，
+        # 而真因如果排在几千字的 traceback 后面，等于没有。
+        tex_errors = _extract_tex_errors(work, (result.stdout or "") + (result.stderr or ""))
+        if tex_errors:
+            detail = tex_errors + "\n\n【原始输出尾部】\n" + result.tail(1200)
+            first = _first_tex_error_line(tex_errors)
+            message = "Manim 渲染失败：" + result.summary()
+            if first:
+                # 也把真因写进 message：事件时间线里显示的是这一句，
+                # 用户据此就能知道"是哪一行 LaTeX 错了"，而不必去翻沙盒输出。
+                message += f"（{first}）"
+        else:
+            detail = result.tail(2000)
+            message = "Manim 渲染失败：" + result.summary()
+
+        raise ManimSandboxError(message, retryable=not missing_dep, detail=detail)
 
 
 # ---------------------------------------------------------------------------
