@@ -4,6 +4,7 @@ import {
   applyEvents,
   applyEventsWithJob,
   applySnapshot,
+  deriveReviewSummary,
   deriveStat,
   initialState,
   shotsAwaitingHuman,
@@ -238,6 +239,32 @@ describe('deriveStat', () => {
     expect(stat.in_progress).toBe(1)
     // 四项之和必须等于总数，否则界面会出现自相矛盾的计数。
     expect(stat.approved + stat.awaiting_human + stat.failed + stat.in_progress).toBe(stat.total)
+  })
+})
+
+describe('deriveReviewSummary', () => {
+  it('counts the latest VLM verdict rather than later human approval', () => {
+    const state = applySnapshot(initialState(), {
+      job: job({ shots: [shot({ status: 'APPROVED', feedbacks: [
+        { passed: false, source: 'VLM', attempt: 1, created_at: '' },
+        { passed: true, source: 'HUMAN', attempt: 1, created_at: '' },
+      ] })] }),
+      stat: null, progress: 1, events: [],
+    })
+    expect(deriveReviewSummary(state).passRate).toBe(0)
+  })
+
+  it('excludes unreviewed service failures from the review pass rate', () => {
+    const reviewed = shot({ status: 'AWAITING_HUMAN', feedbacks: [{
+      passed: false, source: 'VLM', attempt: 3, created_at: '',
+    }] })
+    const state = applySnapshot(initialState(), {
+      job: job({ shots: [reviewed, shot({ shot_id: 'b', status: 'FAILED', attempt: 0 })] }),
+      stat: null, progress: 0, events: [],
+    })
+    expect(deriveReviewSummary(state)).toEqual({
+      reviewed: 1, approved: 0, unreviewed: 1, passRate: 0,
+    })
   })
 })
 

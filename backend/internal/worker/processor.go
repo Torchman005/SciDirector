@@ -154,17 +154,20 @@ func (p *Processor) HandleGenerateJob(ctx context.Context, task GenerateTask) er
 			lg.Warn("生成任务被中断，等待重新投递", "error", err.Error())
 			return err
 		}
+		if errors.Is(err, ai.ErrUnavailable) && hasRetryRemaining(ctx) {
+			lg.Warn("Python 服务连接中断，等待续跑", "error", err.Error())
+			_, _ = p.emit(ctx, &domain.Event{
+				JobID: jobID, Node: "pipeline", Message: "Python 服务连接中断，等待自动续跑：" + err.Error(),
+				Error: err.Error(), Timestamp: time.Now().UTC(),
+			})
+			return err
+		}
 		// 真实失败：把错误写进任务，并把仍在进行中的镜头标记为失败，避免僵尸状态。
 		lg.Error("生成任务失败", "error", err.Error())
 		_, _ = p.store.UpdateJob(ctx, jobID, func(j *domain.Job) error {
 			j.Status = domain.JobFailed
 			j.Error = err.Error()
-			for _, s := range j.Shots {
-				if !s.Status.Terminal() && s.Status != domain.StatusAwaitingHuman {
-					s.Status = domain.StatusFailed
-					s.Error = err.Error()
-				}
-			}
+			markInterruptedShots(j, err)
 			return nil
 		})
 		_, _ = p.emit(ctx, &domain.Event{
@@ -790,6 +793,22 @@ func shotStyleGuide(job *domain.Job, shot *domain.Shot) map[string]any {
 func isRetryDelivery(ctx context.Context) bool {
 	n, ok := asynq.GetRetryCount(ctx)
 	return ok && n > 0
+}
+
+func hasRetryRemaining(ctx context.Context) bool {
+	count, countOK := asynq.GetRetryCount(ctx)
+	max, maxOK := asynq.GetMaxRetry(ctx)
+	return countOK && maxOK && count < max
+}
+
+func markInterruptedShots(job *domain.Job, cause error) {
+	for _, shot := range job.Shots {
+		if shot.Status == domain.StatusPending || shot.Status == domain.StatusAwaitingHuman || shot.Status.Terminal() {
+			continue
+		}
+		shot.Status = domain.StatusFailed
+		shot.Error = cause.Error()
+	}
 }
 
 // mustJSON 序列化为 JSON 字符串；失败返回 "{}"。

@@ -331,7 +331,7 @@ class MotionReport:
             lines.append(f"- 第 {start:.1f} 秒 → 第 {end:.1f} 秒（变化像素占比 {ratio * 100:.2f}%）")
         lines.append(
             f"参考：本镜头变化最明显的时段占比为 {best * 100:.1f}%。"
-            "这不是\"节奏偏慢\"，而是这几段时间里画面**完全不动**。"
+            "这些时段画面变化很小，但不能据此断言整帧完全一致。"
         )
         lines.append(
             "请针对**上面这些具体时段**安排可见的变化：把内容拆成阶段让动作延续到那些时刻，"
@@ -398,6 +398,17 @@ def _frame_change_ratio(prev_path: str, cur_path: str) -> float:
         hist = ImageChops.difference(a, b).histogram()
     total = sum(hist) or 1
     return sum(hist[_CHANGE_GRAY_LEVEL + 1 :]) / total
+
+
+def frame_change_summary(paths: list[str]) -> str:
+    """Give the critic measurable adjacent-frame evidence without inferring motion."""
+    if len(paths) < 2:
+        return "只有一张抽帧，无法比较相邻画面。"
+    lines = []
+    for index, (previous, current) in enumerate(zip(paths, paths[1:]), start=1):
+        ratio = _frame_change_ratio(previous, current)
+        lines.append(f"第 {index}、{index + 1} 帧：变化像素占比 {ratio * 100:.2f}%")
+    return "\n".join(lines)
 
 
 #: 氛围镜头标题字号相对输出高度的比例：标题约占画面高度的 1/12。

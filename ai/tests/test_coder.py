@@ -489,7 +489,7 @@ class TestUserPromptTemplate:
         rendered = render_prompt(
             "coder_user", index=1, tag="MATH", engine="manim", duration_sec=8.0,
             narration="n", visual_brief="v", keywords="k", style_guide="s",
-            examples="e", feedback_block="",
+            examples="e", feedback_block="", beats="先出现，再展开",
         )
         assert not _UNRESOLVED.findall(rendered)
 

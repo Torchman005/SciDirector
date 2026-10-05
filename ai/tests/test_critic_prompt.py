@@ -56,6 +56,7 @@ PLACEHOLDER_VALUES: dict[str, Any] = {
     # 否则它会拿缩略图上的字号去对成片像素的阈值，系统性索要过大字号。
     "preview_width": 1024,
     "preview_scale": "1.88",
+    "frame_change_summary": "第 1、2 帧：变化像素占比 1.88%",
 }
 
 #: 未被解析的 Jinja 风格占位符。渲染后不应残留。

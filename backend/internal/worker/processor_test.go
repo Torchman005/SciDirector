@@ -2,11 +2,29 @@ package worker
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/itJinYu/SciDirector/backend/internal/domain"
 	pb "github.com/itJinYu/SciDirector/backend/internal/pb/scidirector/v1"
 )
+
+func TestInterruptedPipelineLeavesUnreviewedShotsPending(t *testing.T) {
+	job := &domain.Job{Shots: []*domain.Shot{
+		{Status: domain.StatusAwaitingHuman, Attempt: 3},
+		{Status: domain.StatusRendering, Attempt: 1},
+		{Status: domain.StatusPending, Attempt: 0},
+		{Status: domain.StatusApproved, Attempt: 2},
+	}}
+	markInterruptedShots(job, errors.New("gRPC unavailable"))
+	if job.Shots[0].Status != domain.StatusAwaitingHuman || job.Shots[1].Status != domain.StatusFailed ||
+		job.Shots[2].Status != domain.StatusPending || job.Shots[3].Status != domain.StatusApproved {
+		t.Fatalf("unexpected statuses after interruption: %+v", job.Shots)
+	}
+	if got := job.Stat(); got.Failed != 1 || got.InProgress != 1 || got.AwaitingHuman != 1 || got.Approved != 1 {
+		t.Fatalf("unreviewed shots must not count as failures: %+v", got)
+	}
+}
 
 // pythonPayloadSample 是 **Python 侧真实产出**的 payload_json 样例
 // （由 scidirector_ai.pbconv.shots_payload_json 生成，未做任何手工修改）。

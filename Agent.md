@@ -196,8 +196,10 @@ SciDirector/
 ### 5.1 Director Agent（导演）
 - 输入：`raw_script`（用户脚本）、`style_guide`（可选风格约束）、`target_duration_sec`
 - 输出：`list[ShotSpec]`，其中每个 `ShotSpec` 必须含
-  `shot_id / index / narration / visual_brief / tag / engine / duration_sec`
+  `shot_id / index / narration / visual_brief / tag / engine / duration_sec`，可选 `beats`（只含画面顺序，不含绝对时间）
 - 硬约束：所有 `duration_sec` 之和 ∈ `target_duration_sec ± 10%`；`tag` ∈ `{MATH, DATA, CODE, MOTION, AMBIENCE}`
+
+镜头级并行由 `SCID_SHOT_PARALLELISM` 控制，默认 `1` 保持串行；大于 `1` 时以 LangGraph `Send` 为每个镜头建立隔离子图，按 `shot_id` 合并产物、反馈、尝试次数和事件。子图失败仍按原有重试上限与熔断规则处理，checkpoint 续跑不会重新执行已完成的镜头。
 
 ### 5.2 Coder Agent（编码）
 - 路由表（**确定性映射，不允许模型自由发挥**）：
@@ -537,6 +539,8 @@ make up / make down   # docker compose 全栈
 
 | 版本 | 阶段 | 变更 |
 | --- | --- | --- |
+| v0.6.27 | 阶段三（审查重做效率） | 逐镜重做加入两个确定性闸门：生成源码与上一版相同则跳过渲染，审查抽帧的内容摘要与上一版逐张相同则跳过重复 VLM；两轮反馈相似度至少 0.9 且分数提升不足 0.02 时，将结构性修改要求回灌编码端并在事件中说明。修复编码 LLM 异常不计尝试次数导致可能无界重试的问题。定向测试覆盖跳过、计数、反馈与熔断；真实模型与渲染器上的成本/质量变化尚未实测。 |
+| v0.6.26 | 阶段三（顺序节拍与镜头并行） | `ShotSpec.beats` 贯通导演、编码、proto、Go 与人工重做；长镜头拆分按旁白段落分配节拍，节奏反馈点名对应阶段。`SCID_SHOT_PARALLELISM` 默认 1；大于 1 时 `Send` 扇出隔离镜头子图，逐节点推送事件并在屏障合并。验证：Python 定向 63 项、Go `pbconv`/`domain`/`worker` 包通过；内存桩覆盖耗时、结果隔离、重试熔断及 checkpoint 续跑。真实模型、渲染器、Redis 多 worker 与成片耗时尚未实测。 |
 | v0.1.0 | 阶段一 | 建立目录骨架、跨语言 proto 契约与生成流水线、docker-compose 全栈、Go 骨架（配置/日志/状态机/仓储/队列/gRPC 客户端/WS Hub/编排处理器/ffmpeg 封装）、Python 骨架（配置/日志/Schema/LLM 客户端/LangGraph 状态/导演智能体/沙盒策略/gRPC+FastAPI 双栈）、四份文档与构建脚本；Go 与 Python 测试全部通过 |
 | v0.1.1 | 阶段一（修订） | **回退阶段二的提前实现**，把仓库收敛到经过验证的阶段一状态：移除编码/审查智能体、沙盒运行器、渲染与媒体工具、RAG、图拓扑与 checkpointer；`RunPipeline` / `GenerateShot` / `CritiqueShot` / `ReviseShot` 恢复为返回 `UNIMPLEMENTED`。保留阶段一两处前置能力（导演智能体、沙盒静态安全策略）。修复 `scripts/dev-env.ps1` 的 `PYTHONPATH` 顺序缺陷（`.pylibs` 必须置于**末尾**，否则会遮蔽版本更完整的同名包，表现为 pydantic 导入时莫名的 `cannot import name`） |
 | v0.1.2 | 阶段一（修复） | 手工联调实测发现并修复两项语义缺陷：① `UNIMPLEMENTED` 不再被 Asynq 重试（新增哨兵 `ai.ErrNotImplemented`，worker 返回 `asynq.SkipRetry` 直接归档）；② `sandbox_ready` 改为「至少一个渲染引擎可用」并新增结构化 `engines` 字段，使实现与文档一致。新增 `scripts/smoke-grpc.py`、`scripts/smoke-ws.py` 两个可复用冒烟脚本与 `make smoke*` 目标；README 新增「手动测试」章节。Go 测试 +1 包，Python 测试 71 → 83 |

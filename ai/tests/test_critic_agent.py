@@ -217,6 +217,32 @@ class TestDecisionRules:
 
 
 class TestVerdictCombination:
+    def test_job_8dfc83_high_score_pacing_disagreement_does_not_veto(
+        self, agent: CriticAgent, shot: ShotSpec
+    ) -> None:
+        feedback, program_passed = agent._decide(
+            raw(passed=False, score=0.78, logic_score=0.85,
+                readability_score=0.90, pacing_score=0.50,
+                aesthetics_score=0.75,
+                issues=["第 3、4 帧画面变化较小，建议继续调整节奏"],
+                suggestions=["增加第 3、4 帧间的动作"]),
+            shot=shot, attempt=3,
+        )
+        assert program_passed
+        assert feedback.passed
+        assert feedback.score == pytest.approx(0.78)
+        assert any("量化评分放行" in issue for issue in feedback.issues)
+
+    def test_unsubstantiated_fatal_label_cannot_veto(
+        self, agent: CriticAgent, shot: ShotSpec
+    ) -> None:
+        feedback, _ = agent._decide(
+            raw(passed=False, fatal_issues=["可能乱码，需要再看看"]),
+            shot=shot, attempt=1,
+        )
+        assert feedback.passed
+        assert feedback.fatal_issues == []
+
     def test_model_veto_is_honoured(self, agent: CriticAgent, shot: ShotSpec) -> None:
         """模型说不通过就必须不通过，即使程序算出来分数很高。
 
@@ -226,6 +252,7 @@ class TestVerdictCombination:
             raw(passed=False, logic_score=0.95, readability_score=0.95,
                 pacing_score=0.95, aesthetics_score=0.95,
                 issues=["画面出现乱码方块（字体缺失）"],
+                fatal_issues=["第 1 帧画面出现乱码方块（字体缺失）"],
                 suggestions=["检查中文字体是否安装"]),
             shot=shot,
             attempt=1,

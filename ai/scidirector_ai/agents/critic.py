@@ -9,12 +9,9 @@
    提示词里写"请按 0.75 判定"，模型会给出 0.74 并自称通过。
    因此模型只负责输出四个维度分与问题列表，**是否通过由程序计算**。
 
-2. **模型说"不通过"时一律采信，模型说"通过"时还要过程序这一关。**
-   两个方向的风险不对称：
-   * 漏判（坏画面放行）→ 坏画面流进成片，**不可逆**；
-   * 误判（好画面打回）→ 多烧一轮渲染，**可逆且可观测**。
-   所以取"两者都为真才算通过"。反过来若模型长期过度严格，
-   日志里会打出 model/program 不一致的告警，提示词调优时能立刻看到。
+2. **模型只对有证据的致命问题投否决票，普通质量建议不能无限打回。**
+   致命问题必须进入结构化 `fatal_issues`，并包含帧号或明确可见证据；
+   其它节奏与审美意见进入建议，由程序化分数和重试闸门共同处理。
 
 3. **VLM 不可用时降级转人工，绝不伪造"通过"。**
    伪造通过会把未审查的画面放进成片 —— 这是本项目最不能接受的失败形态。
@@ -22,12 +19,14 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 from pydantic import BaseModel, Field
 
 from ..config import Settings, get_settings
 from ..llm import LLMClient, LLMError, LLMParseError, Task
+from ..media import frame_change_summary
 from ..logging import get_logger
 from ..schemas import (
     CriticFeedback,
@@ -72,8 +71,8 @@ class _RawCritique(BaseModel):
     """模型直出的评审结果。
 
     字段必须与 ``prompts/critic.md`` 第五节的 JSON schema 完全一致
-    （有契约测试守护）。保留模型自报的 ``passed``，但它只作为**否决票**，
-    不能单独决定通过。
+    （有契约测试守护）。保留模型自报的 ``passed`` 作为诊断信号；只有
+    ``fatal_issues`` 中的可核对问题才有否决权。
     """
 
     passed: bool = False
@@ -84,6 +83,8 @@ class _RawCritique(BaseModel):
     aesthetics_score: float = 0.0
     issues: list[str] = Field(default_factory=list)
     suggestions: list[str] = Field(default_factory=list)
+    # Only concrete rendering failures may veto a quantitatively passing shot.
+    fatal_issues: list[str] = Field(default_factory=list)
 
 
 @dataclass
@@ -207,6 +208,7 @@ class CriticAgent(Agent):
             frame_interval_sec=f"{frame_interval_sec:.1f}",
             preview_width=preview_width,
             preview_scale=f"{preview_scale:.2f}",
+            frame_change_summary=_safe_frame_change_summary(frames),
         )
 
         try:
@@ -268,7 +270,8 @@ class CriticAgent(Agent):
     ) -> tuple[CriticFeedback, bool]:
         """由程序计算最终结论，返回 (反馈, 程序判定是否通过)。
 
-        **不信任模型自报的 score**，但把它的 passed 当作否决票。
+        **不信任模型自报的 score**；模型自报的 passed 只用于诊断，致命否决
+        必须来自结构化且可核对的 ``fatal_issues``。
         """
         dims = {
             "logic_score": _clamp01(raw.logic_score),
@@ -285,8 +288,17 @@ class CriticAgent(Agent):
         floor_failures = [name for name, floor in DIMENSION_FLOORS.items() if dims[name] < floor]
 
         program_passed = score >= threshold and not floor_failures
-        # 模型说通过不算数；模型说不通过一律采信（两个方向的风险不对称）。
-        passed = program_passed and bool(raw.passed)
+        # A model veto is reserved for evidence of a fatal rendering/content failure.
+        # Ordinary pacing or aesthetic disagreement is actionable feedback, but should
+        # not repeatedly reject a shot whose measured score already clears the gate.
+        fatal_issues = [
+            issue.strip() for issue in raw.fatal_issues
+            if issue and _is_fatal_issue(issue)
+        ]
+        model_veto = bool(fatal_issues)
+        passed = program_passed and not model_veto
+        if model_veto:
+            score = min(score, 0.3)
 
         issues = [i.strip() for i in raw.issues if i and i.strip()]
         suggestions = _sanitize_suggestions(raw.suggestions)
@@ -313,11 +325,16 @@ class CriticAgent(Agent):
             issues.append(
                 f"模型自报通过但程序判定未通过（加权得分 {score:.2f}，阈值 {threshold:.2f}）"
             )
+        elif program_passed and not raw.passed and not model_veto:
+            issues.append("模型自报未通过但未指出可核对的致命问题，已按量化评分放行")
+        if model_veto:
+            issues.append("发现致命问题：" + "；".join(dict.fromkeys(fatal_issues)))
 
         feedback = CriticFeedback(
             passed=passed,
             score=round(score, 4),
             issues=issues,
+            fatal_issues=list(dict.fromkeys(fatal_issues)),
             # 通过时不给建议：下游若按"有建议即重做"处理，
             # 带着建议的通过会导致无限重做已经合格的镜头。
             suggestions=suggestions if not passed else [],
@@ -369,6 +386,25 @@ class CriticAgent(Agent):
 def verdict_mismatch(model_passed: bool, program_passed: bool) -> bool:
     """模型自报通过、但程序判定不通过 —— 需要把原因写进 issues 让人看见。"""
     return bool(model_passed) and not program_passed
+
+
+_FATAL_MARKERS = (
+    "全黑", "全白", "空白", "乱码", "裁切到无法", "完全无关", "渲染失败",
+    "无法辨认", "缺失字体", "连接失败", "视频为空",
+)
+_FRAME_EVIDENCE = re.compile(r"第\s*\d+\s*(?:[、,，]\s*\d+\s*)?帧|所有帧|整段画面")
+
+
+def _is_fatal_issue(issue: str) -> bool:
+    text = " ".join(issue.lower().split())
+    return bool(_FRAME_EVIDENCE.search(text)) and any(marker in text for marker in _FATAL_MARKERS)
+
+
+def _safe_frame_change_summary(frames: list[str]) -> str:
+    try:
+        return frame_change_summary(frames)
+    except (OSError, ValueError, RuntimeError):
+        return "抽帧无法读取，不能提供像素变化统计。"
 
 
 #: 判定"不可执行"的关键词。这些词描述的是感受，不是可操作的修改。

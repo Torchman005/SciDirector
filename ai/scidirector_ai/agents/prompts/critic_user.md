@@ -39,12 +39,18 @@
 > 系统提示词里所有以 `px` 给出的阈值（尤其是字号下限）说的都是**成片像素**，
 > 判断时必须先做这个换算，否则会系统性地要求一个过大的字号。
 
+相邻抽帧的像素测量（灰阶差超过 20 的像素占比；局部变化也会计入）：
+{{frame_change_summary}}
+占比大于 0% 时不得断言整张图像完全一致；占比为 0% 也只表示未检出超过阈值的变化。
+局部元素是否运动仍需结合画面判断。
+视觉意图明确要求卡住或定格时，停留本身不是缺陷。
+
 ## 现在开始
 
 先在心里过一遍这三步（**不要写出来**）：
 
-1. **首帧与末帧相比，画面发生了明显变化吗？**
-   几乎没有变化 → 动画没生效，这是致命问题。
+1. **首帧与末帧相比，画面发生了变化吗？**
+   结合视觉意图和像素测量判断；计划中的停留不能自动算动画失败。
 2. **画面里出现的文字，在当前尺寸下能读清吗？**
    看不清 → 可读性失分，且必须给出"字号从多少提到多少"的具体建议。
 3. **画面内容与上面的画外音说的是同一件事吗？**
@@ -56,7 +62,8 @@
 <!--
 模板变量（由 CriticAgent 注入）：index / tag / engine / duration_sec /
 actual_duration / width / height / attempt / narration / visual_brief /
-style_guide / previous_feedback / frame_count / preview_width / preview_scale
+style_guide / previous_feedback / frame_count / preview_width / preview_scale /
+frame_change_summary
 （最后一项是抽帧缩放宽度与成片/缩略图的比例）
 
 **这份清单刻意不写成占位符形式。** 渲染器替换的是双花括号包起来的名字，

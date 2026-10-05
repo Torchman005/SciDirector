@@ -133,6 +133,7 @@ def shot_from_pb(message: Any) -> ShotSpec:
         engine=engine_from_pb(message.engine) or None,
         duration_sec=message.duration_sec or 5.0,
         keywords=list(message.keywords),
+        beats=list(message.beats),
         code=message.code,
         language=message.language,
         meta=dict(message.meta),
@@ -150,6 +151,7 @@ def shot_to_pb(shot: ShotSpec) -> Any:
         engine=engine_to_pb(shot.engine.value if shot.engine else None),
         duration_sec=shot.duration_sec,
         keywords=list(shot.keywords),
+        beats=list(shot.beats),
         code=shot.code,
         language=shot.language,
         meta=dict(shot.meta),
@@ -309,6 +311,7 @@ def shots_payload_json(shots: list[ShotSpec], outline: str = "") -> str:
                     "engine": engine_to_pb(s.engine.value if s.engine else None),
                     "duration_sec": s.duration_sec,
                     "keywords": list(s.keywords),
+                    **({"beats": list(s.beats)} if s.beats else {}),
                 }
                 for s in shots
             ],

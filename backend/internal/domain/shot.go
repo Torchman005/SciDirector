@@ -182,6 +182,7 @@ type Shot struct {
 	Engine      Engine   `json:"engine"`
 	DurationSec float64  `json:"duration_sec"`
 	Keywords    []string `json:"keywords,omitempty"`
+	Beats       []string `json:"beats,omitempty"` // 画面阶段的顺序描述，不含绝对时间
 	Code        string   `json:"code,omitempty"`
 	Language    string   `json:"language,omitempty"` // python / html+js
 

@@ -29,7 +29,7 @@ import { InboxOutlined, ReloadOutlined } from '@ant-design/icons'
 import { api, errorText } from './api'
 import { EventTimeline } from './components/EventTimeline'
 import { ShotTable } from './components/ShotTable'
-import { deriveStat, shotsOf } from './stream'
+import { deriveReviewSummary, deriveStat, shotsOf } from './stream'
 import { useJobStream } from './useJobStream'
 import { BACKGROUND_STYLES, STYLE_PRESETS, formatTime, jobStatus } from './display'
 import type { ConnectionState, Effects, GenerateRequest } from './types'
@@ -284,6 +284,7 @@ export function App() {
 
   const shots = shotsOf(state.job)
   const stat = deriveStat(state)
+  const reviewSummary = deriveReviewSummary(state)
   const js = jobStatus(state.job?.status ?? 'PENDING')
   const conn = CONNECTION[connection]
   const pending = stat.awaiting_human
@@ -640,12 +641,19 @@ export function App() {
                   />
                 </Col>
                 <Col xs={8} sm={5} md={4}>
-                  <Statistic title="失败" value={stat.failed} valueStyle={{ color: '#e74c3c' }} />
+                  <Statistic title="技术失败" value={stat.failed} valueStyle={{ color: '#e74c3c' }} />
                 </Col>
                 <Col xs={8} sm={4} md={4}>
-                  <Statistic title="进行中" value={stat.in_progress} />
+                  <Statistic title={state.job?.status === 'FAILED' ? '未处理' : '进行中'} value={stat.in_progress} />
                 </Col>
               </Row>
+
+              {stat.total > 0 && (
+                <Text type="secondary" style={{ display: 'block', marginTop: 8 }}>
+                  已审查 {reviewSummary.reviewed} 镜，通过率 {reviewSummary.passRate === null ? '暂无' : `${reviewSummary.passRate}%`}
+                  {' · '}未审查 {reviewSummary.unreviewed} 镜
+                </Text>
+              )}
 
               {state.job?.error && (
                 <Alert type="warning" showIcon style={{ marginTop: 16 }} message={state.job.error} />

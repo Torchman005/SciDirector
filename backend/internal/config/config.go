@@ -130,7 +130,7 @@ type MediaConfig struct {
 	Width            int
 	Height           int
 	// Transition 是跨镜头转场类型（none 表示硬切，走最快的 concat -c copy 路径）。
-	// 任何非 none 的取值都需要重编码整条成片，是明确的性能代价。
+	// 非 none 需要重编码；多镜头时转场与镜头主体可并行处理。
 	Transition string
 	// TransitionDurationSec 是转场时长；会被最短片段自动压住。
 	TransitionDurationSec float64
@@ -223,7 +223,7 @@ func Load() (*Config, error) {
 			Width:            getInt("SCID_RENDER_WIDTH", 1920),
 			Height:           getInt("SCID_RENDER_HEIGHT", 1080),
 			// 默认 fade：科普视频里镜头之间直切会显得生硬。
-			// 代价是整条成片需要重编码 —— 追求速度可设为 none 走 copy 路径。
+			// 多镜头时可并行编码转场片段；追求速度可设为 none 走 copy 路径。
 			Transition:            getEnv("SCID_TRANSITION", "fade"),
 			TransitionDurationSec: getFloat("SCID_TRANSITION_DURATION_SEC", 0.4),
 			// 默认全为 0（不调整）。只统一规格与色彩范围，不做创作性调色 ——

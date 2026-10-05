@@ -56,6 +56,9 @@ class Settings(BaseSettings):
     # gRPC 线程池大小。渲染是阻塞型调用，线程数应显著大于 CPU 核数，
     # 但也要有上限，否则会把内存吃光（每个 Manim 进程都很重）。
     grpc_max_workers: int = Field(default=8, ge=1, le=64)
+    # 同一任务内同时生成的镜头数；各镜头有独立渲染目录和重试状态。
+    # 缺省为 1 以保持断点/本地低配环境的旧行为；生产可设 SCID_SHOT_PARALLELISM=2~4。
+    shot_parallelism: int = Field(default=1, ge=1, le=16)
 
     # ------------------------------------------------------------------
     # 状态存储（与 Go 侧共用同一 Redis / Postgres）

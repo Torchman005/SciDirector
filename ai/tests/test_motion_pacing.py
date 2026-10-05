@@ -15,16 +15,52 @@
 from __future__ import annotations
 
 from pathlib import Path
+from io import BytesIO
+from unittest.mock import patch
 
 from PIL import Image, ImageDraw
 
-from scidirector_ai.graph.nodes import _collect_feedback
+from scidirector_ai.graph.nodes import _collect_feedback, _motion_feedback
 from scidirector_ai.media import (
     FrameSample,
     MotionReport,
     analyze_motion,
     frame_sample_times,
+    frame_change_summary,
 )
+from scidirector_ai.schemas import SceneTag, ShotSpec
+
+
+def test_job_8dfc83_scripted_progress_hold_is_not_pacing_failure() -> None:
+    shot = ShotSpec(shot_id="s", index=0, narration="", tag=SceneTag.MOTION,
+                    duration_sec=12.1, visual_brief="进度条卡在70%不动，保持到镜头结束")
+    report = MotionReport(ratios=[0.1, 0.001],
+                          static_spans=[(5.0, 12.1, 0.001)], min_change_ratio=0.005)
+    assert "不要仅凭此项打回" in _motion_feedback(report, shot)
+
+
+def test_unplanned_early_freeze_remains_reported() -> None:
+    shot = ShotSpec(shot_id="s", index=0, narration="", tag=SceneTag.MOTION,
+                    duration_sec=12.1, visual_brief="进度条卡在70%不动，保持到镜头结束")
+    report = MotionReport(ratios=[0.001],
+                          static_spans=[(1.0, 4.0, 0.001)], min_change_ratio=0.005)
+    assert "第 1.0 秒" in _motion_feedback(report, shot)
+
+
+def test_frame_change_summary_rejects_false_identical_claim() -> None:
+    first = Image.new("L", (100, 100), color=255)
+    second = first.copy()
+    ImageDraw.Draw(second).rectangle((0, 0, 9, 17), fill=0)
+    buffers = []
+    for image in (first, second):
+        output = BytesIO()
+        image.save(output, format="PNG")
+        output.seek(0)
+        buffers.append(output)
+    open_image = Image.open
+    with patch("PIL.Image.open", side_effect=lambda path: open_image(buffers[0 if path == "a" else 1])):
+        summary = frame_change_summary(["a", "b"])
+    assert "1.80%" in summary
 
 WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)

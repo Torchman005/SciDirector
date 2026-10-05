@@ -622,6 +622,7 @@ ws://localhost:8080/ws/jobs/{jobID}
 | `job_id` | 任务标识，同时作为 LangGraph 的线程 ID |
 | `raw_script` / `style_guide_json` / `target_duration_sec` / `locale` | 生成参数 |
 | `max_attempts_per_shot` | 每镜头重试上限（熔断阈值） |
+| `SCID_SHOT_PARALLELISM` | AI 任务内同时运行的镜头子图数，默认 `1`；大于 `1` 时事件会按镜头交错到达，调用方必须按 `shot_id` 归并 |
 | `resume` / `checkpoint_thread_id` | 断点续跑。`resume=true` 且该线程有**未完成**的 checkpoint 时从断点继续；checkpoint 显示**已完成**时直接跳过（不再喂初始状态 —— 那会把进度清空，等于重跑） |
 
 > **`resume` 的生效条件**：Python 侧自 v0.6.14 起才真正消费该字段
@@ -633,11 +634,15 @@ ws://localhost:8080/ws/jobs/{jobID}
 
 响应：`stream PipelineEvent`（见 `common.proto`）。
 
+重做时可能收到 `code` 或 `render` 节点的 `RETRYING` 事件，说明新源码与旧版相同，或新旧审查抽帧完全一致。此时系统会跳过无效渲染或重复视觉审查，再按 `max_attempts_per_shot` 决定继续修改还是转人工；这些事件不表示镜头已通过审查。
+
 **跨语言约定（重要）**：`plan` 节点的 `PipelineEvent.payload_json` 为
 
 ```json
-{ "outline": "…", "shots": [ { "shot_id": "…", "index": 0, "tag": "SCENE_TAG_MATH", "engine": "RENDER_ENGINE_MANIM", "duration_sec": 6.5, "attempt": 1, "status": "SHOT_STATUS_PENDING" } ] }
+{ "outline": "…", "shots": [ { "shot_id": "…", "index": 0, "tag": "SCENE_TAG_MATH", "engine": "RENDER_ENGINE_MANIM", "duration_sec": 6.5, "beats": ["问题出现", "公式展开", "结论高亮"], "attempt": 1, "status": "SHOT_STATUS_PENDING" } ] }
 ```
+
+`beats` 是可选的顺序节拍，不保存绝对时间。导演自动拆分超长镜头时会按旁白段落把节拍分配到各段；时长修复不会使节拍失真。节奏检查发现静止区间时，反馈还会指出对应的节拍编号。
 
 Go 侧 `worker.syncShotsFromPayload` 解析它并**整体替换**任务的分镜表（保留已有渲染进度）。
 之所以用 JSON 而不是 proto 的 `repeated` 字段：分镜表仍在快速迭代期，

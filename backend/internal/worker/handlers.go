@@ -208,6 +208,7 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 	// 被裁到 8 秒，意味着**有 4.3 秒的内容被丢掉了**。不告警的话，
 	// 用户只会看到"动画好像没播完"，而没有任何线索指向真正的原因。
 	var drift []string
+	driftByShot := make([]string, len(items))
 
 	// 任一分支失败即取消其余分支：正在跑的 ffmpeg 会收到取消并退出，不白烧 CPU。
 	// pool.Run 保证返回时**所有**分支都已收敛，因此下面可以安全地读 normPaths。
@@ -225,8 +226,8 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 			spec.AlignTo = items[i].plannedSec
 			spec.AlignFrom = probe.DurationSec
 			if delta := probe.DurationSec - items[i].plannedSec; math.Abs(delta) > driftTolerance(items[i].plannedSec) {
-				drift = append(drift, fmt.Sprintf("#%d 计划 %.1fs、实际 %.1fs（%+.1fs，已对齐）",
-					items[i].index, items[i].plannedSec, probe.DurationSec, delta))
+				driftByShot[i] = fmt.Sprintf("#%d 计划 %.1fs、实际 %.1fs（%+.1fs，已对齐）",
+					items[i].index, items[i].plannedSec, probe.DurationSec, delta)
 			}
 		}
 
@@ -275,6 +276,11 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 		})
 		return fmt.Errorf("worker: %s", msg)
 	}
+	for _, detail := range driftByShot {
+		if detail != "" {
+			drift = append(drift, detail)
+		}
+	}
 
 	// 如实上报时长偏差。
 	//
@@ -298,33 +304,52 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 	//
 	// 两条路径，代价差别很大，因此必须显式决策并把结论写进事件：
 	//   - 硬切：concat demuxer + -c copy，无重编码，最快；
-	//   - 转场：xfade 必须解码再编码，整条成片都要重来一遍。
+	//   - 转场：xfade 必须解码再编码；多镜头时将主体和转场窗口并行编码。
 	//
 	// 是否启用由 PlanTransitions 判定（纯函数，可单测），它同时给出
 	// 「为什么没启用」的原因 —— 否则「配置了转场却没生效」只能靠读源码回答。
 	plan := media.PlanTransitions(durations, p.media.Transition())
+	parallelTransition := plan.Enabled && p.cfg.Media.MaxParallel > 1 &&
+		media.CanParallelTransition(durations, plan, p.cfg.Media.FPS)
 	mergedPath := filepath.Join(workDir, "merged.mp4")
+	composeCtx, cancelCompose := context.WithCancel(ctx)
+	defer cancelCompose()
+	videoDone := make(chan error, 1)
+	go func() {
+		var err error
+		if plan.Enabled {
+			var mergeErr error
+			if parallelTransition {
+				mergeErr = p.media.ConcatWithTransitionParallel(composeCtx, normPaths, durations, mergedPath,
+					plan, p.cfg.Media.MaxParallel)
+			} else {
+				mergeErr = p.media.ConcatWithTransition(composeCtx, normPaths, mergedPath, plan)
+			}
+			if mergeErr != nil {
+				err = fmt.Errorf("worker: 带转场合并分镜失败: %w", mergeErr)
+			} else {
+				lg.Info("已使用转场合成",
+					"transition", string(plan.Type),
+					"parallel", parallelTransition,
+					"duration_sec", plan.Duration,
+					"out_duration_sec", plan.OutDuration)
+			}
+		} else {
+			// 降级原因必须可见：静默硬切会让配置错误永远不被发现。
+			lg.Info("使用硬切合成", "reason", plan.Reason)
 
-	if plan.Enabled {
-		if err := p.media.ConcatWithTransition(ctx, normPaths, mergedPath, plan); err != nil {
-			return fmt.Errorf("worker: 带转场合并分镜失败: %w", err)
+			listPath := filepath.Join(workDir, "concat.txt")
+			if err = media.WriteConcatList(listPath, normPaths); err == nil {
+				if concatErr := p.media.Concat(composeCtx, listPath, mergedPath); concatErr != nil {
+					err = fmt.Errorf("worker: 合并分镜失败: %w", concatErr)
+				}
+			}
 		}
-		lg.Info("已使用转场合成",
-			"transition", string(plan.Type),
-			"duration_sec", plan.Duration,
-			"out_duration_sec", plan.OutDuration)
-	} else {
-		// 降级原因必须可见：静默硬切会让配置错误永远不被发现。
-		lg.Info("使用硬切合成", "reason", plan.Reason)
-
-		listPath := filepath.Join(workDir, "concat.txt")
-		if err := media.WriteConcatList(listPath, normPaths); err != nil {
-			return err
+		if err != nil {
+			cancelCompose()
 		}
-		if err := p.media.Concat(ctx, listPath, mergedPath); err != nil {
-			return fmt.Errorf("worker: 合并分镜失败: %w", err)
-		}
-	}
+		videoDone <- err
+	}()
 
 	// 阶段三之前：构建整片配音轨。
 	//
@@ -346,7 +371,7 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 				continue
 			}
 			anyNarration = true
-			sec, aerr := p.media.ProbeAudio(ctx, items[i].audioPath)
+			sec, aerr := p.media.ProbeAudio(composeCtx, items[i].audioPath)
 			if aerr != nil {
 				lg.Warn("探测配音时长失败，该镜头回退到按文本估算",
 					"shot", items[i].index, "path", items[i].audioPath, "error", aerr.Error())
@@ -394,7 +419,7 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 				parts[i] = media.NarrationPart{AudioPath: items[i].audioPath, TargetSec: target}
 			}
 			track := filepath.Join(workDir, "narration.m4a")
-			if berr := p.media.BuildNarrationTrack(ctx, parts, track); berr != nil {
+			if berr := p.media.BuildNarrationTrack(composeCtx, parts, track); berr != nil {
 				// 配音轨失败不应让整部片子失败：画面与字幕才是主体，
 				// 观众看不到「配音轨构建失败」，但会立刻看到成片失败。
 				lg.Error("配音轨构建失败，将产出无配音成片", "error", berr.Error())
@@ -403,6 +428,9 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 				lg.Info("配音轨已生成", "parts", len(parts), "path", track)
 			}
 		}
+	}
+	if err := <-videoDone; err != nil {
+		return err
 	}
 
 	// 阶段三：生成字幕。
@@ -581,12 +609,13 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 		// 「全都做完了」，而实际上还有镜头没有画面。
 		Progress: 1.0,
 		Payload: map[string]any{
-			"final_video_path": finalPath,
-			"subtitle_path":    subtitlePath,
-			"transition":       string(plan.Type),
-			"transition_used":  plan.Enabled,
-			"out_duration_sec": plan.OutDuration,
-			"missing_shots":    missing,
+			"final_video_path":    finalPath,
+			"subtitle_path":       subtitlePath,
+			"transition":          string(plan.Type),
+			"transition_used":     plan.Enabled,
+			"transition_parallel": parallelTransition,
+			"out_duration_sec":    plan.OutDuration,
+			"missing_shots":       missing,
 			// 实际生效的后期效果。写进事件而不是只写日志：
 			// 用户问"为什么没有背景音乐"时，答案要能在界面里看到，
 			// 而不是只能去翻服务端日志。

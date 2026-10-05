@@ -15,11 +15,14 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 from dataclasses import dataclass
 from typing import Any, Iterator
 
 from langgraph.graph import END, START, StateGraph
+from langgraph.types import Send
+from langgraph.config import get_stream_writer
 
 from ..agents.coder import CoderAgent
 from ..agents.critic import CriticAgent
@@ -48,8 +51,13 @@ from .state import (
     NODE_PLAN,
     NODE_RENDER,
     NODE_REVISE,
+    NODE_SHOT,
+    NODE_FINISH,
+    ParallelPipelineState,
     PipelineState,
     initial_state,
+    make_event,
+    progress_ratio,
 )
 
 logger = get_logger(__name__)
@@ -122,6 +130,109 @@ def build_graph(deps: PipelineDeps, checkpointer: Any = None) -> Any:
     return graph.compile(checkpointer=checkpointer)
 
 
+def build_parallel_graph(deps: PipelineDeps, checkpointer: Any = None, parallelism: int = 2) -> Any:
+    """Fan out planned shots with isolated local state and merge their results."""
+    shot_slots = threading.BoundedSemaphore(parallelism)
+    nodes = PipelineNodes(deps)
+    shot_graph = StateGraph(PipelineState)
+    shot_graph.add_node(NODE_CODE, nodes.code)
+    shot_graph.add_node(NODE_RENDER, nodes.render)
+    shot_graph.add_node(NODE_CRITIQUE, nodes.critique)
+    shot_graph.add_node(NODE_REVISE, nodes.revise)
+    shot_graph.add_edge(START, NODE_CODE)
+    shot_graph.add_conditional_edges(
+        NODE_CODE, route_after_code, {NODE_RENDER: NODE_RENDER, NODE_REVISE: NODE_REVISE}
+    )
+    shot_graph.add_conditional_edges(
+        NODE_RENDER, route_after_render,
+        {NODE_CRITIQUE: NODE_CRITIQUE, NODE_REVISE: NODE_REVISE, NODE_ADVANCE: END},
+    )
+    shot_graph.add_conditional_edges(
+        NODE_CRITIQUE, route_after_critique, {NODE_REVISE: NODE_REVISE, NODE_ADVANCE: END}
+    )
+    shot_graph.add_conditional_edges(
+        NODE_REVISE, route_after_revise, {NODE_CODE: NODE_CODE, NODE_ADVANCE: END}
+    )
+    single_shot = shot_graph.compile()
+
+    def dispatch(state: PipelineState) -> list[Send]:
+        return [Send(NODE_SHOT, {**state, "cursor": i}) for i in range(len(state.get("shots") or []))]
+
+    def run_shot(state: PipelineState) -> dict[str, Any]:
+        with shot_slots:
+            return execute_shot(state)
+
+    def execute_shot(state: PipelineState) -> dict[str, Any]:
+        shot = state["shots"][state["cursor"]]
+        local: PipelineState = {
+            **state,
+            "shots": list(state["shots"]),
+            "attempts": {shot.shot_id: 0},
+            "artifacts": {},
+            "feedback": {},
+            "score_history": {},
+            "motion_reports": {},
+            "frame_signatures": {},
+            "revision_stagnation": {},
+            "events": [],
+            "current_code": shot.code,
+            "current_language": shot.language,
+            "render_error": "",
+        }
+        writer = get_stream_writer()
+        emitted = 0
+        for snapshot in single_shot.stream(
+            local,
+            config={
+                "recursion_limit": max(30, int(state.get("max_attempts_per_shot", 3)) * NODES_PER_ATTEMPT + 10),
+                "max_concurrency": 2,
+            },
+            stream_mode="values",
+        ):
+            local = snapshot
+            events = local.get("events") or []
+            for event in events[emitted:]:
+                writer(event)
+            emitted = len(events)
+
+        result_shot = local["shots"][shot.index]
+        return {
+            "shot_updates": {shot.shot_id: result_shot},
+            "attempts": {shot.shot_id: local["attempts"].get(shot.shot_id, 0)},
+            "artifacts": local.get("artifacts") or {},
+            "feedback": local.get("feedback") or {},
+            "score_history": local.get("score_history") or {},
+            "motion_reports": local.get("motion_reports") or {},
+            "frame_signatures": local.get("frame_signatures") or {},
+            "revision_stagnation": local.get("revision_stagnation") or {},
+            "events": local.get("events") or [],
+        }
+
+    def finish(state: ParallelPipelineState) -> dict[str, Any]:
+        shots = [state.get("shot_updates", {}).get(s.shot_id, s) for s in state.get("shots") or []]
+        completed = {**state, "shots": shots, "cursor": len(shots)}
+        ratio = progress_ratio(completed)
+        return {
+            "shots": shots,
+            "cursor": len(shots),
+            "finished": True,
+            "events": [make_event(
+                completed, node=NODE_ADVANCE,
+                message=f"全部 {len(shots)} 个分镜处理完成，通过率 {ratio:.0%}",
+            )],
+        }
+
+    graph = StateGraph(ParallelPipelineState)
+    graph.add_node(NODE_PLAN, nodes.plan)
+    graph.add_node(NODE_SHOT, run_shot)
+    graph.add_node(NODE_FINISH, finish)
+    graph.add_edge(START, NODE_PLAN)
+    graph.add_conditional_edges(NODE_PLAN, dispatch, [NODE_SHOT])
+    graph.add_edge(NODE_SHOT, NODE_FINISH)
+    graph.add_edge(NODE_FINISH, END)
+    return graph.compile(checkpointer=checkpointer)
+
+
 @dataclass
 class RunOutcome:
     """一次流水线运行的统计结果。"""
@@ -191,7 +302,11 @@ class PipelineRunner:
     def app(self) -> Any:
         """惰性编译图（编译有开销，且首次编译会做 schema 校验）。"""
         if self._app is None:
-            self._app = build_graph(self.deps, self.checkpointer.saver)
+            self._app = (
+                build_parallel_graph(self.deps, self.checkpointer.saver, self.settings.shot_parallelism)
+                if self.settings.shot_parallelism > 1
+                else build_graph(self.deps, self.checkpointer.saver)
+            )
         return self._app
 
     def close(self) -> None:
@@ -228,6 +343,7 @@ class PipelineRunner:
         config = {
             "configurable": {"thread_id": tid},
             "recursion_limit": self._recursion_limit(request),
+            "max_concurrency": max(4, self.settings.shot_parallelism * 2),
         }
 
         # 决定这次是「从断点续跑」还是「从头开始」。
@@ -266,12 +382,21 @@ class PipelineRunner:
             },
         )
 
+
         emitted = 0
         try:
-            for chunk in self.app.stream(graph_input, config=config, stream_mode="updates"):
+            modes: Any = ["updates", "custom"] if self.settings.shot_parallelism > 1 else "updates"
+            for item in self.app.stream(graph_input, config=config, stream_mode=modes):
+                mode, chunk = item if self.settings.shot_parallelism > 1 else ("updates", item)
+                if mode == "custom":
+                    yield chunk
+                    emitted += 1
+                    continue
                 for _node_name, update in (chunk or {}).items():
                     if not isinstance(update, dict):
                         continue
+                    if self.settings.shot_parallelism > 1 and _node_name == NODE_SHOT:
+                        continue  # already sent as custom events while each shot ran
                     for event in update.get("events") or []:
                         emitted += 1
                         yield event
@@ -289,6 +414,7 @@ class PipelineRunner:
 
         logger.info("流水线结束", extra={"job_id": job_id, "events_emitted": emitted})
         yield _final_event(job_id, self.llm)
+
 
     def _recursion_limit(self, request: Any) -> int:
         """按镜头数与尝试上限估算递归上限，并留足余量。"""

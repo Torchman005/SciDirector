@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import math
+import re
 
 from pydantic import BaseModel, Field
 
@@ -59,6 +60,7 @@ class _RawShot(BaseModel):
     tag: str = "AMBIENCE"
     duration_sec: float = 5.0
     keywords: list[str] = Field(default_factory=list)
+    beats: list[str] = Field(default_factory=list)
 
 
 class _RawPlan(BaseModel):
@@ -173,6 +175,7 @@ class DirectorAgent(Agent):
                 # 结果是把 7.8 秒的旁白悄悄裁掉，而且没有任何日志。
                 duration_sec=max(float(raw.duration_sec), MIN_SHOT_SEC),
                 keywords=raw.keywords[:6],
+                beats=[str(b).strip() for b in raw.beats[:8] if str(b).strip()],
             )
             # engine 由标签确定性推导（ShotSpec 的 model_validator 已处理），
             # 这里显式再取一次是为了让日志/调试一眼可见路由结果。
@@ -301,12 +304,21 @@ class DirectorAgent(Agent):
 
             weights = [max(len(g), 1) for g in groups]
             weight_sum = sum(weights)
+            beat_groups = _distribute_beats(shot.beats, weights)
+            visual_steps = _split_visual_steps(shot.visual_brief)
+            visual_groups = _distribute_beats(visual_steps, weights)
             for position, (group, weight) in enumerate(zip(groups, weights, strict=True)):
                 segment = shot.model_copy(deep=True)
                 segment.narration = group
                 segment.duration_sec = round(shot.duration_sec * weight / weight_sum, 2)
+                segment.beats = beat_groups[position]
+                assigned_visual = "".join(visual_groups[position]).strip()
+                if not assigned_visual:
+                    assigned_visual = f"承接前一镜头，呈现本段旁白：{group}" if group else shot.visual_brief
+                if beat_groups[position]:
+                    assigned_visual += "\n本段画面节拍：" + "；".join(beat_groups[position])
                 segment.visual_brief = _continuation_brief(
-                    shot.visual_brief, position, parts
+                    assigned_visual, position, parts
                 )
                 out.append(segment)
 
@@ -333,6 +345,26 @@ class DirectorAgent(Agent):
             segment.index = position
             segment.shot_id = f"{job_id}-s{position:03d}"
         return out
+
+
+def _distribute_beats(beats: list[str], weights: list[int]) -> list[list[str]]:
+    """Keep ordered beats on one segment each, weighted by narration length."""
+    if not weights:
+        return []
+    count = len(beats)
+    total = sum(weights)
+    boundaries = [0]
+    cumulative = 0
+    for weight in weights[:-1]:
+        cumulative += weight
+        boundaries.append(round(count * cumulative / total))
+    boundaries.append(count)
+    return [beats[boundaries[i]:boundaries[i + 1]] for i in range(len(weights))]
+
+
+def _split_visual_steps(brief: str) -> list[str]:
+    """Preserve ordered visual actions so each split shot gets a distinct scope."""
+    return [part for part in re.split(r"(?<=[，,；;。])", brief) if part.strip()]
 
 
 # ---------------------------------------------------------------------------

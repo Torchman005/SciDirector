@@ -81,6 +81,7 @@ class TestShotConversion:
             shot_id="job-x-s001", index=1, narration="画外音", visual_brief="画面",
             tag=SceneTag.MATH, duration_sec=8.5, keywords=["a", "b"],
             code="print(1)", language="python", meta={"k": "v"},
+            beats=["公式出现", "推导展开", "结论高亮"],
         )
         back = pbconv.shot_from_pb(pbconv.shot_to_pb(shot))
 
@@ -95,6 +96,7 @@ class TestShotConversion:
         assert back.code == shot.code
         assert back.language == shot.language
         assert back.meta == shot.meta
+        assert back.beats == shot.beats
 
     def test_unspecified_engine_is_rederived_from_tag(self) -> None:
         """**关键**：proto 里 engine 为空时，必须按标签重新推导。

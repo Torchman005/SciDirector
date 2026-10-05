@@ -320,6 +320,7 @@ func TestCollectEntriesInfersKinds(t *testing.T) {
 	mustWrite("final.mp4", "x")
 	mustWrite("final.srt", "x")
 	mustWrite("normalized/norm_000.mp4", "x")
+	mustWrite("transition_pieces/piece_000.mp4", "x")
 	mustWrite("frames/frame_00000.png", "x")
 	mustWrite("shots/s000.mp4", "x")
 
@@ -337,6 +338,7 @@ func TestCollectEntriesInfersKinds(t *testing.T) {
 		"final.mp4":               KindShot,
 		"final.srt":               KindSubtitle,
 		"normalized/norm_000.mp4": KindNormalized,
+		"transition_pieces/piece_000.mp4": KindNormalized,
 		"frames/frame_00000.png":  KindFrame,
 		"shots/s000.mp4":          KindShot,
 	}
@@ -350,7 +352,7 @@ func TestCollectEntriesInfersKinds(t *testing.T) {
 	for _, p := range plan {
 		rel, _ := filepath.Rel(root, p)
 		switch filepath.ToSlash(rel) {
-		case "normalized/norm_000.mp4", "frames/frame_00000.png":
+		case "normalized/norm_000.mp4", "transition_pieces/piece_000.mp4", "frames/frame_00000.png":
 		default:
 			t.Errorf("不应删除 %s", rel)
 		}

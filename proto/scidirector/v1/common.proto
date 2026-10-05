@@ -108,6 +108,7 @@ message ShotSpec {
   string code = 9;            // 当前版本的渲染源码
   string language = 10;       // 源码语言：python / html+js
   map<string, string> meta = 11; // 扩展位，禁止放二进制
+  repeated string beats = 12;  // 画面阶段的顺序描述，不含绝对时间
 }
 
 // 渲染产物：只传「路径与元数据」，视频二进制永远不走 gRPC。

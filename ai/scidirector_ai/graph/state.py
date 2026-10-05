@@ -34,6 +34,23 @@ NODE_CRITIQUE = "critique"
 NODE_REVISE = "revise"
 NODE_ADVANCE = "advance"
 NODE_COMPOSE = "compose"
+NODE_SHOT = "shot"
+NODE_FINISH = "finish"
+
+
+def merge_by_shot(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
+    """Merge independent shot results at a parallel LangGraph barrier."""
+    return {**left, **right}
+
+
+def merge_motion_reports(left: dict[str, str], right: dict[str, str | None]) -> dict[str, str]:
+    merged = dict(left)
+    for shot_id, report in right.items():
+        if report is None:
+            merged.pop(shot_id, None)
+        else:
+            merged[shot_id] = report
+    return merged
 
 # 结束哨兵：条件边用它表示「没有下一个镜头了」。
 END_CURSOR = -1
@@ -75,7 +92,7 @@ class PipelineState(TypedDict, total=False):
     # ------------------------------------------------------------------
     artifacts: dict[str, RenderArtifact]
     feedback: dict[str, CriticFeedback]
-    attempts: dict[str, int]        # 每镜头已尝试次数（熔断依据）
+    attempts: dict[str, int]  # 每镜头已尝试次数
     human_feedback: dict[str, str]  # 人类打回意见（HITL 注入点）
     #: 每镜头的历次审查得分（按时间顺序）。
     #:
@@ -92,6 +109,8 @@ class PipelineState(TypedDict, total=False):
     #: 按 shot_id 索引而不是用单个字段：单字段会在切到下一个镜头时**残留**，
     #: 把上一个镜头的静止时段算到无关的镜头头上。
     motion_reports: dict[str, str]
+    frame_signatures: dict[str, list[str]]
+    revision_stagnation: dict[str, str]
 
     # ------------------------------------------------------------------
     # 事件与统计（用 reducer 累加，允许并发节点合并写入）
@@ -117,6 +136,19 @@ class PipelineState(TypedDict, total=False):
     total_tokens: int
     started_at_ms: int
     finished: bool
+
+
+class ParallelPipelineState(PipelineState, total=False):
+    """Parent graph channels that receive concurrent shot results."""
+
+    artifacts: Annotated[dict[str, RenderArtifact], merge_by_shot]
+    feedback: Annotated[dict[str, CriticFeedback], merge_by_shot]
+    attempts: Annotated[dict[str, int], merge_by_shot]
+    score_history: Annotated[dict[str, list[float]], merge_by_shot]
+    motion_reports: Annotated[dict[str, str], merge_motion_reports]
+    frame_signatures: Annotated[dict[str, list[str]], merge_by_shot]
+    revision_stagnation: Annotated[dict[str, str], merge_by_shot]
+    shot_updates: Annotated[dict[str, ShotSpec], merge_by_shot]
 
 
 def initial_state(
@@ -152,6 +184,9 @@ def initial_state(
         human_feedback={},
         score_history={},
         motion_reports={},
+        frame_signatures={},
+        revision_stagnation={},
+        shot_updates={},
         route_hint="",
         events=[],
         errors=[],

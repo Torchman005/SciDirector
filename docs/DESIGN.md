@@ -157,7 +157,7 @@ proto 中只传 `video_path / frame_samples[] / duration / width / height`。
 **所有分支都由 `route_hint` 驱动**：节点声明下一跳，条件边只做读取与合法性校验。
 这样"带反馈的循环 + 每镜头独立 attempt 计数"才可推理、可单测 —— 详见 §5.8。
 
-实际实现为 **6 个节点**：`plan / code / render / critique / revise / advance`。
+串行模式实际实现为 **6 个节点**：`plan / code / render / critique / revise / advance`。当 `SCID_SHOT_PARALLELISM > 1` 时，`plan` 后由 `Send` 扇出镜头子图（`code / render / critique / revise`），在 `finish` 屏障按 `shot_id` 合并结果；子图内部仍沿用同一重试、熔断和 checkpoint 语义。
 没有单独的 `compose` 节点 —— 成片合成是 **Go 侧的职责**（它才持有 ffmpeg 与产物卷），
 Python 图只负责"产出并审查每一个镜头片段"。
 不可恢复的错误也不会走独立节点：`_fatal_event()` 保证**任何异常都先发一条事件再终止**，
@@ -179,6 +179,10 @@ Python 图只负责"产出并审查每一个镜头片段"。
 | `human_feedback` | dict[shot_id, str] | 人类打回意见（HITL 注入点） |
 | `events` | list[PipelineEvent] | 待推送事件缓冲 |
 | `errors` | list[str] | 非致命错误，供观测 |
+
+并行模式的 `artifacts`、`feedback`、`attempts`、`score_history`、`motion_reports` 与 `shot_updates` 使用按镜头合并 reducer；节奏报告用空值删除旧结论，避免一次重做通过后残留上一轮的静止区间。事件携带 `shot_id`，因此 Go 侧可以安全处理交错到达的事件。
+
+重做效率约束：视觉模型已判负且没有渲染技术错误时，编码节点在生成源码与上一版相同则直接回到 `revise`，跳过渲染；渲染节点保存审查抽帧的内容摘要（而不是会被覆盖的文件名），若新旧抽帧逐张相同且上轮是视觉模型判负，则跳过重复 VLM 调用。两轮审查意见相似度至少 0.9 且得分提升不足 0.02 时，下一轮编码反馈要求针对问题重构可见的画面元素或阶段。编码调用失败也计入镜头尝试次数，避免无限重试。上述跳过均不视作通过，仍由原有尝试上限和人工出口收束；临时渲染错误与视觉模型服务故障仍可重试。
 
 > **状态设计要点**：`attempt` 是**每镜头独立**的计数器，进入下一镜头时归零。
 > 这是防止"一个坏镜头把整个任务拖死"的关键。
@@ -542,7 +546,8 @@ Job (一次生成请求)
   LangGraph 重试 = **内容不合格**（画面错、字太小）。二者不互相掩盖。
 
 ### 6.3 ffmpeg 并发合成
-- 每个镜头独立渲染出 MP4；合成阶段用 `errgroup` 控制并发上限 `SCID_FFMPEG_MAX_PARALLEL`。
+- 每个镜头独立渲染出 MP4；合成阶段用有界 Pool 控制任务内并发，Runner 的全局闸门限制整个 worker 的 ffmpeg 进程数（`SCID_FFMPEG_MAX_PARALLEL`）。
+- 默认 fade 转场将镜头主体与相邻转场窗口拆成独立片段并发编码，按叙事顺序无重编码拼接；只有两镜或片段过短时走原串行转场。配音段也并发对齐，最终合成事件记录 `transition_parallel`。
 - 流程：`分镜视频 → concat → 混入 TTS 音轨 → 烧入/挂载字幕 → 加转场 → 输出成片`。
 - 关键工程点：
   1. 每个 ffmpeg 进程必须绑定 `context`，取消时 `Process.Kill()`，避免僵尸进程。

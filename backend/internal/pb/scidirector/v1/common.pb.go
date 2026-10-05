@@ -367,6 +367,7 @@ type ShotSpec struct {
 	Code          string                 `protobuf:"bytes,9,opt,name=code,proto3" json:"code,omitempty"`                                                                            // 当前版本的渲染源码
 	Language      string                 `protobuf:"bytes,10,opt,name=language,proto3" json:"language,omitempty"`                                                                   // 源码语言：python / html+js
 	Meta          map[string]string      `protobuf:"bytes,11,rep,name=meta,proto3" json:"meta,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // 扩展位，禁止放二进制
+	Beats         []string               `protobuf:"bytes,12,rep,name=beats,proto3" json:"beats,omitempty"`                                                                         // 画面阶段的顺序描述，不含绝对时间
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -474,6 +475,13 @@ func (x *ShotSpec) GetLanguage() string {
 func (x *ShotSpec) GetMeta() map[string]string {
 	if x != nil {
 		return x.Meta
+	}
+	return nil
+}
+
+func (x *ShotSpec) GetBeats() []string {
+	if x != nil {
+		return x.Beats
 	}
 	return nil
 }
@@ -1154,7 +1162,7 @@ const file_scidirector_v1_common_proto_rawDesc = "" +
 	"\x1bscidirector/v1/common.proto\x12\x0escidirector.v1\"A\n" +
 	"\tTimeRange\x12\x1b\n" +
 	"\tstart_sec\x18\x01 \x01(\x01R\bstartSec\x12\x17\n" +
-	"\aend_sec\x18\x02 \x01(\x01R\x06endSec\"\xbc\x03\n" +
+	"\aend_sec\x18\x02 \x01(\x01R\x06endSec\"\xd2\x03\n" +
 	"\bShotSpec\x12\x17\n" +
 	"\ashot_id\x18\x01 \x01(\tR\x06shotId\x12\x14\n" +
 	"\x05index\x18\x02 \x01(\x05R\x05index\x12\x1c\n" +
@@ -1167,7 +1175,8 @@ const file_scidirector_v1_common_proto_rawDesc = "" +
 	"\x04code\x18\t \x01(\tR\x04code\x12\x1a\n" +
 	"\blanguage\x18\n" +
 	" \x01(\tR\blanguage\x126\n" +
-	"\x04meta\x18\v \x03(\v2\".scidirector.v1.ShotSpec.MetaEntryR\x04meta\x1a7\n" +
+	"\x04meta\x18\v \x03(\v2\".scidirector.v1.ShotSpec.MetaEntryR\x04meta\x12\x14\n" +
+	"\x05beats\x18\f \x03(\tR\x05beats\x1a7\n" +
 	"\tMetaEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xbe\x03\n" +

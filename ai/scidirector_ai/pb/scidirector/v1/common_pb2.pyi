@@ -81,7 +81,7 @@ class TimeRange(_message.Message):
     def __init__(self, start_sec: _Optional[float] = ..., end_sec: _Optional[float] = ...) -> None: ...
 
 class ShotSpec(_message.Message):
-    __slots__ = ("shot_id", "index", "narration", "visual_brief", "tag", "engine", "duration_sec", "keywords", "code", "language", "meta")
+    __slots__ = ("shot_id", "index", "narration", "visual_brief", "tag", "engine", "duration_sec", "keywords", "code", "language", "meta", "beats")
     class MetaEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -100,6 +100,7 @@ class ShotSpec(_message.Message):
     CODE_FIELD_NUMBER: _ClassVar[int]
     LANGUAGE_FIELD_NUMBER: _ClassVar[int]
     META_FIELD_NUMBER: _ClassVar[int]
+    BEATS_FIELD_NUMBER: _ClassVar[int]
     shot_id: str
     index: int
     narration: str
@@ -111,7 +112,8 @@ class ShotSpec(_message.Message):
     code: str
     language: str
     meta: _containers.ScalarMap[str, str]
-    def __init__(self, shot_id: _Optional[str] = ..., index: _Optional[int] = ..., narration: _Optional[str] = ..., visual_brief: _Optional[str] = ..., tag: _Optional[_Union[SceneTag, str]] = ..., engine: _Optional[_Union[RenderEngine, str]] = ..., duration_sec: _Optional[float] = ..., keywords: _Optional[_Iterable[str]] = ..., code: _Optional[str] = ..., language: _Optional[str] = ..., meta: _Optional[_Mapping[str, str]] = ...) -> None: ...
+    beats: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, shot_id: _Optional[str] = ..., index: _Optional[int] = ..., narration: _Optional[str] = ..., visual_brief: _Optional[str] = ..., tag: _Optional[_Union[SceneTag, str]] = ..., engine: _Optional[_Union[RenderEngine, str]] = ..., duration_sec: _Optional[float] = ..., keywords: _Optional[_Iterable[str]] = ..., code: _Optional[str] = ..., language: _Optional[str] = ..., meta: _Optional[_Mapping[str, str]] = ..., beats: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class RenderArtifact(_message.Message):
     __slots__ = ("artifact_id", "shot_id", "video_path", "audio_path", "subtitle_path", "duration_sec", "width", "height", "fps", "attempt", "engine", "frame_samples", "rendered_at_unix_ms", "render_cost_sec")

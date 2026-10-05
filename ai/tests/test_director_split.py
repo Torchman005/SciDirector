@@ -98,6 +98,24 @@ class TestSentenceGrouping:
 
 
 class TestSplitLongShots:
+    def test_beats_follow_segments_without_duplication(self) -> None:
+        agent = make_agent()
+        beats = ["opening", "expansion", "comparison", "conclusion"]
+        got = agent._split_long_shots([make_shot(beats=beats)], job_id="job-x")
+        assert [beat for segment in got for beat in segment.beats] == beats
+        assert got[0].beats != got[1].beats
+        assert "opening" in got[0].visual_brief
+        assert "conclusion" in got[-1].visual_brief
+        assert "conclusion" not in got[0].visual_brief
+
+    def test_visual_actions_are_not_copied_to_each_segment(self) -> None:
+        got = make_agent()._split_long_shots([
+            make_shot(visual_brief="窗口淡入，文字打出，进度条停在70%，最后风扇泛红。")
+        ], job_id="job-x")
+        assert "窗口淡入" in got[0].visual_brief
+        assert "风扇泛红" in got[1].visual_brief
+        assert "风扇泛红" not in got[0].visual_brief
+
     def test_long_shot_is_split(self) -> None:
         agent = make_agent()
         got = agent._split_long_shots([make_shot()], job_id="job-x")

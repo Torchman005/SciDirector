@@ -12,14 +12,15 @@
 两个容易踩的坑：
 
 1. ``events`` 使用 ``operator.add`` reducer，返回列表即追加；
-   而 ``artifacts`` / ``feedback`` / ``attempts`` 是**普通字典**，返回时**整体替换**，
-   因此每次都必须返回完整副本 —— 少写一个键就会静默丢失已有产物。
+   串行图的字典整体替换；并行父图按镜头合并。节奏报告用 ``None`` 清除旧结论。
 2. ``route_hint`` 是控制流的唯一依据（见 state.py 的说明）。
 """
 
 from __future__ import annotations
 
 import functools
+import hashlib
+from difflib import SequenceMatcher
 
 import json
 import time
@@ -45,7 +46,7 @@ from ..pbconv import shots_payload_json
 from ..renderer import LLM_ENGINES, Renderer, RendererError, RenderRequest, build_renderer
 from ..sandbox.runner import SandboxRunner
 from ..tts.base import synthesize_with_retry, write_marks_sidecar
-from ..schemas import CriticFeedback, RenderArtifact, RenderEngine, ShotSpec, StyleGuide
+from ..schemas import CriticFeedback, FeedbackSource, RenderArtifact, RenderEngine, ShotSpec, StyleGuide
 from .state import (
     NODE_ADVANCE,
     NODE_CODE,
@@ -61,6 +62,45 @@ from .state import (
 )
 
 logger = get_logger(__name__)
+
+
+def _motion_feedback(report: MotionReport, shot: ShotSpec) -> str:
+    summary = report.summary()
+    if "卡在" in shot.visual_brief or "定格" in shot.visual_brief:
+        summary += "\n视觉意图包含停留或定格；先核对静止时段是否符合计划，不要仅凭此项打回。"
+    if not shot.beats or shot.duration_sec <= 0:
+        return summary
+    beat_count = len(shot.beats)
+    affected = sorted({
+        min(beat_count - 1, int(((start + end) / 2) / shot.duration_sec * beat_count))
+        for start, end, _ in report.static_spans
+    })
+    details = "；".join(f"第 {i + 1} 段「{shot.beats[i]}」" for i in affected)
+    return f"{summary}\n对应画面节拍：{details}。"
+
+
+def _frame_signatures(paths: list[str]) -> list[str]:
+    """Store image content, not paths: the next render overwrites the same frame names."""
+    try:
+        return [hashlib.sha256(Path(path).read_bytes()).hexdigest() for path in paths]
+    except OSError:
+        return []
+
+
+def _same_unresolved_feedback(previous: CriticFeedback | None, current: CriticFeedback) -> bool:
+    if previous is None or previous.passed or current.passed:
+        return False
+    def normalized(feedback: CriticFeedback) -> tuple[str, ...]:
+        return tuple(" ".join(text.lower().split()) for text in [
+            *feedback.issues, *feedback.suggestions,
+        ] if text.strip())
+    signature = normalized(current)
+    prior = normalized(previous)
+    return (
+        bool(signature) and bool(prior)
+        and SequenceMatcher(None, "\n".join(signature), "\n".join(prior)).ratio() >= 0.9
+        and current.score <= previous.score + 0.02
+    )
 
 # ---------------------------------------------------------------------------
 # 控制流提示（route_hint）
@@ -216,6 +256,8 @@ class PipelineNodes:
             "attempts": attempts,
             "artifacts": {},
             "feedback": {},
+            "frame_signatures": {},
+            "revision_stagnation": {},
             "human_feedback": dict(state.get("human_feedback") or {}),
             "current_code": "",
             "current_language": "",
@@ -297,6 +339,7 @@ class PipelineNodes:
                 extra={"shot_id": shot.shot_id, "error": str(exc)[:300]},
             )
             return {
+                "attempts": {**(state.get("attempts") or {}), shot.shot_id: attempt},
                 "render_error": str(exc),
                 "route_hint": HINT_RETRY,
                 "events": [
@@ -310,6 +353,29 @@ class PipelineNodes:
 
         attempts = dict(state.get("attempts") or {})
         attempts[shot.shot_id] = attempt
+
+        prior_feedback = (state.get("feedback") or {}).get(shot.shot_id)
+        prior_error = state.get("render_error", "")
+        if (
+            attempt > 1
+            and result.policy_ok
+            and state.get("current_code", "").strip()
+            and result.code.strip() == state.get("current_code", "").strip()
+            and isinstance(prior_feedback, CriticFeedback)
+            and not prior_feedback.passed
+            and prior_feedback.source is FeedbackSource.VLM
+            and (not prior_error or prior_error.startswith(("新源码与上一轮", "新旧审查抽帧")))
+        ):
+            reason = "新源码与上一轮逐字相同，画面不会改善；请重构反馈指出的画面阶段或元素"
+            return {
+                "attempts": attempts,
+                "render_error": reason,
+                "route_hint": HINT_RETRY,
+                "events": [make_event(
+                    state, node=NODE_CODE, shot=shot, attempt=attempt,
+                    message=reason + "，已跳过无效渲染与审查", status="RETRYING",
+                )],
+            }
 
         ok = result.policy_ok
         engine_name = shot.engine.value if shot.engine else "?"
@@ -466,6 +532,30 @@ class PipelineNodes:
                 extra={"shot_id": shot.shot_id, "error": str(exc)[:200]},
             )
 
+        signatures = _frame_signatures(frames)
+        previous_signatures = (state.get("frame_signatures") or {}).get(shot.shot_id)
+        previous_feedback = (state.get("feedback") or {}).get(shot.shot_id)
+        if (
+            attempt > 1
+            and signatures
+            and signatures == previous_signatures
+            and isinstance(previous_feedback, CriticFeedback)
+            and not previous_feedback.passed
+            and previous_feedback.source is FeedbackSource.VLM
+        ):
+            reason = (
+                "新旧审查抽帧逐张完全相同，源码改动没有产生可见效果；"
+                "请重做反馈所指阶段的画面结构，不要只微调参数"
+            )
+            return {
+                "render_error": reason,
+                "route_hint": HINT_RETRY,
+                "events": [make_event(
+                    state, node=NODE_RENDER, shot=shot, attempt=attempt,
+                    message=reason + "，已跳过重复视觉审查", status="RETRYING",
+                )],
+            }
+
         # 节奏检查：把"画面有没有贯穿整段时长都在变"**算出来**。
         #
         # 为什么要算而不是只靠 VLM 看：实测一条 22.83 秒的镜头动画演到约 30% 处
@@ -578,7 +668,7 @@ class PipelineNodes:
         if motion_report.ok:
             motion_reports.pop(shot.shot_id, None)
         else:
-            motion_reports[shot.shot_id] = motion_report.summary()
+            motion_reports[shot.shot_id] = _motion_feedback(motion_report, shot)
             events.append(
                 make_event(
                     state, node=NODE_RENDER,
@@ -605,6 +695,7 @@ class PipelineNodes:
 
         return {
             "artifacts": artifacts,
+            "frame_signatures": {**(state.get("frame_signatures") or {}), shot.shot_id: signatures},
             "motion_reports": motion_reports,
             "render_error": "",
             "route_hint": HINT_CRITIQUE,
@@ -722,7 +813,18 @@ class PipelineNodes:
         )
 
         feedback_map = dict(state.get("feedback") or {})
+        previous_feedback = feedback_map.get(shot.shot_id)
         feedback_map[shot.shot_id] = outcome.feedback
+        stagnation = dict(state.get("revision_stagnation") or {})
+        stagnated = _same_unresolved_feedback(previous_feedback, outcome.feedback)
+        if stagnated:
+            stagnation[shot.shot_id] = (
+                "连续两轮审查提出相同问题且得分没有明显提升。"
+                "下一版必须重构相关画面元素或阶段，让指定问题在抽帧中可见地消失；"
+                "不要重复微调字号、时长或颜色等未解决问题的参数。"
+            )
+        else:
+            stagnation.pop(shot.shot_id, None)
 
         # 记录本镜头的历次得分，供 revise 判断"重做到底有没有让画面变好"。
         # 只留最后一次的 feedback 不足以判断趋势 —— 而趋势正是"该不该继续重试"
@@ -740,6 +842,8 @@ class PipelineNodes:
             hint, status = HINT_RETRY, "REJECTED"
             first = outcome.feedback.suggestions[0] if outcome.feedback.suggestions else ""
             message = f"审查未通过（{outcome.feedback.score:.2f}）：{first[:120]}"
+            if stagnated:
+                message += "；连续两轮问题相同且无明显提升，下一轮须重构相关画面"
 
         logger.info(
             "critique 完成",
@@ -751,6 +855,7 @@ class PipelineNodes:
         )
         return {
             "feedback": feedback_map,
+            "revision_stagnation": stagnation,
             "score_history": history_map,
             "route_hint": hint,
             "events": [
@@ -1038,9 +1143,18 @@ def _collect_feedback(state: PipelineState, shot_id: str) -> str:
     if motion:
         parts.append(motion)
 
+    stagnation = (state.get("revision_stagnation") or {}).get(shot_id)
+    if stagnation:
+        parts.append(f"【重复审查无进展】\n{stagnation}")
+
     render_error = (state.get("render_error") or "").strip()
     if render_error:
-        parts.append(f"【上一次渲染的技术错误】\n{render_error[:1200]}")
+        heading = (
+            "【无效重做反馈】"
+            if render_error.startswith(("新源码与上一轮", "新旧审查抽帧"))
+            else "【上一次渲染的技术错误】"
+        )
+        parts.append(f"{heading}\n{render_error[:1200]}")
 
     return "\n\n".join(parts)
 

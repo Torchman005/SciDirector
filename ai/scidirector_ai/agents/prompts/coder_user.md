@@ -9,6 +9,7 @@
 - 目标时长：{{duration_sec}} 秒
 - 画外音：{{narration}}
 - 视觉意图：{{visual_brief}}
+- 画面节拍（只描述先后顺序，不是绝对时间）：{{beats}}
 - 检索关键词：{{keywords}}
 
 ## 风格约束
@@ -27,7 +28,7 @@
 
 <!--
 模板变量（由 CoderAgent 注入）：index / tag / engine / duration_sec / narration /
-visual_brief / keywords / style_guide / examples / feedback_block
+visual_brief / beats / keywords / style_guide / examples / feedback_block
 
 **这份清单刻意不写成占位符形式。** 渲染器替换的是双花括号包起来的名字，
 而清单若也那样写，就会被**真的替换一遍** —— 于是 feedback_block（含完整的

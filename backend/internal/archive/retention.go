@@ -121,7 +121,7 @@ func inferKind(path string) ObjectKind {
 		return KindSubtitle
 	case ext == ".png":
 		return KindFrame
-	case strings.Contains(slash, "/normalized/"):
+	case strings.Contains(slash, "/normalized/") || strings.Contains(slash, "/transition_pieces/"):
 		return KindNormalized
 	case strings.HasSuffix(dir, "frames"):
 		return KindFrame

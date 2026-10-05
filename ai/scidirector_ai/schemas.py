@@ -131,6 +131,8 @@ class ShotSpec(BaseModel):
     engine: RenderEngine | None = Field(default=None, description="目标渲染引擎；留空则按标签推导")
     duration_sec: float = Field(default=5.0, gt=0, le=600, description="目标时长（秒）")
     keywords: list[str] = Field(default_factory=list, description="检索关键词")
+    #: 画面内容的顺序节拍，不带绝对时间，避免后续时长修复后失真。
+    beats: list[str] = Field(default_factory=list, description="画面阶段的顺序描述")
     code: str = Field(default="", description="当前版本的渲染源码")
     language: str = Field(default="", description="源码语言：python / html+js")
     meta: dict[str, str] = Field(default_factory=dict, description="扩展位，禁止放二进制")
@@ -180,6 +182,7 @@ class CriticFeedback(BaseModel):
         default_factory=list,
         description="【必须可执行】例如「字号 24 -> 48」；禁止「画面不好看」这类不可执行意见",
     )
+    fatal_issues: list[str] = Field(default_factory=list, description="可核对的致命问题")
     raw_response: str = ""
     model: str = ""
     source: FeedbackSource = FeedbackSource.VLM

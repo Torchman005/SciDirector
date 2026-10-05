@@ -847,23 +847,27 @@ func (r *Runner) BuildNarrationTrack(ctx context.Context, parts []NarrationPart,
 		return fmt.Errorf("media: 创建配音轨目录失败: %w", err)
 	}
 
-	segPaths := make([]string, 0, len(parts))
+	segPaths := make([]string, len(parts))
 	for i, part := range parts {
 		if part.TargetSec <= 0 {
 			return fmt.Errorf("media: 第 %d 段配音的目标时长必须为正，实际 %.3f", i, part.TargetSec)
 		}
-		seg := filepath.Join(workDir, fmt.Sprintf("narration_%03d.m4a", i))
-
+		segPaths[i] = filepath.Join(workDir, fmt.Sprintf("narration_%03d.m4a", i))
+	}
+	if err := NewPool(r.MaxParallel()).Run(ctx, len(parts), func(ctx context.Context, i int) error {
+		part := parts[i]
 		var err error
 		if strings.TrimSpace(part.AudioPath) == "" {
-			err = r.buildSilentSegment(ctx, part.TargetSec, seg)
+			err = r.buildSilentSegment(ctx, part.TargetSec, segPaths[i])
 		} else {
-			err = r.buildNarrationSegment(ctx, part.AudioPath, part.TargetSec, seg)
+			err = r.buildNarrationSegment(ctx, part.AudioPath, part.TargetSec, segPaths[i])
 		}
 		if err != nil {
 			return fmt.Errorf("media: 生成第 %d 段配音失败: %w", i, err)
 		}
-		segPaths = append(segPaths, seg)
+		return nil
+	}); err != nil {
+		return err
 	}
 
 	listPath := filepath.Join(workDir, "narration.txt")

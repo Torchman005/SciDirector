@@ -214,6 +214,21 @@ export function deriveStat(state: StreamState): JobStat {
   return stat
 }
 
+/** Review conversion is measured over shots actually seen by the VLM. */
+export function deriveReviewSummary(state: StreamState) {
+  const shots = shotsOf(state.job)
+  const reviewed = shots.filter((shot) => shot.feedbacks?.some((feedback) => feedback.source === 'VLM'))
+  const approved = reviewed.filter((shot) =>
+    [...(shot.feedbacks ?? [])].reverse().find((feedback) => feedback.source === 'VLM')?.passed,
+  ).length
+  return {
+    reviewed: reviewed.length,
+    approved,
+    unreviewed: shots.length - reviewed.length,
+    passRate: reviewed.length ? Math.round(approved / reviewed.length * 100) : null,
+  }
+}
+
 /** 熔断待人工处理的镜头。这是审核台最需要被看见的一组。 */
 export function shotsAwaitingHuman(state: StreamState) {
   return shotsOf(state.job).filter((s) => s.status === 'AWAITING_HUMAN')

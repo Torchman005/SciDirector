@@ -338,7 +338,10 @@ class CoderAgent(Agent):
             feedback_block = f"## {header}\n\n{feedback_text.strip()}\n"
             if previous_code:
                 feedback_block += (
-                    "\n**上一版代码（供参考，不要原样输出）**\n"
+                    "\n**上一版代码（以此为基础修改）**\n"
+                    "保留已正确的部分，逐条落实反馈。若反馈指出画面或节奏没有改善，"
+                    "必须改变对应元素或阶段的可见状态；只改注释、变量名或微调无关参数不算修复。"
+                    "输出完整的新代码，不要原样返回上一版。\n"
                     f"```\n{_clip_code_for_prompt(previous_code)}\n```\n"
                 )
 
@@ -351,6 +354,7 @@ class CoderAgent(Agent):
             narration=shot.narration or "（无画外音）",
             visual_brief=shot.visual_brief or "（无明确视觉意图，请按标签给出合理画面）",
             keywords="、".join(shot.keywords) or "（无）",
+            beats=" → ".join(shot.beats) or "（无；请自行安排清晰的起承转合）",
             style_guide=style_guide_to_text(style_guide),
             examples=examples_text,
             feedback_block=feedback_block,
