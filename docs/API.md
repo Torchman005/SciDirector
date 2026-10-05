@@ -673,6 +673,7 @@ Go 侧 `worker.syncShotsFromPayload` 解析它并**整体替换**任务的分镜
 模型自报的否决只有通过 `fatal_issues` 或有效 `blocking` 修复任务定位到具体画面证据才生效。
 一般审美建议标为 `advisory`，不单独打回。每轮选最多 3 项；完整清单随反馈持久化。
 判负但缺少定位、证据或验收条件时，仅补充一次意见，仍无有效任务则转人工。
+复审时 `repair_results` 只在同一请求中引用该 task 的当前证据图且提供可核对说明时更新状态；原 `task_id` 与 `acceptance` 固定，未选中的任务不会消失。事件 `payload_json.repair_metrics` 记录本轮已关闭、未解决、失败计数和升级轮次；升级后仍失败的镜头转人工，并通过 `repair_handoff` 返回完整未解决清单、证据和分类策略。
 
 VLM 不可用时**降级为转人工**（`degraded=true`），而不是伪造「通过」。
 

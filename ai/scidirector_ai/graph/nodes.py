@@ -32,6 +32,7 @@ from typing import Any
 from ..agents.coder import CoderAgent
 from ..agents.critic import CriticAgent
 from ..agents.director import DirectorAgent
+from ..agents.base import render_prompt
 from ..config import Settings, browser_ready
 from ..llm import LLMClient, LLMError
 from ..logging import get_logger
@@ -43,7 +44,8 @@ from ..media import (
     extract_frames_with_times,
 )
 from ..pbconv import shots_payload_json
-from ..review_tasks import format_repairs, merge_repairs
+from ..review_tasks import (format_repairs, merge_repairs, active_repairs,
+                            update_repair_progress, REPAIR_STRATEGIES)
 from ..repair_evidence import precheck_repairs, skip_full_review
 from ..renderer import LLM_ENGINES, Renderer, RendererError, RenderRequest, build_renderer
 from ..sandbox.runner import SandboxRunner
@@ -366,7 +368,7 @@ class PipelineNodes:
             and isinstance(prior_feedback, CriticFeedback)
             and not prior_feedback.passed
             and prior_feedback.source is FeedbackSource.VLM
-            and (not prior_error or prior_error.startswith(("新源码与上一轮", "新旧审查抽帧")))
+            and (not prior_error or prior_error.startswith(("新源码与上一轮", "新旧审查抽帧", "本轮修复任务")))
         ):
             reason = "新源码与上一轮逐字相同，画面不会改善；请重构反馈指出的画面阶段或元素"
             return {
@@ -897,6 +899,7 @@ class PipelineNodes:
                     state, node=NODE_CRITIQUE, message=message, status=status,
                     shot=shot, attempt=attempt, feedback=outcome.feedback,
                     artifact=artifact,
+                    payload_json=_repair_metrics(state, shot.shot_id, outcome.feedback, previous_feedback),
                 )
             ],
             "total_tokens": self.deps.llm.usage.total_tokens,
@@ -974,6 +977,35 @@ class PipelineNodes:
         #     镜头（例如 0.6 上下波动）仍有靠下一轮翻盘的可能，不该被掐掉。
         # 只满足"没进步"就熔断会把"0.55→0.58→0.95"这类慢热镜头误杀。
         history = list((state.get("score_history") or {}).get(shot.shot_id) or [])
+        if active_repairs(feedback):
+            progress, escalations, exhausted = update_repair_progress(
+                feedback, (state.get("repair_progress") or {}).get(shot.shot_id, {}), attempt, max_attempts)
+            progress_map = {**(state.get("repair_progress") or {}), shot.shot_id: progress}
+            if exhausted or attempt >= max_attempts:
+                reason = "策略升级后问题仍未解决" if exhausted else f"已尝试 {attempt} 次仍未通过"
+                return {
+                    "repair_progress": progress_map, "route_hint": HINT_HUMAN,
+                    "events": [make_event(state, node=NODE_REVISE, shot=shot, attempt=attempt,
+                        message=reason + "，转人工处理；未解决：" + "、".join(t.task_id for t in active_repairs(feedback)),
+                        status="AWAITING_HUMAN", feedback=feedback,
+                        artifact=(state.get("artifacts") or {}).get(shot.shot_id),
+                        payload_json=_repair_metrics(state, shot.shot_id, feedback, progress=progress,
+                                                     handoff=True))],
+                }
+            stagnation = dict(state.get("revision_stagnation") or {})
+            if escalations:
+                strategies = "\n".join(f"- [{t.task_id}] {REPAIR_STRATEGIES[t.category]}；验收：{t.acceptance}"
+                                       for t in escalations)
+                stagnation[shot.shot_id] = render_prompt("repair_escalation", strategies=strategies)
+            return {
+                "repair_progress": progress_map, "revision_stagnation": stagnation,
+                "route_hint": HINT_RETRY,
+                "events": [make_event(state, node=NODE_REVISE, shot=shot, attempt=attempt,
+                    message=("连续无改善，升级修复策略：" + "、".join(t.task_id for t in escalations)
+                             if escalations else f"按问题验收结果重做（第 {attempt + 1}/{max_attempts} 次）"),
+                    status="RETRYING", payload_json=_repair_metrics(state, shot.shot_id, feedback,
+                                                                    progress=progress))],
+            }
         if len(history) >= 2:
             latest = history[-1]
             best_before = max(history[:-1])
@@ -1188,12 +1220,35 @@ def _collect_feedback(state: PipelineState, shot_id: str) -> str:
     if render_error:
         heading = (
             "【无效重做反馈】"
-            if render_error.startswith(("新源码与上一轮", "新旧审查抽帧"))
+            if render_error.startswith(("新源码与上一轮", "新旧审查抽帧", "本轮修复任务"))
             else "【上一次渲染的技术错误】"
         )
         parts.append(f"{heading}\n{render_error[:1200]}")
 
     return "\n\n".join(parts)
+
+
+def _repair_metrics(
+    state: PipelineState, shot_id: str, feedback: CriticFeedback,
+    previous: CriticFeedback | None = None, *, progress: dict[str, Any] | None = None,
+    handoff: bool = False,
+) -> str:
+    old_resolved = {t.task_id for t in previous.repair_tasks if t.status == "resolved"} if previous else set()
+    resolved = [t.task_id for t in feedback.repair_tasks if t.status == "resolved"]
+    unresolved = [t for t in feedback.repair_tasks if t.status != "resolved" and t.severity != "advisory"]
+    payload = {"repair_metrics": {
+        "attempt": shot_attempt(state, shot_id), "resolved_ids": resolved,
+        "newly_resolved_ids": [i for i in resolved if i not in old_resolved],
+        "unresolved_ids": [t.task_id for t in unresolved],
+        "progress": progress or (state.get("repair_progress") or {}).get(shot_id, {}),
+    }}
+    if handoff:
+        payload["repair_handoff"] = {
+            "unresolved_tasks": [t.model_dump() for t in unresolved],
+            "evidence": (state.get("repair_prechecks") or {}).get(shot_id, []),
+            "suggested_strategies": {t.task_id: REPAIR_STRATEGIES[t.category] for t in unresolved},
+        }
+    return json.dumps(payload, ensure_ascii=False)
 
 
 def _code_patch(shot_id: str, code: str, language: str) -> str:

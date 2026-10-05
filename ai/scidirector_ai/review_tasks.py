@@ -9,7 +9,38 @@ from .schemas import CriticFeedback, RepairTask
 
 # A small repair batch keeps the coder focused and makes each review measurable.
 MAX_REPAIRS_PER_ROUND = 3
+FAILURES_BEFORE_ESCALATION = 2
 SEVERITY_ORDER = {"blocking": 0, "major": 1, "advisory": 2}
+REPAIR_STRATEGIES = {
+    "logic": "重构解释顺序与图示关系，先呈现前提，再展示推导与结论，逐项核对旁白",
+    "readability": "重新分配文字区域，减少同屏文字并提高主次对比，避免反复只微调字号",
+    "layout": "重新布局相关对象，为标签预留独立空间，消除重叠和裁切",
+    "pacing": "把问题时段拆成连续可见的讲解阶段，按旁白顺序逐段推进，避免只延长等待",
+    "rendering": "简化问题元素的实现，替换不可靠资源或效果，先保证关键内容正确可见",
+}
+
+
+def update_repair_progress(
+    feedback: CriticFeedback | None, progress: dict[str, Any], attempt: int, max_attempts: int,
+) -> tuple[dict[str, Any], list[RepairTask], bool]:
+    """Count once per attempt and grant at most one escalation before human handoff."""
+    updated = {k: dict(v) for k, v in progress.items()}
+    selected = active_repairs(feedback)
+    escalations = []
+    exhausted = False
+    for task in selected:
+        row = updated.setdefault(task.task_id, {"failures": 0, "last_attempt": 0, "escalated_at": 0})
+        if row["last_attempt"] < attempt:
+            # A first partial resolution earns time; repeated partial claims are not endless progress.
+            improved = task.status == "partial" and row.get("last_status") != "partial"
+            row["failures"] = 0 if improved else row["failures"] + 1
+            row["last_attempt"], row["last_status"] = attempt, task.status
+        if row["escalated_at"] and attempt >= row["escalated_at"] and row["failures"] >= FAILURES_BEFORE_ESCALATION:
+            exhausted = True
+        elif row["failures"] >= FAILURES_BEFORE_ESCALATION and attempt < max_attempts and not row["escalated_at"]:
+            row["escalated_at"] = attempt + 1
+            escalations.append(task)
+    return updated, escalations, exhausted
 
 
 def _identity(task: RepairTask) -> tuple[str, str, str]:

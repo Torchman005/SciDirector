@@ -113,6 +113,7 @@ class PipelineState(TypedDict, total=False):
     revision_stagnation: dict[str, str]
     review_samples: dict[str, list[dict[str, Any]]]
     repair_prechecks: dict[str, list[dict[str, Any]]]
+    repair_progress: dict[str, dict[str, Any]]
 
     # ------------------------------------------------------------------
     # 事件与统计（用 reducer 累加，允许并发节点合并写入）
@@ -152,6 +153,7 @@ class ParallelPipelineState(PipelineState, total=False):
     revision_stagnation: Annotated[dict[str, str], merge_by_shot]
     review_samples: Annotated[dict[str, list[dict[str, Any]]], merge_by_shot]
     repair_prechecks: Annotated[dict[str, list[dict[str, Any]]], merge_by_shot]
+    repair_progress: Annotated[dict[str, dict[str, Any]], merge_by_shot]
     shot_updates: Annotated[dict[str, ShotSpec], merge_by_shot]
 
 
@@ -192,6 +194,7 @@ def initial_state(
         revision_stagnation={},
         review_samples={},
         repair_prechecks={},
+        repair_progress={},
         shot_updates={},
         route_hint="",
         events=[],

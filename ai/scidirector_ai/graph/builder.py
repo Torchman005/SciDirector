@@ -176,6 +176,7 @@ def build_parallel_graph(deps: PipelineDeps, checkpointer: Any = None, paralleli
             "revision_stagnation": {},
             "review_samples": {},
             "repair_prechecks": {},
+            "repair_progress": {},
             "events": [],
             "current_code": shot.code,
             "current_language": shot.language,
@@ -209,6 +210,7 @@ def build_parallel_graph(deps: PipelineDeps, checkpointer: Any = None, paralleli
             "revision_stagnation": local.get("revision_stagnation") or {},
             "review_samples": local.get("review_samples") or {},
             "repair_prechecks": local.get("repair_prechecks") or {},
+            "repair_progress": local.get("repair_progress") or {},
             "events": local.get("events") or [],
         }
 

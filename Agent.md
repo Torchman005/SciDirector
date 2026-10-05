@@ -240,6 +240,7 @@ SciDirector/
 每轮按严重度选择最多 3 项修复，保留完整清单和旧字段。判负意见缺少有效定位时仅补充一次，仍无有效目标则转人工，禁止伪造证据启动渲染；有证据的 blocking 问题可以否决高分镜头。
 每次渲染写入独立 `attempt_NN` 目录，checkpoint 按镜头保存实际抽帧时间和修复预验证结果。预验证对齐旧时间点并按可选区域比较；缺失证据为 unverified。仅定位到相同完整帧的可读性问题全部没有变化时跳过完整审核；节奏、逻辑、局部区域变化仍需语义复核，像素变化不能代表修复通过。
 复审在同一次 VLM 调用中提供当前完整帧与选中问题的前后证据对。内部 `repair_results` 必须引用该问题对应的当前证据图，才允许更新 status；原 task_id、acceptance 和定位不随模型重写。完整 repair_tasks 清单保留已解决及未选中项，未解决的 blocking/major 项禁止放行；VLM 故障也不丢失清单。
+结构化任务按编号记录失败次数与升级轮次（每 attempt 只计一次，checkpoint/并行镜头隔离）。连续两轮无改善且预算有余时升级一次分类策略；升级后仍未解决则提前转人工，保持原重试上限。首次 partial 结论可重置连续失败，重复 partial 不无限续命。事件 payload_json 的 repair_metrics 提供关闭/未关闭编号和进展；repair_handoff 附未解决清单、对比证据和分类建议。旧无清单路径保留原分数熔断。
 ```
 plan → for each shot:
          coder → render → critic
