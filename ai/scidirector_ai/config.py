@@ -271,6 +271,8 @@ class Settings(BaseSettings):
     coder_preflight_enabled: bool = True
     #: HTML 默认生成场景规格；code 是特殊镜头/旧自由代码的显式出口。
     coder_scene_mode: Literal["structured", "code"] = "structured"
+    #: 场景对象及关键帧比审核意见长；独立预算避免被通用 4096 token 截断。
+    coder_scene_max_tokens: int = Field(default=8192, ge=256, le=128_000)
     #: 送审抽帧的缩放宽度（像素）。
     #:
     #: **这个值必须同时告诉审查智能体**，否则会出现一个很隐蔽的单位错配：
@@ -444,6 +446,7 @@ class Settings(BaseSettings):
             "manim_max_memory_mb": self.manim_max_memory_mb,
             "manim_quality": self.sandbox_manim_quality,
             "critic_score_threshold": self.critic_score_threshold,
+            "coder_scene_max_tokens": self.coder_scene_max_tokens,
         }
 
 

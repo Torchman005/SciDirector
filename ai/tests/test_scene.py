@@ -139,7 +139,16 @@ def test_revision_sends_ir_and_feedback_without_runtime() -> None:
     user = llm.calls[0]["user"]
     assert "headline" in user and "R1" in user and "首稿清晰" in user
     assert "document.createElement" not in user and "scid-scene-v1" not in user
+    assert '"dx":0' not in user and '"data":[]' not in user
     assert extract_scene(result.code).elements[0].text == "清晰的修订"
+
+
+def test_scene_uses_independent_configured_output_budget() -> None:
+    llm = Stub([spec()])
+    settings = Settings(env="test", llm_provider="mock", llm_max_tokens=4096, coder_scene_max_tokens=7000)
+    result = CoderAgent(llm, settings, quality_checker=Checker()).generate(
+        shot=ShotSpec(tag=SceneTag.MOTION), style_guide=StyleGuide())
+    assert result.policy_ok and llm.calls[0]["max_tokens"] == 7000
 
 
 def test_schema_layout_and_browser_share_one_repair_budget() -> None:
@@ -151,6 +160,7 @@ def test_schema_layout_and_browser_share_one_repair_budget() -> None:
     assert len(llm.calls) == 2 and len(checker.calls) == 1
     assert "id 重复" in llm.calls[1]["user"] and '{"elements":[]}' in llm.calls[1]["user"]
     assert all(c["task"] == Task.SCENE for c in llm.calls)
+    assert "场景生成已尝试 2 次" in result.policy_summary
 
 
 def test_legacy_html_envelope_from_scene_provider_still_renders() -> None:

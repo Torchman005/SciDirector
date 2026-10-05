@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from pydantic import BaseModel, Field
 
 from ..config import Settings, get_settings
-from ..llm import LLMClient, LLMError, LLMParseError, Task
+from ..llm import LLMClient, LLMError, LLMParseError, Task, extract_json
 from ..logging import get_logger
 from ..generation_quality import BrowserPreflight, QualityChecker, QualityResult, check_manim_structure, production_brief
 from ..rag import FewShot, FewShotRetriever, build_retriever
@@ -264,13 +264,14 @@ class CoderAgent(Agent):
                              narration=shot.narration, visual_brief=shot.visual_brief,
                              production_brief=production_brief(shot, style, self.settings),
                              style_guide=style_guide_to_text(style), feedback=feedback or "（首稿）",
-                             previous_scene=previous.model_dump_json() if previous else "（无）")
+                             previous_scene=previous.model_dump_json(exclude_defaults=True) if previous else "（无）")
         result = CodeGenerationResult(artifact=CodeArtifact(language="html+js"), policy_ok=False)
         for count in range(1, MAX_POLICY_REPAIRS + 2):
             result.llm_attempts = count
             scene: SceneSpec | None = None
             try:
-                parsed = self.llm.chat_json(system, user, SceneSpec, task=Task.SCENE, max_parse_attempts=1)
+                parsed = self.llm.chat_json(system, user, SceneSpec, task=Task.SCENE,
+                                           max_tokens=self.settings.coder_scene_max_tokens, max_parse_attempts=1)
                 scene = SceneSpec.model_validate(parsed.model_dump())
                 code = compile_scene(scene, width=self.settings.render_width, height=self.settings.render_height,
                                      duration=shot.duration_sec, style=style)
@@ -280,14 +281,14 @@ class CoderAgent(Agent):
                 result.policy_ok = not result.quality.issues
                 if result.policy_ok:
                     return result
-                invalid = scene.model_dump_json()
+                invalid = scene.model_dump_json(exclude_defaults=True)
             except LLMParseError as exc:
                 # A provider may ignore the scene schema and return the historical
                 # {code, language, explanation} envelope. Preserve that explicit
                 # legacy output, but still run the normal HTML contract and preflight.
                 try:
-                    legacy = _RawCode.model_validate(json.loads(exc.raw_response))
-                except (TypeError, ValueError, json.JSONDecodeError):
+                    legacy = _RawCode.model_validate(extract_json(exc.raw_response))
+                except (TypeError, ValueError, LLMParseError):
                     legacy = None
                 if legacy is not None and legacy.code.strip():
                     artifact = CodeArtifact(code=legacy.code, language="html+js", explanation=legacy.explanation)
@@ -305,12 +306,13 @@ class CoderAgent(Agent):
                 invalid = exc.raw_response
             except ValueError as exc:
                 result.policy_summary = str(exc)
-                invalid = scene.model_dump_json() if scene else ""
+                invalid = scene.model_dump_json(exclude_defaults=True) if scene else ""
             if count <= MAX_POLICY_REPAIRS:
                 # Shared budget: schema, layout and browser failures get at most one
                 # new response in total; never fall back silently to free HTML.
                 user += ("\n\n生成内修复：只输出完整场景 JSON。保留已正确内容。\n"
                          + result.policy_summary + "\n上一份场景输出：\n" + _clip_code_for_prompt(invalid, what="场景规格"))
+        result.policy_summary = f"场景生成已尝试 {result.llm_attempts} 次，仍未通过；最后一次错误：{result.policy_summary}"
         logger.warning("结构化场景未通过生成门禁", extra={"shot_id": shot.shot_id,
                        "summary": result.policy_summary[:300], "attempt": attempt})
         return result

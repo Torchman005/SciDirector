@@ -19,6 +19,10 @@ color 只能 text/primary/muted 或 #RRGGBB；明暗色与用户风格一致。l
 
 keyframes 最多 24 个，time 为秒数 / {{duration_sec}}，从 0 开始严格递增。
 每个关键帧是完整状态：opacity 默认 1、dx/dy 默认 0（归一化位移）、rotation 默认 0（度）、reveal 默认 1。
+输出必须紧凑：省略默认值字段（dx/dy/rotation=0、opacity/reveal=1、easing=smooth、空 data/unit/text、arrow=false）。
+省略字段由系统恢复默认，不继承前一帧；只有非默认状态必须在该帧写出。静止元素省略 keyframes。
+通常每元素 2～6 个关键帧足够，只有运动方向或阶段改变时增加；不要复制相同状态堆满 24 帧。
+保留必要内容和全部对象，explanation 简述阶段、布局、来源和修复即可，不复述整份 JSON。
 reveal 仅影响 code 打字、bars 生长；其他组件不要用它。文字和图表不能旋转。
 easing 为 linear/smooth/step，描述到达当前关键帧的插值方式；step 在该时间点切换。
 不提供 keyframes 表示静止，最后一个关键帧之后定格。关键帧可在 1 结束，编译器会自动预留 min(0.5秒,总时长10%) 的完成态停留。

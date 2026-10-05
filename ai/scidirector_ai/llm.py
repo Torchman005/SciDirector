@@ -106,7 +106,7 @@ def extract_json(text: str) -> Any:
     模型几乎一定会加解释性前后缀或 markdown 代码块，因此按以下顺序尝试：
     1. 直接 ``json.loads``（最理想的情况）；
     2. 提取 ``` 代码块内容；
-    3. 截取第一个 ``{`` 到最后一个 ``}``（或 ``[`` 到 ``]``）。
+    3. 从首个对象/数组边界解码一个完整顶层值，忽略解释性后缀。
 
     三次都失败才抛 ``LLMParseError``，并保留原文供排查与提示词迭代。
     """
@@ -118,13 +118,6 @@ def extract_json(text: str) -> Any:
     for block in _JSON_BLOCK.findall(text):
         candidates.append(block.strip())
 
-    stripped = text.strip()
-    for open_ch, close_ch in (("{", "}"), ("[", "]")):
-        start = stripped.find(open_ch)
-        end = stripped.rfind(close_ch)
-        if start != -1 and end > start:
-            candidates.append(stripped[start : end + 1])
-
     last_error: Exception | None = None
     for candidate in candidates:
         if not candidate:
@@ -135,7 +128,18 @@ def extract_json(text: str) -> Any:
             last_error = exc
             continue
 
-    raise LLMParseError(f"无法从模型输出中解析 JSON：{last_error}；原文前 500 字：{text[:500]}")
+    # Never salvage an inner array from a truncated outer object. That hid the
+    # original syntax error as "SceneSpec received list" in production.
+    start = re.search(r"[\[{]", text)
+    if start:
+        try:
+            value, _ = json.JSONDecoder().raw_decode(text[start.start():])
+            return value
+        except json.JSONDecodeError as exc:
+            last_error = exc
+
+    raise LLMParseError(f"无法从模型输出中解析 JSON：{last_error}；原文前 500 字：{text[:500]}",
+                        raw_response=text)
 
 
 def encode_image(path: str) -> tuple[str, str]:
@@ -321,22 +325,25 @@ class LLMClient:
 
         while attempt < max_parse_attempts:
             attempt += 1
-            raw = self._call(
-                messages=[
-                    Message(role="system", text=system),
-                    Message(role="user", text=base_user, images=list(images)),
-                ],
-                model=model_name,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                json_mode=True,
-                task=task,
-                role=role,
-            )
+            raw = ""
             try:
+                raw = self._call(
+                    messages=[
+                        Message(role="system", text=system),
+                        Message(role="user", text=base_user, images=list(images)),
+                    ],
+                    model=model_name,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    json_mode=True,
+                    task=task,
+                    role=role,
+                )
                 payload = extract_json(raw)
                 return _validate(schema, payload)
             except (LLMParseError, ValidationError, ValueError) as exc:
+                if isinstance(exc, LLMParseError) and exc.raw_response:
+                    raw = exc.raw_response
                 last_error = exc
                 logger.warning(
                     "模型输出解析失败，准备重试",
@@ -348,7 +355,7 @@ class LLMClient:
                     f"【上一次输出无法解析，错误信息如下，请严格按要求输出 JSON】\n{exc}"
                 )
 
-        raise LLMParseError(f"模型输出连续 {max_parse_attempts} 次无法解析：{last_error}", raw_response=raw)
+        raise LLMParseError(f"模型输出解析/校验失败（本次调用已尝试 {attempt} 次）：{last_error}", raw_response=raw)
 
     def vision_json(
         self,
@@ -441,6 +448,7 @@ class LLMClient:
                 resp = client.chat.completions.create(**body)
                 elapsed = time.monotonic() - start
                 content = (resp.choices[0].message.content or "").strip()
+                finish_reason = getattr(resp.choices[0], "finish_reason", None)
 
                 usage = getattr(resp, "usage", None)
                 if usage is not None:
@@ -455,12 +463,25 @@ class LLMClient:
                         "model": model,
                         "elapsed_sec": round(elapsed, 3),
                         "total_tokens": self.usage.total_tokens,
+                        "finish_reason": finish_reason,
+                        "output_chars": len(content),
+                        "max_tokens": body["max_tokens"],
                     },
                 )
+                if json_mode and finish_reason == "length":
+                    # This is a response defect, not a transport error. The caller's
+                    # existing parse/scene repair budget handles it once with feedback.
+                    raise LLMParseError(
+                        f"模型输出被截断（finish_reason=length，max_tokens={body['max_tokens']}，"
+                        f"返回 {len(content)} 字符）；请省略默认字段、减少冗余关键帧并输出完整 JSON",
+                        raw_response=content,
+                    )
                 if not content:
                     raise LLMError("模型返回空内容")
                 return content
 
+            except LLMParseError:
+                raise
             except Exception as exc:  # noqa: BLE001 - 需要兜住 SDK 的各种异常类型
                 last_error = exc
                 if _is_permanent_error(exc):

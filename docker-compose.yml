@@ -91,6 +91,7 @@ x-common-env: &common-env
   SCID_CHROME: ${SCID_CHROME:-}
   SCID_CODER_PREFLIGHT_ENABLED: ${SCID_CODER_PREFLIGHT_ENABLED:-true}
   SCID_CODER_SCENE_MODE: ${SCID_CODER_SCENE_MODE:-structured}
+  SCID_CODER_SCENE_MAX_TOKENS: ${SCID_CODER_SCENE_MAX_TOKENS:-8192}
   #
   # 在**容器里**启用沙盒的网络/只读隔离需要额外的容器配置：
   #   `unshare` 是 Docker 默认 seccomp 配置明确拦截的系统调用，容器内调用会得到
