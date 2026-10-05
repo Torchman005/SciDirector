@@ -110,6 +110,40 @@ def raw(**overrides: object) -> _RawCritique:
 
 
 class TestDecisionRules:
+    @pytest.mark.parametrize("pacing,expected_score", [(0.45, 0.70), (0.55, 0.72), (0.65, 0.74)])
+    def test_usable_shot_passes_relaxed_default_but_not_old_threshold(
+        self, shot: ShotSpec, monkeypatch: pytest.MonkeyPatch,
+        pacing: float, expected_score: float,
+    ) -> None:
+        monkeypatch.delenv("SCID_CRITIC_SCORE_THRESHOLD", raising=False)
+        settings = make_settings(_env_file=None)
+        critique = raw(passed=False, logic_score=0.8, readability_score=0.8,
+                       pacing_score=pacing, aesthetics_score=0.6,
+                       issues=["局部动效较弱，但核心内容完整可读"])
+        feedback, _ = CriticAgent(LLMClient(settings), settings)._decide(
+            critique, shot=shot, attempt=1,
+        )
+        assert settings.critic_score_threshold == 0.70
+        assert feedback.score == pytest.approx(expected_score)
+        assert feedback.passed and not feedback.suggestions
+
+        strict = make_settings(_env_file=None, critic_score_threshold=0.75)
+        strict_feedback, _ = CriticAgent(LLMClient(strict), strict)._decide(
+            critique, shot=shot, attempt=1,
+        )
+        assert not strict_feedback.passed
+
+    def test_relaxed_threshold_still_rejects_low_total_with_valid_dimensions(
+        self, shot: ShotSpec,
+    ) -> None:
+        settings = make_settings(critic_score_threshold=0.70)
+        feedback, passed = CriticAgent(LLMClient(settings), settings)._decide(
+            raw(logic_score=0.8, readability_score=0.8,
+                pacing_score=0.4, aesthetics_score=0.6), shot=shot, attempt=1,
+        )
+        assert feedback.score == pytest.approx(0.69)
+        assert not passed and not feedback.passed
+
     def test_good_shot_passes_without_suggestions(self, agent: CriticAgent, shot: ShotSpec) -> None:
         feedback, program_passed = agent._decide(raw(), shot=shot, attempt=1)
         assert program_passed is True

@@ -29,7 +29,7 @@ from scidirector_ai.schemas import CriticFeedback
 #: 新增占位符时必须同步在这里补上 —— 否则下面的"占位符全部解析"测试会失败，
 #: 这正是我们想要的效果：忘记补值时**立刻**被发现，而不是等运行时漏进提示词里。
 PLACEHOLDER_VALUES: dict[str, Any] = {
-    "threshold": "0.75",
+    "threshold": "0.70",
     "background_color": "#0B1020",
     "min_font_size": 36,
     # 容差下限：低于下限但仍在它的 90% 以内算"偏小但可读"，不判负。
@@ -106,7 +106,7 @@ class TestLoadability:
 
     def test_injected_values_actually_appear(self, critic_system_prompt: str) -> None:
         """注入的值必须真的出现在提示词里 —— 防止占位符写错名字后被静默忽略。"""
-        assert "0.75" in critic_system_prompt, "阈值未注入"
+        assert "0.70" in critic_system_prompt, "阈值未注入"
         assert "#0B1020" in critic_system_prompt, "背景色未注入"
         assert "36px" in critic_system_prompt, "字号下限未注入"
 
@@ -265,7 +265,7 @@ class TestSchemaAlignment:
         """加权公式的权重必须加起来等于 1。
 
         不等于 1 会怎样：总分被系统性放大或缩小，
-        阈值 0.75 的实际含义随之漂移，而这是**看不出来**的 ——
+        阈值 0.70 的实际含义随之漂移，而这是**看不出来**的 ——
         只会表现为"最近通过率莫名变高/变低"。
         """
         weights = [float(w) for w in re.findall(r"×\s*(0\.\d+)", critic_system_prompt)]
@@ -278,7 +278,7 @@ class TestSchemaAlignment:
         写死会怎样：配置里改了阈值，提示词里还是旧值，
         模型按旧阈值判断、程序按新阈值判定，两边规则不一致。
         """
-        assert "≥ 0.75" in critic_system_prompt
+        assert "≥ 0.70" in critic_system_prompt
 
     def test_user_template_keys_are_renderable(self) -> None:
         """用户模板引用的占位符必须都在样例值表里 —— 防止运行时漏传。"""
@@ -380,7 +380,7 @@ class TestRenderContractAndRoundConsistency:
 #: 那种错误在生产里表现为提示词里留着一个字面的 `{{duration_sec}}`，
 #: 而测试全绿。所以这里单独维护一份"生产真实值"。
 PRODUCTION_SYSTEM_VALUES: dict[str, Any] = {
-    "threshold": "0.75",
+    "threshold": "0.70",
     "background_color": "#0B1020",
     "min_font_size": 36,
     "min_font_size_tolerance": 32,

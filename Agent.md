@@ -243,7 +243,8 @@ Manim 路由保留。全局 `code` 或 `shot.meta.generation_mode=code` 为复�
 - 硬约束：`passed=false` 时**必须**至少给出 1 条**可执行**的 suggestion
   （例如 "字号从 24 提到 48"、"把 `Create` 的 run_time 从 0.5 提到 2.0"），
   禁止 "画面不好看" 这类不可执行意见。
-- 通过阈值：`score >= 0.75` 且 `critical_issues == 0`。
+- 默认通过阈值：`score >= 0.70`，且逻辑 ≥ 0.70、可读性 ≥ 0.60；有证据的 fatal_issues 与未关闭的 blocking/major 问题仍拦截。
+- 审查按可交付校准：轻微布局、配色、动效幅度和正常阅读停留仅记 advisory；首帧淡入不等于持续空白，不能凭缩略图猜字号判为不可读。
 
 ### 5.4 循环与熔断
 

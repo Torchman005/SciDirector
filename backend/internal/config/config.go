@@ -240,7 +240,7 @@ func Load() (*Config, error) {
 		},
 		Pipeline: PipelineConfig{
 			ShotMaxAttempts:      getInt("SCID_SHOT_MAX_ATTEMPTS", 3),
-			CriticScoreThreshold: getFloat("SCID_CRITIC_SCORE_THRESHOLD", 0.75),
+			CriticScoreThreshold: getFloat("SCID_CRITIC_SCORE_THRESHOLD", 0.70),
 		},
 		Obs: loadObservabilityConfig(),
 		Reconcile: ReconcileConfig{

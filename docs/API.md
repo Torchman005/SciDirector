@@ -670,7 +670,7 @@ Go 侧 `worker.syncShotsFromPayload` 解析它并**整体替换**任务的分镜
 ```
 
 `passed` 由程序加权分数、硬性下限和有证据的阻塞问题共同决定：
-分维度加权得分低于 `SCID_CRITIC_SCORE_THRESHOLD`（默认 0.75），
+分维度加权得分低于 `SCID_CRITIC_SCORE_THRESHOLD`（默认 0.70），
 或 `logic` / `readability` 跌破硬性下限，都会被程序改判为不通过 ——
 模型自报的否决只有通过 `fatal_issues` 或有效 `blocking` 修复任务定位到具体画面证据才生效。
 一般审美建议标为 `advisory`，不单独打回。每轮选最多 3 项；完整清单随反馈持久化。

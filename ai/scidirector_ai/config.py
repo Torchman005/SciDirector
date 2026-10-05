@@ -253,7 +253,9 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------
     # 审查阈值与熔断
     # ------------------------------------------------------------------
-    critic_score_threshold: float = Field(default=0.75, gt=0.0, le=1.0)
+    # Accept a usable shot with minor presentation defects; content/readability
+    # floors and evidenced blocking failures remain enforced by CriticAgent.
+    critic_score_threshold: float = Field(default=0.70, gt=0.0, le=1.0)
     shot_max_attempts: int = Field(default=3, ge=1, le=10)
     # 抽帧数量：覆盖整体节奏；实现上还会额外补首末帧。
     critic_frame_samples: int = Field(default=4, ge=2, le=12)
