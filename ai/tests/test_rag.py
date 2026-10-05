@@ -47,7 +47,7 @@ class TestShippedCorpus:
         范例是被模型**模仿**的；范例本身漏了契约，模型就会照抄一个
         渲染时静止的错误实现。
         """
-        html_engines = {"d3", "echarts", "code_anim"}
+        html_engines = {"d3", "echarts", "code_anim", "motion"}
         for item in load_corpus():
             if item.engine in html_engines:
                 assert "window.__seek" in item.code, f"{item.id} 缺少 window.__seek 契约"

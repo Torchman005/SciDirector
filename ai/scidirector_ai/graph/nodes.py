@@ -386,7 +386,7 @@ class PipelineNodes:
         message = (
             f"已生成 {engine_name} 代码（{len(result.code)} 字符，第 {attempt} 次尝试）"
             if ok
-            else f"生成的代码未通过静态检查：{result.policy_summary[:200]}"
+            else f"生成的代码未通过安全/质量检查：{result.policy_summary[:200]}"
         )
 
         # 把镜头写回列表。**无条件写回**（而不是只在有 overlay_text 时）：
@@ -411,7 +411,10 @@ class PipelineNodes:
                 shot=shot, attempt=attempt, error="" if ok else result.policy_summary[:500],
                 # 跨语言补丁：把生成的代码同步给 Go，
                 # 使 HITL 重做时能带着上一版代码重写。
-                payload_json=_code_patch(shot.shot_id, result.code, result.artifact.language),
+                payload_json=_code_patch(shot.shot_id, result.code, result.artifact.language,
+                                         generation_quality={"checked": result.quality.checked,
+                                             "issues": result.quality.issues, "warnings": result.quality.warnings,
+                                             "reason": result.quality.reason, "llm_attempts": result.llm_attempts}),
             )
         )
 
@@ -1251,15 +1254,18 @@ def _repair_metrics(
     return json.dumps(payload, ensure_ascii=False)
 
 
-def _code_patch(shot_id: str, code: str, language: str) -> str:
+def _code_patch(shot_id: str, code: str, language: str, *, generation_quality: dict[str, Any] | None = None) -> str:
     """生成跨语言状态补丁（Python -> Go）。
 
     约定见 docs/API.md：``payload_json`` 里的 ``patch`` 会被 Go 侧应用到对应镜头。
     这样 HITL 重做时，Go 手里的 shot 已经带着最新代码，
     ``ReviseShot`` 就能做"基于上一版修改"而不是"从零重写"。
     """
+    payload: dict[str, Any] = {"patch": {"shot_id": shot_id, "code": code, "language": language}}
+    if generation_quality is not None:
+        payload["generation_quality"] = generation_quality
     return json.dumps(
-        {"patch": {"shot_id": shot_id, "code": code, "language": language}},
+        payload,
         ensure_ascii=False,
     )
 

@@ -265,6 +265,8 @@ class Settings(BaseSettings):
     #: 只剩一条时模型容易退回自己的习惯写法（本项目在别处吃过"示例锚定"的亏）；
     #: 3 条则明显偏贵。
     rag_few_shot_k: int = Field(default=2, ge=0, le=7)
+    #: HTML 首稿在完整视频渲染前做 5 时刻实际布局/运行预检；整体 mock 不执行。
+    coder_preflight_enabled: bool = True
     #: 送审抽帧的缩放宽度（像素）。
     #:
     #: **这个值必须同时告诉审查智能体**，否则会出现一个很隐蔽的单位错配：

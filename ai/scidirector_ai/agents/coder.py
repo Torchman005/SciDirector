@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 from ..config import Settings, get_settings
 from ..llm import LLMClient, LLMError, LLMParseError, Task
 from ..logging import get_logger
+from ..generation_quality import BrowserPreflight, QualityChecker, QualityResult, check_manim_structure, production_brief
 from ..rag import FewShot, FewShotRetriever, build_retriever
 from ..renderer import LLM_ENGINES, check_html_contract
 from ..sandbox.policy import PolicyReport, PolicyViolation, check_source
@@ -91,6 +92,7 @@ class CodeGenerationResult:
     skipped_llm: bool = False
     #: 供上层构造事件/日志的标题（氛围镜头用）。
     overlay_text: str = ""
+    quality: QualityResult = field(default_factory=QualityResult)
 
     @property
     def code(self) -> str:
@@ -111,10 +113,12 @@ class CoderAgent(Agent):
         llm: LLMClient | None = None,
         settings: Settings | None = None,
         retriever: FewShotRetriever | None = None,
+        quality_checker: QualityChecker | None = None,
     ) -> None:
         super().__init__(llm)
         self.settings = settings or get_settings()
         self.retriever = retriever if retriever is not None else build_retriever(self.settings)
+        self.quality_checker: QualityChecker = quality_checker if quality_checker is not None else BrowserPreflight(self.settings)
 
     # ------------------------------------------------------------------
     # 主入口
@@ -149,8 +153,8 @@ class CoderAgent(Agent):
         # 降到 1 太狠：示例承担的是"输出格式与代码风格"的锚定，
         # 只剩一条时模型容易退回自己习惯的写法（本项目已在别处吃过
         # "示例锚定"的亏）。所以默认留在 2，需要更省再往下降。
-        k = int(getattr(self.settings, "rag_few_shot_k", 2) or 2)
-        examples = self.retriever.retrieve(shot, k=k)
+        k = self.settings.rag_few_shot_k
+        examples = [ex for ex in self.retriever.retrieve(shot, k=k) if ex.engine == engine]
         user_prompt = self._build_user_prompt(
             shot=shot,
             style_guide=style_guide,
@@ -171,18 +175,20 @@ class CoderAgent(Agent):
 
         artifact = self._call_model(engine, system_prompt, user_prompt)
         report = self._check(artifact, engine)
+        quality = self.quality_checker.check(artifact.code, shot, style_guide) if report.ok else QualityResult(reason="静态检查未通过，未执行预检")
 
         result = CodeGenerationResult(
             artifact=artifact,
-            policy_ok=report.ok,
-            policy_summary=report.summary(),
+            policy_ok=report.ok and not quality.issues,
+            policy_summary=report.summary() if not report.ok else "；".join(quality.issues) or report.summary(),
+            quality=quality,
             examples_used=[ex.id for ex in examples],
         )
 
-        # 静态检查失败 -> 把违规信息回灌给模型修复一次。
+        # Safety and visual preflight share one repair budget; never multiply model loops.
         if not result.policy_ok:
             logger.warning(
-                "生成的代码未通过静态检查，尝试自动修复",
+                "生成代码未通过安全/质量检查，尝试生成内修复",
                 extra={
                     "shot_id": shot.shot_id,
                     "engine": engine,
@@ -193,16 +199,19 @@ class CoderAgent(Agent):
             repaired = self._repair(
                 shot, style_guide, artifact, result.policy_summary, examples, system_prompt
             )
+            result.llm_attempts += 1
             if repaired is not None:
                 result.artifact = repaired
                 report2 = self._check(repaired, engine)
-                result.policy_ok = report2.ok
-                result.policy_summary = report2.summary()
-                result.llm_attempts += 1
+                result.quality = (self.quality_checker.check(repaired.code, shot, style_guide) if report2.ok
+                                  else QualityResult(reason="静态检查未通过，未执行预检"))
+                result.policy_ok = report2.ok and not result.quality.issues
+                result.policy_summary = (report2.summary() if not report2.ok
+                                         else "；".join(result.quality.issues) or report2.summary())
 
         if not result.policy_ok:
             logger.warning(
-                "代码在自动修复后仍未通过静态检查，交由流水线决定是否重试",
+                "代码在生成内修复后仍未通过安全/质量检查，交由流水线决定是否重试",
                 extra={
                     "shot_id": shot.shot_id,
                     "engine": engine,
@@ -219,6 +228,9 @@ class CoderAgent(Agent):
                     "code_bytes": len(result.code),
                     "examples": result.examples_used,
                     "llm_attempts": result.llm_attempts,
+                    "quality_checked": result.quality.checked,
+                    "quality_reason": result.quality.reason,
+                    "quality_warnings": result.quality.warnings,
                 },
             )
         return result
@@ -265,7 +277,8 @@ class CoderAgent(Agent):
         if not parsed.code.strip():
             raise LLMError(f"编码智能体返回了空代码（{engine}）")
         return CodeArtifact(
-            code=parsed.code, language=parsed.language, explanation=parsed.explanation
+            code=parsed.code, language="python" if engine == "manim" else "html+js",
+            explanation=parsed.explanation
         )
 
     def _repair(
@@ -291,7 +304,7 @@ class CoderAgent(Agent):
         # 又让"请重新输出完整代码"这句话与它看到的残缺内容自相矛盾。
         # 代码由 `_build_user_prompt` 统一注入，只此一处、且会显式标注截断。
         feedback = (
-            "【静态安全检查未通过，请修正下列问题后重新输出完整代码】\n"
+            "【静态安全检查未通过或首稿质量预检未通过，请按实际错误修正后重新输出完整代码】\n"
             f"{violations}"
         )
         user_prompt = self._build_user_prompt(
@@ -317,7 +330,10 @@ class CoderAgent(Agent):
         """
         if engine in _HTML_ENGINES:
             return check_html_contract(artifact.code)
-        return check_source(artifact.code)
+        report = check_source(artifact.code)
+        if report.ok:
+            report.violations.extend(check_manim_structure(artifact.code).violations)
+        return report
 
     def _build_user_prompt(
         self,
@@ -345,6 +361,7 @@ class CoderAgent(Agent):
                     f"```\n{_clip_code_for_prompt(previous_code)}\n```\n"
                 )
 
+        quality_brief = render_prompt("coder_quality", production_brief=production_brief(shot, style_guide, self.settings))
         return render_prompt(
             "coder_user",
             index=shot.index,
@@ -357,7 +374,7 @@ class CoderAgent(Agent):
             beats=" → ".join(shot.beats) or "（无；请自行安排清晰的起承转合）",
             style_guide=style_guide_to_text(style_guide),
             examples=examples_text,
-            feedback_block=feedback_block,
+            feedback_block=feedback_block + "\n\n" + quality_brief,
         )
 
 

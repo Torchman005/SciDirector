@@ -124,6 +124,9 @@ class JsonCorpusRetriever:
 
         scored: list[tuple[float, FewShot]] = []
         for example in self._corpus:
+            # Topic similarity cannot make Python usable in a browser (or vice versa).
+            if engine and example.engine != engine:
+                continue
             score = self.score(example, tag=tag, engine=engine, keywords=keywords, haystack=haystack)
             if score >= self._min_score:
                 scored.append((score, example))

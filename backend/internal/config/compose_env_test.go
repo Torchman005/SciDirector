@@ -36,6 +36,7 @@ var stageFiveSwitches = []string{
 	"SCID_SANDBOX_SECCOMP",
 	"SCID_SANDBOX_PYTHON_BIN",
 	"SCID_CHROME",
+	"SCID_CODER_PREFLIGHT_ENABLED",
 	// 可观测性（本轮之前就已透传，一起钉住防止回退）
 	"SCID_OTEL_ENDPOINT",
 	"SCID_METRICS_PATH",

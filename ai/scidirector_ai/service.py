@@ -305,7 +305,7 @@ class PipelineService:
         if not result.policy_ok:
             # 静态检查失败也要如实返回：把危险/非法代码送去渲染，
             # 代价远高于直接失败（沙盒会拦，但会浪费一整轮渲染时间）。
-            raise RenderFailed(f"生成的代码未通过静态安全检查：{result.policy_summary}")
+            raise RenderFailed(f"生成的代码未通过安全/质量检查：{result.policy_summary}")
 
         updated = shot.model_copy(
             update={"code": result.code, "language": result.artifact.language}
@@ -397,7 +397,7 @@ class PipelineService:
             previous_code=shot.code,
         )
         if not result.policy_ok:
-            raise RenderFailed(f"重写后的代码未通过静态安全检查：{result.policy_summary}")
+            raise RenderFailed(f"重写后的代码未通过安全/质量检查：{result.policy_summary}")
 
         updated = shot.model_copy(
             update={"code": result.code, "language": result.artifact.language}

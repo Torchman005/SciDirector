@@ -636,6 +636,8 @@ ws://localhost:8080/ws/jobs/{jobID}
 
 重做时可能收到 `code` 或 `render` 节点的 `RETRYING` 事件，说明新源码与旧版相同，或新旧审查抽帧完全一致。此时系统会跳过无效渲染或重复视觉审查，再按 `max_attempts_per_shot` 决定继续修改还是转人工；这些事件不表示镜头已通过审查。
 
+`code` 事件的 `payload_json` 还包含 `generation_quality`：`checked`、`issues`、`warnings`、`reason` 和生成内修复次数。`checked=false` 表示浏览器预检不可用或该引擎不适用，不能解释为代码通过；只有 `issues=[]` 且随后正式渲染/视觉审核通过，镜头才可放行。
+
 **跨语言约定（重要）**：`plan` 节点的 `PipelineEvent.payload_json` 为
 
 ```json
