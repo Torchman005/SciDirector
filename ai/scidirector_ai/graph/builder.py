@@ -174,6 +174,8 @@ def build_parallel_graph(deps: PipelineDeps, checkpointer: Any = None, paralleli
             "motion_reports": {},
             "frame_signatures": {},
             "revision_stagnation": {},
+            "review_samples": {},
+            "repair_prechecks": {},
             "events": [],
             "current_code": shot.code,
             "current_language": shot.language,
@@ -205,6 +207,8 @@ def build_parallel_graph(deps: PipelineDeps, checkpointer: Any = None, paralleli
             "motion_reports": local.get("motion_reports") or {},
             "frame_signatures": local.get("frame_signatures") or {},
             "revision_stagnation": local.get("revision_stagnation") or {},
+            "review_samples": local.get("review_samples") or {},
+            "repair_prechecks": local.get("repair_prechecks") or {},
             "events": local.get("events") or [],
         }
 

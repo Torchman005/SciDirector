@@ -233,6 +233,7 @@ def extract_frames_with_times(
     count: int = 4,
     duration_sec: float = 0.0,
     width: int = 1024,
+    timestamps: list[float] | None = None,
 ) -> list[FrameSample]:
     """与 :func:`extract_frames` 相同，但每帧**带上时间点**。"""
     target = Path(video_path).resolve()
@@ -245,7 +246,8 @@ def extract_frames_with_times(
         except MediaToolError:
             duration_sec = 1.0
 
-    ordered = frame_sample_times(duration_sec, count)
+    ordered = (frame_sample_times(duration_sec, count) if timestamps is None
+               else sorted(set(t for t in timestamps if 0 <= t < duration_sec)))
 
     ffmpeg = _binary("ffmpeg")
     samples: list[FrameSample] = []

@@ -44,6 +44,7 @@ from ..media import (
 )
 from ..pbconv import shots_payload_json
 from ..review_tasks import format_repairs
+from ..repair_evidence import precheck_repairs, skip_full_review
 from ..renderer import LLM_ENGINES, Renderer, RendererError, RenderRequest, build_renderer
 from ..sandbox.runner import SandboxRunner
 from ..tts.base import synthesize_with_retry, write_marks_sidecar
@@ -454,7 +455,8 @@ class PipelineNodes:
         style = state.get("style_guide") or StyleGuide()
         job_id = state.get("job_id", "")
         attempt = shot_attempt(state, shot.shot_id)
-        out_dir = Path(self.deps.settings.sandbox_work_dir) / job_id / f"shot_{shot.index:03d}"
+        out_dir = (Path(self.deps.settings.sandbox_work_dir) / job_id / f"shot_{shot.index:03d}"
+                   / f"attempt_{attempt:02d}")
 
         request = RenderRequest(
             shot_id=shot.shot_id,
@@ -543,6 +545,7 @@ class PipelineNodes:
             and isinstance(previous_feedback, CriticFeedback)
             and not previous_feedback.passed
             and previous_feedback.source is FeedbackSource.VLM
+            and not previous_feedback.repair_tasks
         ):
             reason = (
                 "新旧审查抽帧逐张完全相同，源码改动没有产生可见效果；"
@@ -555,6 +558,22 @@ class PipelineNodes:
                     state, node=NODE_RENDER, shot=shot, attempt=attempt,
                     message=reason + "，已跳过重复视觉审查", status="RETRYING",
                 )],
+            }
+
+        evidence_artifact = RenderArtifact(video_path=str(result.video_path), duration_sec=result.duration_sec)
+        prechecks = precheck_repairs(
+            previous_feedback, (state.get("artifacts") or {}).get(shot.shot_id), evidence_artifact,
+            (state.get("review_samples") or {}).get(shot.shot_id, []), samples,
+            out_dir / "repair_evidence", self.deps.runner,
+        )
+        if skip_full_review(prechecks):
+            reason = "本轮修复任务对应的可读性证据帧没有可见变化，需重构指定对象"
+            return {
+                "repair_prechecks": {**(state.get("repair_prechecks") or {}), shot.shot_id: prechecks},
+                "render_error": reason, "route_hint": HINT_RETRY,
+                "events": [make_event(state, node=NODE_RENDER, shot=shot, attempt=attempt,
+                                      message=reason + "，跳过无效完整审核", status="RETRYING",
+                                      payload_json=json.dumps({"repair_prechecks": prechecks}, ensure_ascii=False))],
             }
 
         # 节奏检查：把"画面有没有贯穿整段时长都在变"**算出来**。
@@ -697,6 +716,9 @@ class PipelineNodes:
         return {
             "artifacts": artifacts,
             "frame_signatures": {**(state.get("frame_signatures") or {}), shot.shot_id: signatures},
+            "review_samples": {**(state.get("review_samples") or {}), shot.shot_id:
+                               [{"path": s.path, "ts": s.ts} for s in samples]},
+            "repair_prechecks": {**(state.get("repair_prechecks") or {}), shot.shot_id: prechecks},
             "motion_reports": motion_reports,
             "render_error": "",
             "route_hint": HINT_CRITIQUE,
