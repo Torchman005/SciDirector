@@ -86,6 +86,18 @@ def make_settings(tmp_path: Path, **overrides: object) -> Settings:
 
 
 class TestRouteTable:
+    def test_advance_does_not_carry_code_or_error_across_shots(self, tmp_path: Path) -> None:
+        shots = make_shots(2)
+        shots[1].code = "existing second shot"
+        shots[1].language = "html+js"
+        deps, *_ = make_deps(tmp_path, shots=shots)
+        state = initial_state(job_id="j", raw_script="script", style_guide=StyleGuide(),
+                              target_duration_sec=10, max_attempts_per_shot=3, locale="zh-CN")
+        state.update(shots=shots, current_code="previous manim code", current_language="python", render_error="previous failure")
+        update = PipelineNodes(deps).advance(state)
+        assert update["current_code"] == "existing second shot"
+        assert update["current_language"] == "html+js" and update["render_error"] == ""
+
     def test_code_routes(self) -> None:
         assert route_after_code({**initial_state(
             job_id="j", raw_script="s", style_guide=StyleGuide(),

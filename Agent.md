@@ -231,8 +231,9 @@ SciDirector/
 HTML 引擎默认 `SCID_CODER_SCENE_MODE=structured`：Coder 返回内部 `SceneSpec v1`，
 固定渲染器编译 text/card/code/bars/rect/circle/line 与归一化 keyframes，输出仍为 HTML `code`。
 DSL 嵌入不可执行 JSON，重做只回读规格，不向模型回灌运行时代码；唯一 id、数据/单位、字号、
-安全边距、时间轴及首末帧先校验，再走现有 BrowserPreflight 和完整 VLM 审核。
-结构解析、布局及浏览器问题共用一次生成内修复预算，不静默降级为自由 HTML。
+可见对象画布边界、时间轴及末帧先校验，再走现有 BrowserPreflight 和完整 VLM 审核。
+首帧允许短暂淡入，编译器自动预留末尾阅读停留，6% 边距为设计建议。串行 advance 必须隔离代码和错误。
+结构解析、布局及浏览器问题共用一次生成内修复预算；模型明确返回旧 HTML 包络时经同样门禁兼容，并记录日志。
 Manim 路由保留。全局 `code` 或 `shot.meta.generation_mode=code` 为复杂镜头显式出口；
 历史自由 HTML 修订保持原路径。DSL 是 Python 内部表示，未扩展 proto。
 
@@ -554,6 +555,8 @@ make up / make down   # docker compose 全栈
 ---
 
 ## 10. 迭代日志
+
+- **2026-10-05 · 修复结构化场景出片门禁与串行污染**：任务 `job-09b76f8aa89587b5` 显示多个 HTML 镜头被首帧、6% 边距及末尾定格校验挡在渲染前。首帧允许建立场景，边距降为设计建议，可见画布越界与末帧空白仍拦截；编译器自动预留阅读停留。串行 advance 清理上一镜头代码和错误；显式旧 HTML 包络通过同样门禁兼容。235 项相关回归、41 项场景实测通过，后者含 Chromium→ffmpeg 的 3s 1080p MP4 实际产物。
 
 - **2026-10-05 · HTML-first 场景规格首版**：HTML 引擎默认结构化生成，固定组件负责 DOM/SVG 与纯时间驱动播放；规格随 HTML 保存，修订保留元素编号。共享一次 schema/布局/浏览器修复预算，保留 Manim、历史 HTML 和显式 code 出口；运行时资源纳入 Python 包和配置透传。设计、边界及验证见 `docs/HTML_SCENES.md`。
 

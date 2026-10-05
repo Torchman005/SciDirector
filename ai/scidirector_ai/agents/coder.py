@@ -152,7 +152,7 @@ class CoderAgent(Agent):
         if mode not in {"structured", "code"}:
             raise LLMError(f"未知 generation_mode：{mode}")
         try:
-            structured_previous = extract_scene(previous_code) if engine in _HTML_ENGINES and mode == "structured" else None
+            structured_previous = extract_scene(previous_code) if engine in _HTML_ENGINES else None
         except ValueError as exc:
             raise LLMError(f"上一版场景规格损坏，无法安全回读：{exc}") from exc
         if engine in _HTML_ENGINES and mode == "structured" and (not previous_code or structured_previous is not None):
@@ -282,7 +282,26 @@ class CoderAgent(Agent):
                     return result
                 invalid = scene.model_dump_json()
             except LLMParseError as exc:
-                result.policy_summary = str(exc)
+                # A provider may ignore the scene schema and return the historical
+                # {code, language, explanation} envelope. Preserve that explicit
+                # legacy output, but still run the normal HTML contract and preflight.
+                try:
+                    legacy = _RawCode.model_validate(json.loads(exc.raw_response))
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    legacy = None
+                if legacy is not None and legacy.code.strip():
+                    artifact = CodeArtifact(code=legacy.code, language="html+js", explanation=legacy.explanation)
+                    report = self._check(artifact, shot.engine.value)
+                    quality = self.quality_checker.check(legacy.code, shot, style) if report.ok else QualityResult(reason=report.summary())
+                    result.artifact = artifact
+                    result.quality = quality
+                    result.policy_ok = report.ok and not quality.issues
+                    result.policy_summary = report.summary() if not report.ok else "；".join(quality.issues)
+                    if result.policy_ok:
+                        logger.warning("模型忽略结构化 schema，兼容采用其显式 legacy HTML 输出", extra={"shot_id": shot.shot_id})
+                        return result
+                if legacy is None or not legacy.code.strip():
+                    result.policy_summary = str(exc)
                 invalid = exc.raw_response
             except ValueError as exc:
                 result.policy_summary = str(exc)

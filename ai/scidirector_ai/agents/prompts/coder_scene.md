@@ -8,7 +8,8 @@ background 可为 solid/gradient/grid/vignette/noise/scanlines；用户选择了
 
 组件：text（自动换行的文字）、card（文字卡片）、code（等宽纯文字，可打字）、bars（横向柱图）、rect/circle/line（几何图形）。
 每个元素有唯一稳定 id、kind、box={x,y,width,height}，box 坐标为画布归一化比例。
-所有状态含位移都必须在 x/y=0.06～0.94 安全区域内；文字和几何使用不同元素，图形不支持内嵌文字。
+内容建议在 x/y=0.06～0.94 安全区域内；透明入场可以从边缘开始，可见内容必须在画布内。
+文字和几何使用不同元素，图形不支持内嵌文字。
 font_size 不低于下限；超长文字拆成短句或多阶段。card/code 内边距为 .6em，预留区域。
 text/card/code 使用 text，align 为 left/center/right；文本用字面内容，不能使用标签/Markdown，公式需要 LaTeX 时交给 Manim。
 bars 必须 data=[{label,value},…] 及 unit（无量纲也写“无量纲”），数值非负，同屏最多 8 行。
@@ -20,8 +21,8 @@ keyframes 最多 24 个，time 为秒数 / {{duration_sec}}，从 0 开始严格
 每个关键帧是完整状态：opacity 默认 1、dx/dy 默认 0（归一化位移）、rotation 默认 0（度）、reveal 默认 1。
 reveal 仅影响 code 打字、bars 生长；其他组件不要用它。文字和图表不能旋转。
 easing 为 linear/smooth/step，描述到达当前关键帧的插值方式；step 在该时间点切换。
-不提供 keyframes 表示静止，最后一个关键帧之后定格。最后 min(0.5秒,总时长10%) 保持完成态，关键帧必须提前结束。
-首末帧不能空白。阶段与旁白节拍对应，阅读可停留，不用无意义抖动制造变化。
+不提供 keyframes 表示静止，最后一个关键帧之后定格。关键帧可在 1 结束，编译器会自动预留 min(0.5秒,总时长10%) 的完成态停留。
+首帧可短暂淡入建立场景，避免长时间空白；末帧必须可见。阶段与旁白节拍对应，阅读可停留，不用无意义抖动制造变化。
 修改时保留正确元素的 id、内容和阶段，只调整被定位的问题。
 explanation 必须说明阶段、布局和数据来源；修复任务逐项写编号、对象、时间段和可见变化。
 

@@ -1107,6 +1107,12 @@ class PipelineNodes:
         return {
             "cursor": cursor,
             "finished": False,
+            # Serial processing must have the same shot isolation as Send workers.
+            # A previous Manim code string otherwise selects the HTML legacy path
+            # for the next structured shot and contaminates revision feedback.
+            "current_code": next_shot.code,
+            "current_language": next_shot.language,
+            "render_error": "",
             "route_hint": HINT_NEXT,
             "events": [
                 make_event(

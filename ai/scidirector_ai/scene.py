@@ -22,9 +22,9 @@ class SceneModel(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
 
-# Consistent with the generation quality gate: reserve 6% for content and 0.5s
-# for reading the completed scene (10% for very short shots).
-SAFE_MARGIN = .06
+# Tolerate decimal roundoff only; visible geometry must remain on the canvas.
+GEOMETRY_EPSILON = 1e-4
+# The compiler reserves 0.5s for the final state (10% for very short shots).
 FINAL_HOLD_SEC = .5
 FINAL_HOLD_RATIO = .1
 
@@ -110,7 +110,6 @@ class SceneSpec(SceneModel):
 def validate_layout(scene: SceneSpec, *, width: int, height: int, duration: float,
                     style: StyleGuide) -> None:
     """Reject geometric/time defects before launching Chromium; text fit is measured there."""
-    hold = min(FINAL_HOLD_SEC, duration * FINAL_HOLD_RATIO)
     for el in scene.elements:
         text = el.kind in {"text", "card", "code", "bars"}
         if text and el.font_size < style.min_font_size:
@@ -118,30 +117,30 @@ def validate_layout(scene: SceneSpec, *, width: int, height: int, duration: floa
         b = el.box
         for k in el.keyframes or [Keyframe(time=0)]:
             x, y = b.x + k.dx, b.y + k.dy
-            if min(x, y) < SAFE_MARGIN - 1e-6 or x + b.width > 1 - SAFE_MARGIN + 1e-6 or y + b.height > 1 - SAFE_MARGIN + 1e-6:
-                raise ValueError(f"#{el.id} 在 time={k.time:g} 超出 6% 安全边距；修改 box/dx/dy")
-            if k.time > 1 - hold / duration + 1e-6:
-                raise ValueError(f"#{el.id} 最后 {hold:g}s 应定格；提前完成 keyframes")
+            # An entrance can begin outside the viewport while fully transparent.
+            # Safe margins are a design recommendation, actual clipping is a defect.
+            if k.opacity > .1 and (min(x, y) < -GEOMETRY_EPSILON or x + b.width > 1 + GEOMETRY_EPSILON or y + b.height > 1 + GEOMETRY_EPSILON):
+                raise ValueError(f"#{el.id} 在 time={k.time:g} 超出画布；修改 box/dx/dy")
         # Rotating a non-square box sweeps a larger envelope between keyframes.
         if any(k.rotation for k in el.keyframes):
             radius = math.hypot(b.width * width, b.height * height) / 2
             for k in el.keyframes:
                 cx, cy = b.x + b.width / 2 + k.dx, b.y + b.height / 2 + k.dy
-                if cx - radius / width < SAFE_MARGIN or cx + radius / width > 1 - SAFE_MARGIN or cy - radius / height < SAFE_MARGIN or cy + radius / height > 1 - SAFE_MARGIN:
-                    raise ValueError(f"#{el.id} 旋转范围超出安全边距；缩小或移动几何图形")
+                if k.opacity > .1 and (cx - radius / width < -GEOMETRY_EPSILON or cx + radius / width > 1 + GEOMETRY_EPSILON or cy - radius / height < -GEOMETRY_EPSILON or cy + radius / height > 1 + GEOMETRY_EPSILON):
+                    raise ValueError(f"#{el.id} 旋转范围超出画布；缩小或移动几何图形")
         if text:
             padding = el.font_size * .6 if el.kind in {"card", "code"} else 0
             if b.width * width < el.font_size * 2 + padding * 2 or b.height * height < el.font_size * 1.4 + padding * 2:
                 raise ValueError(f"#{el.id} 文字区域过小；增大 box，不要降低字号")
         if el.kind == "bars" and b.height * height / len(el.data) < el.font_size * 3:
             raise ValueError(f"#{el.id} 柱状图行高不足；扩大区域或减少同屏数据")
-    # Avoid an empty first/last frame; do not enforce cosmetic motion during reading holds.
-    for final in (False, True):
-        if not any(not el.keyframes or (el.keyframes[-1 if final else 0].opacity > .1
-                                      and (el.kind not in {"code", "bars"}
-                                           or el.keyframes[-1 if final else 0].reveal > 0))
-                   for el in scene.elements):
-            raise ValueError("首帧和末帧必须有可见内容")
+    # The first frame may intentionally establish a scene. The final state must
+    # contain visible content; otherwise the renderer would produce a blank tail.
+    if not any(not el.keyframes or (el.keyframes[-1].opacity > .1
+                                    and (el.kind not in {"code", "bars"}
+                                         or el.keyframes[-1].reveal > 0))
+               for el in scene.elements):
+        raise ValueError("末帧必须有可见内容")
 
 
 @lru_cache(maxsize=1)
@@ -160,7 +159,11 @@ def compile_scene(scene: SceneSpec, *, width: int, height: int, duration: float,
         return "#" + "".join(c * 2 for c in value[1:]) if len(value) == 4 else value
     background = resolve_background_style(scene.background if style.background_style == "auto" else style.background_style)
     background_css = background.css.format(bg=full_hex(style.background_color), primary=full_hex(style.primary_color))
+    # Reserve the final reading hold in the compiler rather than forcing the LLM
+    # to calculate a duration-specific fraction. An end keyframe at 1 is legal.
+    animated_until = 1 - min(FINAL_HOLD_SEC, duration * FINAL_HOLD_RATIO) / duration
     payload = {"scene": scene.model_dump(), "width": width, "height": height,
+               "animatedUntil": animated_until,
                "duration": duration, "style": {"background": style.background_color,
                "primary": style.primary_color, "font": style.font_family, "theme": style.theme,
                "backgroundCSS": background_css}}

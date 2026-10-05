@@ -3,6 +3,7 @@
   'use strict';
   const config = JSON.parse(document.getElementById('scid-scene-v1').textContent);
   const {scene, width:W, height:H, duration:D, style} = config;
+  const animatedUntil=config.animatedUntil || 1;
   const stage = document.getElementById('stage');
   const light = style.theme === 'light';
   const palette = {primary:style.primary, text:light?'#101216':'#E6ECFF', muted:light?'#485368':'#A8B5CF'};
@@ -87,7 +88,8 @@
   window.__seek = seconds => {
     const t=Math.max(0,Math.min(D,Number.isFinite(seconds)?seconds:0))/D;
     for(const {el,root,content,bars} of nodes) {
-      const s=sample(el.keyframes,t);
+      const last=el.keyframes.length ? el.keyframes[el.keyframes.length-1].time : 0;
+      const s=sample(el.keyframes, last>animatedUntil ? Math.min(1,t/animatedUntil) : t);
       root.style.opacity=String(s.opacity);
       root.style.transform=`translate(${s.dx*W}px,${s.dy*H}px) rotate(${s.rotation}deg)`;
       if(el.kind==='code') content.textContent=Array.from(el.text).slice(0,Math.floor(Array.from(el.text).length*s.reveal)).join('');

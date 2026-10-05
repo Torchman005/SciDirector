@@ -56,10 +56,9 @@ def test_ids_are_unique() -> None:
 
 @pytest.mark.parametrize("change,needle", [
     ({"font_size": 24}, "字号"),
-    ({"box": {"x": .01, "y": .08, "width": .84, "height": .3}}, "安全边距"),
-    ({"keyframes": [{"time": 0}, {"time": .8, "dx": .2}]}, "安全边距"),
-    ({"keyframes": [{"time": 0}, {"time": 1}]}, "定格"),
-    ({"keyframes": [{"time": 0, "opacity": 0}]}, "可见内容"),
+    ({"keyframes": [{"time": 0}, {"time": .8, "dx": -.2}]}, "超出画布"),
+    ({"keyframes": [{"time": 0}, {"time": .8, "dx": .2}]}, "超出画布"),
+    ({"keyframes": [{"time": 0, "opacity": 0}, {"time": .9, "opacity": 0}]}, "末帧"),
     ({"box": {"x": .08, "y": .08, "width": .08, "height": .05}}, "区域过小"),
 ])
 def test_production_validation_blocks_defects(change: dict[str, Any], needle: str) -> None:
@@ -74,6 +73,15 @@ def test_compilation_is_deterministic_safe_and_revision_preserves_ir() -> None:
     assert '</script><script>missingSymbol()' not in code
     assert extract_scene(code) == scene
     assert extract_scene(VALID_HTML) is None
+
+
+def test_opening_fade_in_end_keyframe_and_near_edge_text_are_renderable() -> None:
+    scene = spec(box={"x": .04, "y": .04, "width": .9, "height": .3},
+                 keyframes=[{"time": 0, "opacity": 0, "dx": -.1},
+                            {"time": .15, "opacity": 1}, {"time": 1, "opacity": 1}])
+    html = compile_it(scene)
+    assert extract_scene(html) == scene
+    assert '"animatedUntil": 0.9375' in html
 
 
 def test_background_presets_follow_user_selection_and_auto_scene_choice() -> None:
@@ -145,6 +153,20 @@ def test_schema_layout_and_browser_share_one_repair_budget() -> None:
     assert all(c["task"] == Task.SCENE for c in llm.calls)
 
 
+def test_legacy_html_envelope_from_scene_provider_still_renders() -> None:
+    from scidirector_ai.llm import LLMParseError
+
+    legacy = '{"code":"<script>window.__seek=t=>{};window.__ready=true;</script>","language":"html+js","explanation":"legacy"}'
+
+    class Legacy:
+        def chat_json(self, system: str, user: str, schema: type, **kw: Any) -> Any:
+            raise LLMParseError("结构不符", raw_response=legacy)
+
+    result = CoderAgent(Legacy(), Settings(env="test", llm_provider="mock"), quality_checker=Checker()).generate(
+        shot=ShotSpec(tag=SceneTag.MOTION), style_guide=StyleGuide())
+    assert result.policy_ok and result.code.startswith("<script>") and result.llm_attempts == 1
+
+
 def test_client_scene_parse_does_not_add_a_hidden_repair(monkeypatch: pytest.MonkeyPatch) -> None:
     client = LLMClient(Settings(env="test", llm_provider="mock"))
     calls: list[dict[str, Any]] = []
@@ -203,7 +225,8 @@ def test_runtime_executes_repeat_reverse_and_parallel_chunk_seeks(tmp_path: Path
                 keyframes=[{"time": 0, "reveal": 0}, {"time": .8, "reveal": 1}]).elements[0]
     bars.id = "comparison"
     scene.elements.append(bars)
-    payload = {"scene": scene.model_dump(), "width": 1920, "height": 1080, "duration": 8,
+    scene.elements[0].keyframes[-1].time = 1
+    payload = {"scene": scene.model_dump(), "width": 1920, "height": 1080, "duration": 8, "animatedUntil": .9375,
                "style": {"theme": "dark", "primary": "#4F8CFF", "background": "#0B1020", "font": "Microsoft YaHei"}}
     harness = """
 const vm=require('node:vm'), assert=require('node:assert/strict');
@@ -224,6 +247,8 @@ const {ctx,stage}=context();
 function state(){return JSON.stringify(stage);}
 ctx.window.__seek(4);const middle=state();
 ctx.window.__seek(7.9);const end=state();assert.notEqual(middle,end);
+ctx.window.__seek(7.5);assert.equal(state(),end);
+ctx.window.__seek(8);assert.equal(state(),end);
 ctx.window.__seek(4);assert.equal(state(),middle);
 ctx.window.__seek(4);assert.equal(state(),middle);
 ctx.window.__seek(0);assert.equal(stage.children[0].children[0].textContent,'');
@@ -269,3 +294,22 @@ def test_actual_browser_catches_overlong_scene_text(tmp_path: Path) -> None:
     page.write_text(compile_it(spec(text="超长文字需要拆分阶段。" * 100)), encoding="utf-8")
     report = inspect(page, 1920, 1080, 8, 32, os.environ["SCID_CHROME"])
     assert any("裁切" in issue for issue in report["issues"]), report
+
+
+@pytest.mark.skipif(not os.environ.get("SCID_CHROME") or not shutil.which("ffmpeg"),
+                    reason="真实出片测试需要 SCID_CHROME 与 ffmpeg")
+def test_opening_fade_and_end_keyframe_produce_real_mp4(tmp_path: Path) -> None:
+    from scidirector_ai.renderer import HtmlRenderer, RenderRequest
+    from scidirector_ai.sandbox.runner import SandboxRunner
+
+    settings = Settings(env="test", llm_provider="mock", sandbox_timeout_sec=90)
+    scene = spec(kind="text", box={"x": .04, "y": .06, "width": .9, "height": .3},
+                 keyframes=[{"time": 0, "opacity": 0}, {"time": .2, "opacity": 1},
+                            {"time": 1, "opacity": 1}])
+    html = compile_scene(scene, width=1920, height=1080, duration=3, style=StyleGuide())
+    renderer = HtmlRenderer(settings, "motion")
+    result = renderer.render(RenderRequest(shot_id="scene-regression", code=html, output_dir=tmp_path,
+                            duration_sec=3, width=1920, height=1080, fps=10), SandboxRunner())
+    assert Path(result.video_path).stat().st_size > 1000
+    assert abs(result.duration_sec - 3) < .15
+    assert (result.width, result.height) == (1920, 1080)
