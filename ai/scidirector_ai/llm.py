@@ -581,6 +581,12 @@ def _mock_response(messages: list[Message], *, json_mode: bool, task: str) -> st
             {
                 "passed": False,
                 "score": 0.41,
+                "repair_tasks": [{
+                    "category": "readability", "severity": "major", "frame_indices": [1],
+                    "target": "正文", "evidence": "第 1 帧正文字号过小，手机上无法辨认",
+                    "instruction": "把正文字号从 24 提到 48",
+                    "acceptance": "第 1 帧正文独立可读，且不因放大被裁切",
+                }],
                 "issues": ["正文字号过小，手机上无法辨认", "动画推进过快，观众来不及理解"],
                 "suggestions": [
                     "把正文字号从 24 提到 48",

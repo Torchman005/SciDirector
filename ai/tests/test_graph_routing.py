@@ -152,7 +152,7 @@ class _StubCoder:
     def generate(self, *, shot: ShotSpec, attempt: int = 1, **kwargs: Any) -> CodeGenerationResult:
         self.calls.append(attempt)
         return CodeGenerationResult(
-            artifact=CodeArtifact(code="class SciShotScene(Scene): pass", language="python"),
+            artifact=CodeArtifact(code=f"class SciShotScene(Scene): pass\n# attempt {attempt}", language="python"),
             policy_ok=self.policy_ok,
             policy_summary="" if self.policy_ok else "桩：静态检查失败",
         )
@@ -239,7 +239,7 @@ def make_deps(
         runner=SandboxRunnerStub(),  # type: ignore[arg-type]
     )
     # 所有引擎都用同一个桩渲染器，避免依赖真实引擎是否安装。
-    for engine in ("manim", "d3", "echarts", "code_anim", "stock"):
+    for engine in ("manim", "d3", "echarts", "code_anim", "motion", "stock"):
         deps._renderers[engine] = render  # type: ignore[assignment]
     return deps, director, coder, critic, render
 

@@ -172,6 +172,42 @@ class ShotSpec(BaseModel):
         return f"{self.index:03d}"
 
 
+class RepairTask(BaseModel):
+    """问题定位与验收目标；task_id 由程序分配，复审不得改写验收条件。"""
+
+    task_id: str = ""
+    category: Literal["logic", "readability", "pacing", "layout", "rendering"] = "layout"
+    severity: Literal["blocking", "major", "advisory"] = "major"
+    start_sec: float = Field(default=0.0, ge=0.0)
+    end_sec: float = Field(default=0.0, ge=0.0)
+    frame_indices: list[int] = Field(default_factory=list)
+    target: str = ""
+    evidence: str = ""
+    instruction: str = ""
+    acceptance: str = ""
+    region: list[float] = Field(default_factory=list)
+    status: Literal["open", "partial", "resolved", "unverified"] = "open"
+    resolution_evidence: str = ""
+
+    @model_validator(mode="after")
+    def _validate_location(self) -> RepairTask:
+        if self.end_sec < self.start_sec or any(i < 1 for i in self.frame_indices):
+            raise ValueError("修复任务时间段或帧号无效")
+        if self.region:
+            if len(self.region) != 4:
+                raise ValueError("region 必须为 x/y/width/height")
+            x, y, width, height = self.region
+            if min(x, y) < 0 or min(width, height) <= 0 or x + width > 1 or y + height > 1:
+                raise ValueError("region 必须位于归一化画面范围内")
+        return self
+
+    @property
+    def actionable(self) -> bool:
+        return (all(value.strip() for value in
+                    (self.target, self.evidence, self.instruction, self.acceptance))
+                and (bool(self.frame_indices) or self.end_sec > self.start_sec))
+
+
 class CriticFeedback(BaseModel):
     """审查意见（VLM 或人类）。"""
 
@@ -183,6 +219,7 @@ class CriticFeedback(BaseModel):
         description="【必须可执行】例如「字号 24 -> 48」；禁止「画面不好看」这类不可执行意见",
     )
     fatal_issues: list[str] = Field(default_factory=list, description="可核对的致命问题")
+    repair_tasks: list[RepairTask] = Field(default_factory=list)
     raw_response: str = ""
     model: str = ""
     source: FeedbackSource = FeedbackSource.VLM

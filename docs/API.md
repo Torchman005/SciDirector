@@ -659,16 +659,20 @@ Go 侧 `worker.syncShotsFromPayload` 解析它并**整体替换**任务的分镜
 `ai/scidirector_ai/agents/prompts/critic.md`），核心字段：
 
 ```json
-{ "passed": false,
-  "scores": { "logic": 0.7, "readability": 0.4, "pacing": 0.8, "aesthetics": 0.75 },
-  "suggestions": [ { "dimension": "readability", "severity": "high", "advice": "…" } ],
-  "summary": "…" }
+{ "passed": false, "score": 0.6,
+  "logic_score": 0.8, "readability_score": 0.4, "pacing_score": 0.6, "aesthetics_score": 0.7,
+  "issues": ["第 2 帧标签重叠"], "suggestions": ["分开标签"], "fatal_issues": [],
+  "repair_tasks": [{"task_id": "r1-01", "category": "readability", "severity": "major",
+    "frame_indices": [2], "target": "坐标轴标签", "evidence": "第 2 帧两标签重叠",
+    "instruction": "分开标签", "acceptance": "标签独立可读且不重叠", "status": "open"}] }
 ```
 
-`passed` 的最终取值 = **模型判定 AND 程序侧复核**：
+`passed` 由程序加权分数、硬性下限和有证据的阻塞问题共同决定：
 分维度加权得分低于 `SCID_CRITIC_SCORE_THRESHOLD`（默认 0.75），
 或 `logic` / `readability` 跌破硬性下限，都会被程序改判为不通过 ——
-**模型只能更严格，不能更宽松**。两者不一致时事件里会留下 `verdict_disagreement` 痕迹。
+模型自报的否决只有通过 `fatal_issues` 或有效 `blocking` 修复任务定位到具体画面证据才生效。
+一般审美建议标为 `advisory`，不单独打回。每轮选最多 3 项；完整清单随反馈持久化。
+判负但缺少定位、证据或验收条件时，仅补充一次意见，仍无有效任务则转人工。
 
 VLM 不可用时**降级为转人工**（`degraded=true`），而不是伪造「通过」。
 

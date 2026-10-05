@@ -43,6 +43,7 @@ from ..media import (
     extract_frames_with_times,
 )
 from ..pbconv import shots_payload_json
+from ..review_tasks import format_repairs
 from ..renderer import LLM_ENGINES, Renderer, RendererError, RenderRequest, build_renderer
 from ..sandbox.runner import SandboxRunner
 from ..tts.base import synthesize_with_retry, write_marks_sidecar
@@ -1123,9 +1124,12 @@ def _collect_feedback(state: PipelineState, shot_id: str) -> str:
 
     feedback = (state.get("feedback") or {}).get(shot_id)
     if isinstance(feedback, CriticFeedback) and not feedback.passed:
-        if feedback.issues:
+        repairs = format_repairs(feedback)
+        if repairs:
+            parts.append(repairs)
+        elif feedback.issues:
             parts.append("【画面问题】\n" + "\n".join(f"- {i}" for i in feedback.issues[:6]))
-        if feedback.suggestions:
+        if not repairs and feedback.suggestions:
             parts.append(
                 "【必须落实的修改】\n" + "\n".join(f"- {s}" for s in feedback.suggestions[:6])
             )

@@ -253,6 +253,8 @@ func FeedbackFromPB(in *pb.CriticFeedback) domain.Feedback {
 		Score:            in.GetScore(),
 		Issues:           in.GetIssues(),
 		Suggestions:      in.GetSuggestions(),
+		RepairTasks:      repairTasksFromPB(in.GetRepairTasks()),
+		FatalIssues:      in.GetFatalIssues(),
 		RawResponse:      in.GetRawResponse(),
 		Model:            in.GetModel(),
 		Source:           src,
@@ -279,6 +281,8 @@ func FeedbackToPB(in *domain.Feedback) *pb.CriticFeedback {
 		Score:            in.Score,
 		Issues:           in.Issues,
 		Suggestions:      in.Suggestions,
+		RepairTasks:      repairTasksToPB(in.RepairTasks),
+		FatalIssues:      in.FatalIssues,
 		RawResponse:      in.RawResponse,
 		Model:            in.Model,
 		Source:           src,
@@ -289,6 +293,37 @@ func FeedbackToPB(in *domain.Feedback) *pb.CriticFeedback {
 		AestheticsScore:  in.AestheticsScore,
 		CreatedAtUnixMs:  in.CreatedAt.UnixMilli(),
 	}
+}
+
+func repairTasksFromPB(tasks []*pb.RepairTask) []domain.RepairTask {
+	result := make([]domain.RepairTask, 0, len(tasks))
+	for _, t := range tasks {
+		if t == nil {
+			continue
+		}
+		result = append(result, domain.RepairTask{
+			TaskID: t.TaskId, Category: t.Category, Severity: t.Severity,
+			StartSec: t.StartSec, EndSec: t.EndSec, FrameIndices: t.FrameIndices,
+			Target: t.Target, Evidence: t.Evidence, Instruction: t.Instruction,
+			Acceptance: t.Acceptance, Region: t.Region, Status: t.Status,
+			ResolutionEvidence: t.ResolutionEvidence,
+		})
+	}
+	return result
+}
+
+func repairTasksToPB(tasks []domain.RepairTask) []*pb.RepairTask {
+	result := make([]*pb.RepairTask, 0, len(tasks))
+	for _, t := range tasks {
+		result = append(result, &pb.RepairTask{
+			TaskId: t.TaskID, Category: t.Category, Severity: t.Severity,
+			StartSec: t.StartSec, EndSec: t.EndSec, FrameIndices: t.FrameIndices,
+			Target: t.Target, Evidence: t.Evidence, Instruction: t.Instruction,
+			Acceptance: t.Acceptance, Region: t.Region, Status: t.Status,
+			ResolutionEvidence: t.ResolutionEvidence,
+		})
+	}
+	return result
 }
 
 // EventFromPipeline 把 Python 流式事件转为领域事件，保持事件流字段统一。

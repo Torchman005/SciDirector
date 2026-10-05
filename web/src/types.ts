@@ -49,6 +49,22 @@ export interface Artifact {
   render_cost_sec?: number
 }
 
+export interface RepairTask {
+  task_id: string
+  category: 'logic' | 'readability' | 'pacing' | 'layout' | 'rendering'
+  severity: 'blocking' | 'major' | 'advisory'
+  start_sec: number
+  end_sec: number
+  frame_indices?: number[]
+  target: string
+  evidence: string
+  instruction: string
+  acceptance: string
+  region?: number[]
+  status: 'open' | 'partial' | 'resolved' | 'unverified'
+  resolution_evidence?: string
+}
+
 export interface Feedback {
   passed: boolean
   /** 四维加权总分（人工打回时可能为 0）。 */
@@ -58,6 +74,8 @@ export interface Feedback {
   attempt: number
   issues?: string[]
   suggestions?: string[]
+  repair_tasks?: RepairTask[]
+  fatal_issues?: string[]
   /** 四个维度的分数，仅 VLM 审查会有。审核员据此看出"是哪一项拖垮了它"。 */
   logic_score?: number
   readability_score?: number

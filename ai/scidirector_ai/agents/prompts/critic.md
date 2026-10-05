@@ -238,6 +238,17 @@ score = logic_score × 0.35
   "pacing_score": 0.60,
   "aesthetics_score": 0.65,
   "fatal_issues": [],
+  "repair_tasks": [
+    {
+      "category": "readability",
+      "severity": "major",
+      "frame_indices": [2, 3],
+      "target": "x 轴刻度标签",
+      "evidence": "第 2、3 帧相邻刻度标签重叠，数值无法辨认",
+      "instruction": "把 x 轴刻度从 8 个减到 5 个，并把标签旋转 45 度",
+      "acceptance": "第 2、3 帧每个刻度标签独立可读，标签间不再重叠"
+    }
+  ],
   "issues": [
     "第 2、3 帧的坐标轴标签相互重叠，无法辨认具体数值",
     "末帧与首帧的画面差异很小，动画推进过快"
@@ -261,6 +272,7 @@ score = logic_score × 0.35
 | `aesthetics_score` | number | ✅ | 0.0 ~ 1.0 |
 | `issues` | string[] | ✅ | 发现的问题。**通过时可以是空数组** |
 | `fatal_issues` | string[] | ✅ | 仅列出有帧号和可见证据的致命问题；没有则为空数组 |
+| `repair_tasks` | object[] | ✅ | 每个需修改问题必须给定位、target、evidence、instruction、acceptance |
 | `suggestions` | string[] | ✅ | 可执行的修改指令。**不通过时不得为空**；通过时必须是空数组 |
 
 ### 输出前请自查
@@ -273,6 +285,15 @@ score = logic_score × 0.35
 ---
 
 ## 六、必须避免的行为
+
+- 判负必须输出可验收的 repair_tasks。每项包含 category（logic/readability/pacing/layout/rendering）、
+  severity（blocking/major/advisory）、frame_indices（1 开始的真实抽帧号）或 start_sec/end_sec、
+  target（具体元素/阶段）、evidence（当前可见证据）、instruction（具体修改）、acceptance（复审条件）。
+  能明确定位元素时可补 region=[x,y,width,height]（各值归一化到 0～1）。不能猜测位置或编造证据。
+- blocking 仅用于有证据的科学错误、关键内容缺失或无法阅读/交付的画面。
+  科学解释错误和整段结构失效可以要求重构；其它问题按元素定向修复。
+  可选审美建议标为 advisory，不得单凭个人审美升级为 blocking。
+  程序按严重度选择本轮最多 3 项；完整问题清单仍需保留。
 
 - **不要编造问题来显得严格。** 画面确实合格就给高分、给 `passed: true`。
   凭空造出的"问题"会触发一轮毫无必要的重渲染，这是实打实的成本。

@@ -31,6 +31,7 @@ from ..logging import get_logger
 from ..schemas import (
     CriticFeedback,
     FeedbackSource,
+    RepairTask,
     RenderArtifact,
     ShotSpec,
     StyleGuide,
@@ -85,6 +86,7 @@ class _RawCritique(BaseModel):
     suggestions: list[str] = Field(default_factory=list)
     # Only concrete rendering failures may veto a quantitatively passing shot.
     fatal_issues: list[str] = Field(default_factory=list)
+    repair_tasks: list[RepairTask] = Field(default_factory=list)
 
 
 @dataclass
@@ -234,6 +236,24 @@ class CriticAgent(Agent):
 
         assert isinstance(parsed, _RawCritique)
         feedback, program_passed = self._decide(parsed, shot=shot, attempt=attempt)
+        if not feedback.passed and not _valid_task_locations(feedback.repair_tasks, artifact):
+            # One bounded clarification, never a render retry with vague feedback.
+            try:
+                parsed = self.llm.vision_json(
+                    system_prompt,
+                    user_prompt + "\n上一份判负反馈缺少有效 repair_tasks。请重新输出完整 JSON，"
+                    "补充真实帧号/时间段、具体对象、画面证据、修改指令与可验收条件。"
+                    "不能用泛泛建议或编造定位补齐。上一份输出：" + str(parsed.model_dump()),
+                    _RawCritique, images=frames, task=Task.CRITIQUE,
+                )
+                feedback, program_passed = self._decide(parsed, shot=shot, attempt=attempt)
+            except (LLMError, LLMParseError) as exc:
+                return self._degrade(shot=shot, attempt=attempt,
+                                     reason=f"审核意见定位补充失败：{exc}", frames=len(frames))
+            if not feedback.passed and not _valid_task_locations(feedback.repair_tasks, artifact):
+                return self._degrade(shot=shot, attempt=attempt,
+                                     reason="审核意见缺少有效定位、证据或验收条件，停止无目标重做",
+                                     frames=len(frames))
 
         outcome = CritiqueOutcome(
             feedback=feedback,
@@ -321,11 +341,20 @@ class CriticAgent(Agent):
             issues.append(
                 "维度未达硬性下限：" + "、".join(_DIMENSION_LABELS.get(f, f) for f in floor_failures)
             )
+
+        repair_tasks = _normalize_repair_tasks(
+            raw.repair_tasks, attempt=attempt,
+        )
+        blocking = [task for task in repair_tasks if task.severity == "blocking"]
+        if blocking:
+            passed = False
+            if not suggestions:
+                suggestions = [task.instruction for task in blocking]
         if verdict_mismatch(bool(raw.passed), program_passed):
             issues.append(
                 f"模型自报通过但程序判定未通过（加权得分 {score:.2f}，阈值 {threshold:.2f}）"
             )
-        elif program_passed and not raw.passed and not model_veto:
+        elif program_passed and not raw.passed and not model_veto and not blocking:
             issues.append("模型自报未通过但未指出可核对的致命问题，已按量化评分放行")
         if model_veto:
             issues.append("发现致命问题：" + "；".join(dict.fromkeys(fatal_issues)))
@@ -338,6 +367,7 @@ class CriticAgent(Agent):
             # 通过时不给建议：下游若按"有建议即重做"处理，
             # 带着建议的通过会导致无限重做已经合格的镜头。
             suggestions=suggestions if not passed else [],
+            repair_tasks=repair_tasks,
             model=self.settings.vision_target().model,
             source=FeedbackSource.VLM,
             attempt=attempt,
@@ -405,6 +435,27 @@ def _safe_frame_change_summary(frames: list[str]) -> str:
         return frame_change_summary(frames)
     except (OSError, ValueError, RuntimeError):
         return "抽帧无法读取，不能提供像素变化统计。"
+
+
+def _normalize_repair_tasks(
+    tasks: list[RepairTask],
+    *,
+    attempt: int,
+) -> list[RepairTask]:
+    """Do not invent evidence to convert legacy vague feedback into a repair."""
+    return [task.model_copy(update={
+        "task_id": f"r{attempt}-{index + 1:02d}", "status": "open",
+        "resolution_evidence": "",
+    }) for index, task in enumerate(tasks) if task.actionable]
+
+
+def _valid_task_locations(tasks: list[RepairTask], artifact: RenderArtifact) -> bool:
+    required = [task for task in tasks if task.severity != "advisory"]
+    return bool(required) and all(
+        task.actionable and task.end_sec <= artifact.duration_sec
+        and all(index <= len(artifact.frame_samples) for index in task.frame_indices)
+        for task in required
+    )
 
 
 #: 判定"不可执行"的关键词。这些词描述的是感受，不是可操作的修改。

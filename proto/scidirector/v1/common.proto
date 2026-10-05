@@ -129,6 +129,23 @@ message RenderArtifact {
   double render_cost_sec = 14;        // 渲染耗时，用于指标
 }
 
+// 可验收的修复任务。时间与帧号均针对当前镜头；帧号从 1 开始。
+message RepairTask {
+  string task_id = 1;
+  string category = 2;              // logic / readability / pacing / layout / rendering
+  string severity = 3;              // blocking / major / advisory
+  double start_sec = 4;
+  double end_sec = 5;
+  repeated int32 frame_indices = 6;
+  string target = 7;                // 具体画面元素或阶段
+  string evidence = 8;
+  string instruction = 9;
+  string acceptance = 10;
+  repeated double region = 11;     // 可选：归一化 x/y/width/height
+  string status = 12;              // open / partial / resolved / unverified
+  string resolution_evidence = 13;
+}
+
 // 审查意见：VLM 与人类共用。
 message CriticFeedback {
   bool passed = 1;                  // 是否通过
@@ -144,6 +161,8 @@ message CriticFeedback {
   double pacing_score = 11;         // 分维度得分：节奏
   double aesthetics_score = 12;     // 分维度得分：美观度
   int64 created_at_unix_ms = 13;
+  repeated RepairTask repair_tasks = 14;
+  repeated string fatal_issues = 15;
 }
 
 // 流水线事件：Python -> Go 的实时事件，Go 转发给 WebSocket 与 Redis 事件流。

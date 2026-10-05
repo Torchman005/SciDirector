@@ -19,6 +19,7 @@ from .logging import get_logger
 from .pb import _PB_ROOT  # noqa: F401 - 导入即完成 sys.path 注入，必须先于 pb 导入
 from .schemas import (
     CriticFeedback,
+    RepairTask,
     FeedbackSource,
     RenderArtifact,
     SceneTag,
@@ -167,6 +168,8 @@ def feedback_to_pb(feedback: CriticFeedback | None) -> Any:
         score=feedback.score,
         issues=list(feedback.issues),
         suggestions=list(feedback.suggestions),
+        repair_tasks=[common.RepairTask(**task.model_dump()) for task in feedback.repair_tasks],
+        fatal_issues=list(feedback.fatal_issues),
         raw_response=feedback.raw_response,
         model=feedback.model,
         source=SOURCE_TO_PB.get(feedback.source, common.FEEDBACK_SOURCE_UNSPECIFIED),
@@ -203,6 +206,14 @@ def feedback_from_pb(message: Any) -> CriticFeedback:
         passed=passed,
         score=float(message.score),
         issues=list(message.issues),
+        repair_tasks=[RepairTask(
+            task_id=task.task_id, category=task.category or "layout",
+            severity=task.severity or "major", start_sec=task.start_sec, end_sec=task.end_sec,
+            frame_indices=list(task.frame_indices), target=task.target, evidence=task.evidence,
+            instruction=task.instruction, acceptance=task.acceptance, region=list(task.region),
+            status=task.status or "open", resolution_evidence=task.resolution_evidence,
+        ) for task in message.repair_tasks],
+        fatal_issues=list(message.fatal_issues),
         suggestions=suggestions,
         raw_response=message.raw_response,
         model=message.model,

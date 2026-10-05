@@ -516,6 +516,11 @@ def _feedback_to_text(feedback: CriticFeedback | None) -> str:
     """
     if feedback is None:
         return ""
+    from .review_tasks import format_repairs
+
+    repairs = format_repairs(feedback)
+    if repairs:
+        return repairs
     parts: list[str] = []
     if feedback.issues:
         parts.append("【画面问题】\n" + "\n".join(f"- {i}" for i in feedback.issues[:6]))

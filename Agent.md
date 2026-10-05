@@ -235,6 +235,9 @@ SciDirector/
 - 通过阈值：`score >= 0.75` 且 `critical_issues == 0`。
 
 ### 5.4 循环与熔断
+
+审查输出 `repair_tasks`：编号、类别、严重度、时间/帧定位、对象、证据、修改指令和验收条件。
+每轮按严重度选择最多 3 项修复，保留完整清单和旧字段。判负意见缺少有效定位时仅补充一次，仍无有效目标则转人工，禁止伪造证据启动渲染；有证据的 blocking 问题可以否决高分镜头。
 ```
 plan → for each shot:
          coder → render → critic
@@ -278,6 +281,7 @@ PENDING ──▶ GENERATING ──▶ RENDERING ──▶ CRITIQUING ──┬�
 - 提示词（prompt）与代码分离，放在 `agents/prompts/`，便于版本化与 A/B。
 
 ### 7.3 通用
+- 每轮阶段性代码改动完成并验证后，必须提交并推送 GitHub（用户于 2026-10-05 明确要求）。
 - **契约先行**：先改 `proto/`，再 `make proto`，最后改两侧实现。
 - 任何"魔法数字"必须具名常量并注释来源。
 - 禁止提交密钥；一律走环境变量，模板见 `.env.example`。

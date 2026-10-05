@@ -153,12 +153,31 @@ const (
 	FeedbackSystem FeedbackSource = "SYSTEM" // 沙盒编译报错等技术信息
 )
 
+// RepairTask 是带定位、证据和验收条件的修复任务。
+type RepairTask struct {
+	TaskID             string    `json:"task_id"`
+	Category           string    `json:"category"`
+	Severity           string    `json:"severity"`
+	StartSec           float64   `json:"start_sec"`
+	EndSec             float64   `json:"end_sec"`
+	FrameIndices       []int32   `json:"frame_indices,omitempty"`
+	Target             string    `json:"target"`
+	Evidence           string    `json:"evidence"`
+	Instruction        string    `json:"instruction"`
+	Acceptance         string    `json:"acceptance"`
+	Region             []float64 `json:"region,omitempty"`
+	Status             string    `json:"status"`
+	ResolutionEvidence string    `json:"resolution_evidence,omitempty"`
+}
+
 // Feedback 是一条审查/修改意见。
 type Feedback struct {
 	Passed      bool           `json:"passed"`
 	Score       float64        `json:"score"`
 	Issues      []string       `json:"issues,omitempty"`
 	Suggestions []string       `json:"suggestions,omitempty"` // 必须是可执行的修改指令
+	RepairTasks []RepairTask   `json:"repair_tasks,omitempty"`
+	FatalIssues []string       `json:"fatal_issues,omitempty"`
 	RawResponse string         `json:"raw_response,omitempty"`
 	Model       string         `json:"model,omitempty"`
 	Source      FeedbackSource `json:"source"`

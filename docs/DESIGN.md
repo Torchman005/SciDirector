@@ -366,16 +366,18 @@ Windows 中文环境下子进程 stderr 默认走 GBK，回灌给模型的编译
   中文系统提示词独立成 `agents/prompts/critic.md`，与代码分离。
 - **rubric 维度**（可解释、可打分）：
   `逻辑一致性 / 文字可读性(字号、对比度、是否截断) / 信息密度 / 节奏 / 美观度`。
-- **输出强约束 JSON**，必须是 `{"passed": bool, "scores": {...}, "suggestions": [...]}`。
+- **输出强约束 JSON**：`passed/score`、四个 `*_score`、`issues/suggestions/fatal_issues` 和 `repair_tasks`。
   解析失败重试一次，再失败**降级为"人工复核"而非直接判失败**。
-- **可执行性约束**：suggestion 必须能被转换为代码级修改（见 `Agent.md` §5.3）。
+- **可执行性约束**：`repair_tasks` 必须包含真实帧号或时间段、对象、证据、修改指令和验收条件。
+  程序分配任务编号，按严重度每轮选择最多 3 项；未定位的判负意见仅补充一次，仍无目标则转人工。
+  清单与旧字段一同经过 protobuf、Go 领域模型和 Redis，人工与自动重做共用格式化入口。
 
 #### 实现时的关键决策：**模型只能更严格，不能更宽松**
 
 `passed` 的最终取值是 **模型判定 AND 程序侧复核**：
 
 ```
-passed = model_passed AND program_passed
+passed = program_passed AND 没有有证据的 fatal_issues / blocking 修复任务
 program_passed = 加权得分 ≥ 阈值 AND logic ≥ 0.70 AND readability ≥ 0.60
 ```
 

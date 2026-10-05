@@ -635,6 +635,147 @@ func (x *RenderArtifact) GetRenderCostSec() float64 {
 	return 0
 }
 
+// 可验收的修复任务。时间与帧号均针对当前镜头；帧号从 1 开始。
+type RepairTask struct {
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	TaskId             string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	Category           string                 `protobuf:"bytes,2,opt,name=category,proto3" json:"category,omitempty"` // logic / readability / pacing / layout / rendering
+	Severity           string                 `protobuf:"bytes,3,opt,name=severity,proto3" json:"severity,omitempty"` // blocking / major / advisory
+	StartSec           float64                `protobuf:"fixed64,4,opt,name=start_sec,json=startSec,proto3" json:"start_sec,omitempty"`
+	EndSec             float64                `protobuf:"fixed64,5,opt,name=end_sec,json=endSec,proto3" json:"end_sec,omitempty"`
+	FrameIndices       []int32                `protobuf:"varint,6,rep,packed,name=frame_indices,json=frameIndices,proto3" json:"frame_indices,omitempty"`
+	Target             string                 `protobuf:"bytes,7,opt,name=target,proto3" json:"target,omitempty"` // 具体画面元素或阶段
+	Evidence           string                 `protobuf:"bytes,8,opt,name=evidence,proto3" json:"evidence,omitempty"`
+	Instruction        string                 `protobuf:"bytes,9,opt,name=instruction,proto3" json:"instruction,omitempty"`
+	Acceptance         string                 `protobuf:"bytes,10,opt,name=acceptance,proto3" json:"acceptance,omitempty"`
+	Region             []float64              `protobuf:"fixed64,11,rep,packed,name=region,proto3" json:"region,omitempty"` // 可选：归一化 x/y/width/height
+	Status             string                 `protobuf:"bytes,12,opt,name=status,proto3" json:"status,omitempty"`          // open / partial / resolved / unverified
+	ResolutionEvidence string                 `protobuf:"bytes,13,opt,name=resolution_evidence,json=resolutionEvidence,proto3" json:"resolution_evidence,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *RepairTask) Reset() {
+	*x = RepairTask{}
+	mi := &file_scidirector_v1_common_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RepairTask) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RepairTask) ProtoMessage() {}
+
+func (x *RepairTask) ProtoReflect() protoreflect.Message {
+	mi := &file_scidirector_v1_common_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RepairTask.ProtoReflect.Descriptor instead.
+func (*RepairTask) Descriptor() ([]byte, []int) {
+	return file_scidirector_v1_common_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *RepairTask) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+func (x *RepairTask) GetCategory() string {
+	if x != nil {
+		return x.Category
+	}
+	return ""
+}
+
+func (x *RepairTask) GetSeverity() string {
+	if x != nil {
+		return x.Severity
+	}
+	return ""
+}
+
+func (x *RepairTask) GetStartSec() float64 {
+	if x != nil {
+		return x.StartSec
+	}
+	return 0
+}
+
+func (x *RepairTask) GetEndSec() float64 {
+	if x != nil {
+		return x.EndSec
+	}
+	return 0
+}
+
+func (x *RepairTask) GetFrameIndices() []int32 {
+	if x != nil {
+		return x.FrameIndices
+	}
+	return nil
+}
+
+func (x *RepairTask) GetTarget() string {
+	if x != nil {
+		return x.Target
+	}
+	return ""
+}
+
+func (x *RepairTask) GetEvidence() string {
+	if x != nil {
+		return x.Evidence
+	}
+	return ""
+}
+
+func (x *RepairTask) GetInstruction() string {
+	if x != nil {
+		return x.Instruction
+	}
+	return ""
+}
+
+func (x *RepairTask) GetAcceptance() string {
+	if x != nil {
+		return x.Acceptance
+	}
+	return ""
+}
+
+func (x *RepairTask) GetRegion() []float64 {
+	if x != nil {
+		return x.Region
+	}
+	return nil
+}
+
+func (x *RepairTask) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *RepairTask) GetResolutionEvidence() string {
+	if x != nil {
+		return x.ResolutionEvidence
+	}
+	return ""
+}
+
 // 审查意见：VLM 与人类共用。
 type CriticFeedback struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
@@ -651,13 +792,15 @@ type CriticFeedback struct {
 	PacingScore      float64                `protobuf:"fixed64,11,opt,name=pacing_score,json=pacingScore,proto3" json:"pacing_score,omitempty"`                // 分维度得分：节奏
 	AestheticsScore  float64                `protobuf:"fixed64,12,opt,name=aesthetics_score,json=aestheticsScore,proto3" json:"aesthetics_score,omitempty"`    // 分维度得分：美观度
 	CreatedAtUnixMs  int64                  `protobuf:"varint,13,opt,name=created_at_unix_ms,json=createdAtUnixMs,proto3" json:"created_at_unix_ms,omitempty"`
+	RepairTasks      []*RepairTask          `protobuf:"bytes,14,rep,name=repair_tasks,json=repairTasks,proto3" json:"repair_tasks,omitempty"`
+	FatalIssues      []string               `protobuf:"bytes,15,rep,name=fatal_issues,json=fatalIssues,proto3" json:"fatal_issues,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
 
 func (x *CriticFeedback) Reset() {
 	*x = CriticFeedback{}
-	mi := &file_scidirector_v1_common_proto_msgTypes[3]
+	mi := &file_scidirector_v1_common_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -669,7 +812,7 @@ func (x *CriticFeedback) String() string {
 func (*CriticFeedback) ProtoMessage() {}
 
 func (x *CriticFeedback) ProtoReflect() protoreflect.Message {
-	mi := &file_scidirector_v1_common_proto_msgTypes[3]
+	mi := &file_scidirector_v1_common_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -682,7 +825,7 @@ func (x *CriticFeedback) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CriticFeedback.ProtoReflect.Descriptor instead.
 func (*CriticFeedback) Descriptor() ([]byte, []int) {
-	return file_scidirector_v1_common_proto_rawDescGZIP(), []int{3}
+	return file_scidirector_v1_common_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *CriticFeedback) GetPassed() bool {
@@ -776,6 +919,20 @@ func (x *CriticFeedback) GetCreatedAtUnixMs() int64 {
 	return 0
 }
 
+func (x *CriticFeedback) GetRepairTasks() []*RepairTask {
+	if x != nil {
+		return x.RepairTasks
+	}
+	return nil
+}
+
+func (x *CriticFeedback) GetFatalIssues() []string {
+	if x != nil {
+		return x.FatalIssues
+	}
+	return nil
+}
+
 // 流水线事件：Python -> Go 的实时事件，Go 转发给 WebSocket 与 Redis 事件流。
 type PipelineEvent struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -799,7 +956,7 @@ type PipelineEvent struct {
 
 func (x *PipelineEvent) Reset() {
 	*x = PipelineEvent{}
-	mi := &file_scidirector_v1_common_proto_msgTypes[4]
+	mi := &file_scidirector_v1_common_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -811,7 +968,7 @@ func (x *PipelineEvent) String() string {
 func (*PipelineEvent) ProtoMessage() {}
 
 func (x *PipelineEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_scidirector_v1_common_proto_msgTypes[4]
+	mi := &file_scidirector_v1_common_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -824,7 +981,7 @@ func (x *PipelineEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PipelineEvent.ProtoReflect.Descriptor instead.
 func (*PipelineEvent) Descriptor() ([]byte, []int) {
-	return file_scidirector_v1_common_proto_rawDescGZIP(), []int{4}
+	return file_scidirector_v1_common_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *PipelineEvent) GetJobId() string {
@@ -942,7 +1099,7 @@ type JobProgress struct {
 
 func (x *JobProgress) Reset() {
 	*x = JobProgress{}
-	mi := &file_scidirector_v1_common_proto_msgTypes[5]
+	mi := &file_scidirector_v1_common_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -954,7 +1111,7 @@ func (x *JobProgress) String() string {
 func (*JobProgress) ProtoMessage() {}
 
 func (x *JobProgress) ProtoReflect() protoreflect.Message {
-	mi := &file_scidirector_v1_common_proto_msgTypes[5]
+	mi := &file_scidirector_v1_common_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -967,7 +1124,7 @@ func (x *JobProgress) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JobProgress.ProtoReflect.Descriptor instead.
 func (*JobProgress) Descriptor() ([]byte, []int) {
-	return file_scidirector_v1_common_proto_rawDescGZIP(), []int{5}
+	return file_scidirector_v1_common_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *JobProgress) GetJobId() string {
@@ -1035,7 +1192,7 @@ type HealthRequest struct {
 
 func (x *HealthRequest) Reset() {
 	*x = HealthRequest{}
-	mi := &file_scidirector_v1_common_proto_msgTypes[6]
+	mi := &file_scidirector_v1_common_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1047,7 +1204,7 @@ func (x *HealthRequest) String() string {
 func (*HealthRequest) ProtoMessage() {}
 
 func (x *HealthRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_scidirector_v1_common_proto_msgTypes[6]
+	mi := &file_scidirector_v1_common_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1060,7 +1217,7 @@ func (x *HealthRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthRequest.ProtoReflect.Descriptor instead.
 func (*HealthRequest) Descriptor() ([]byte, []int) {
-	return file_scidirector_v1_common_proto_rawDescGZIP(), []int{6}
+	return file_scidirector_v1_common_proto_rawDescGZIP(), []int{7}
 }
 
 type HealthResponse struct {
@@ -1078,7 +1235,7 @@ type HealthResponse struct {
 
 func (x *HealthResponse) Reset() {
 	*x = HealthResponse{}
-	mi := &file_scidirector_v1_common_proto_msgTypes[7]
+	mi := &file_scidirector_v1_common_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1090,7 +1247,7 @@ func (x *HealthResponse) String() string {
 func (*HealthResponse) ProtoMessage() {}
 
 func (x *HealthResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_scidirector_v1_common_proto_msgTypes[7]
+	mi := &file_scidirector_v1_common_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1103,7 +1260,7 @@ func (x *HealthResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthResponse.ProtoReflect.Descriptor instead.
 func (*HealthResponse) Descriptor() ([]byte, []int) {
-	return file_scidirector_v1_common_proto_rawDescGZIP(), []int{7}
+	return file_scidirector_v1_common_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *HealthResponse) GetHealthy() bool {
@@ -1198,7 +1355,25 @@ const file_scidirector_v1_common_proto_rawDesc = "" +
 	"\x06engine\x18\v \x01(\tR\x06engine\x12#\n" +
 	"\rframe_samples\x18\f \x03(\tR\fframeSamples\x12-\n" +
 	"\x13rendered_at_unix_ms\x18\r \x01(\x03R\x10renderedAtUnixMs\x12&\n" +
-	"\x0frender_cost_sec\x18\x0e \x01(\x01R\rrenderCostSec\"\xcc\x03\n" +
+	"\x0frender_cost_sec\x18\x0e \x01(\x01R\rrenderCostSec\"\x8f\x03\n" +
+	"\n" +
+	"RepairTask\x12\x17\n" +
+	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x1a\n" +
+	"\bcategory\x18\x02 \x01(\tR\bcategory\x12\x1a\n" +
+	"\bseverity\x18\x03 \x01(\tR\bseverity\x12\x1b\n" +
+	"\tstart_sec\x18\x04 \x01(\x01R\bstartSec\x12\x17\n" +
+	"\aend_sec\x18\x05 \x01(\x01R\x06endSec\x12#\n" +
+	"\rframe_indices\x18\x06 \x03(\x05R\fframeIndices\x12\x16\n" +
+	"\x06target\x18\a \x01(\tR\x06target\x12\x1a\n" +
+	"\bevidence\x18\b \x01(\tR\bevidence\x12 \n" +
+	"\vinstruction\x18\t \x01(\tR\vinstruction\x12\x1e\n" +
+	"\n" +
+	"acceptance\x18\n" +
+	" \x01(\tR\n" +
+	"acceptance\x12\x16\n" +
+	"\x06region\x18\v \x03(\x01R\x06region\x12\x16\n" +
+	"\x06status\x18\f \x01(\tR\x06status\x12/\n" +
+	"\x13resolution_evidence\x18\r \x01(\tR\x12resolutionEvidence\"\xae\x04\n" +
 	"\x0eCriticFeedback\x12\x16\n" +
 	"\x06passed\x18\x01 \x01(\bR\x06passed\x12\x14\n" +
 	"\x05score\x18\x02 \x01(\x01R\x05score\x12\x16\n" +
@@ -1214,7 +1389,9 @@ const file_scidirector_v1_common_proto_rawDesc = "" +
 	" \x01(\x01R\x10readabilityScore\x12!\n" +
 	"\fpacing_score\x18\v \x01(\x01R\vpacingScore\x12)\n" +
 	"\x10aesthetics_score\x18\f \x01(\x01R\x0faestheticsScore\x12+\n" +
-	"\x12created_at_unix_ms\x18\r \x01(\x03R\x0fcreatedAtUnixMs\"\xe6\x03\n" +
+	"\x12created_at_unix_ms\x18\r \x01(\x03R\x0fcreatedAtUnixMs\x12=\n" +
+	"\frepair_tasks\x18\x0e \x03(\v2\x1a.scidirector.v1.RepairTaskR\vrepairTasks\x12!\n" +
+	"\ffatal_issues\x18\x0f \x03(\tR\vfatalIssues\"\xe6\x03\n" +
 	"\rPipelineEvent\x12\x15\n" +
 	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12\x17\n" +
 	"\ashot_id\x18\x02 \x01(\tR\x06shotId\x12\x12\n" +
@@ -1300,7 +1477,7 @@ func file_scidirector_v1_common_proto_rawDescGZIP() []byte {
 }
 
 var file_scidirector_v1_common_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
-var file_scidirector_v1_common_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
+var file_scidirector_v1_common_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
 var file_scidirector_v1_common_proto_goTypes = []any{
 	(SceneTag)(0),          // 0: scidirector.v1.SceneTag
 	(RenderEngine)(0),      // 1: scidirector.v1.RenderEngine
@@ -1309,26 +1486,28 @@ var file_scidirector_v1_common_proto_goTypes = []any{
 	(*TimeRange)(nil),      // 4: scidirector.v1.TimeRange
 	(*ShotSpec)(nil),       // 5: scidirector.v1.ShotSpec
 	(*RenderArtifact)(nil), // 6: scidirector.v1.RenderArtifact
-	(*CriticFeedback)(nil), // 7: scidirector.v1.CriticFeedback
-	(*PipelineEvent)(nil),  // 8: scidirector.v1.PipelineEvent
-	(*JobProgress)(nil),    // 9: scidirector.v1.JobProgress
-	(*HealthRequest)(nil),  // 10: scidirector.v1.HealthRequest
-	(*HealthResponse)(nil), // 11: scidirector.v1.HealthResponse
-	nil,                    // 12: scidirector.v1.ShotSpec.MetaEntry
+	(*RepairTask)(nil),     // 7: scidirector.v1.RepairTask
+	(*CriticFeedback)(nil), // 8: scidirector.v1.CriticFeedback
+	(*PipelineEvent)(nil),  // 9: scidirector.v1.PipelineEvent
+	(*JobProgress)(nil),    // 10: scidirector.v1.JobProgress
+	(*HealthRequest)(nil),  // 11: scidirector.v1.HealthRequest
+	(*HealthResponse)(nil), // 12: scidirector.v1.HealthResponse
+	nil,                    // 13: scidirector.v1.ShotSpec.MetaEntry
 }
 var file_scidirector_v1_common_proto_depIdxs = []int32{
 	0,  // 0: scidirector.v1.ShotSpec.tag:type_name -> scidirector.v1.SceneTag
 	1,  // 1: scidirector.v1.ShotSpec.engine:type_name -> scidirector.v1.RenderEngine
-	12, // 2: scidirector.v1.ShotSpec.meta:type_name -> scidirector.v1.ShotSpec.MetaEntry
+	13, // 2: scidirector.v1.ShotSpec.meta:type_name -> scidirector.v1.ShotSpec.MetaEntry
 	3,  // 3: scidirector.v1.CriticFeedback.source:type_name -> scidirector.v1.FeedbackSource
-	2,  // 4: scidirector.v1.PipelineEvent.status:type_name -> scidirector.v1.ShotStatus
-	6,  // 5: scidirector.v1.PipelineEvent.artifact:type_name -> scidirector.v1.RenderArtifact
-	7,  // 6: scidirector.v1.PipelineEvent.feedback:type_name -> scidirector.v1.CriticFeedback
-	7,  // [7:7] is the sub-list for method output_type
-	7,  // [7:7] is the sub-list for method input_type
-	7,  // [7:7] is the sub-list for extension type_name
-	7,  // [7:7] is the sub-list for extension extendee
-	0,  // [0:7] is the sub-list for field type_name
+	7,  // 4: scidirector.v1.CriticFeedback.repair_tasks:type_name -> scidirector.v1.RepairTask
+	2,  // 5: scidirector.v1.PipelineEvent.status:type_name -> scidirector.v1.ShotStatus
+	6,  // 6: scidirector.v1.PipelineEvent.artifact:type_name -> scidirector.v1.RenderArtifact
+	8,  // 7: scidirector.v1.PipelineEvent.feedback:type_name -> scidirector.v1.CriticFeedback
+	8,  // [8:8] is the sub-list for method output_type
+	8,  // [8:8] is the sub-list for method input_type
+	8,  // [8:8] is the sub-list for extension type_name
+	8,  // [8:8] is the sub-list for extension extendee
+	0,  // [0:8] is the sub-list for field type_name
 }
 
 func init() { file_scidirector_v1_common_proto_init() }
@@ -1342,7 +1521,7 @@ func file_scidirector_v1_common_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_scidirector_v1_common_proto_rawDesc), len(file_scidirector_v1_common_proto_rawDesc)),
 			NumEnums:      4,
-			NumMessages:   9,
+			NumMessages:   10,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
