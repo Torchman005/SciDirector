@@ -71,6 +71,9 @@ class _StubLLM:
 
 
 def make_settings(**overrides: object) -> Settings:
+    # These fixtures exercise the retained free-code branch. Scene defaults have
+    # their own contract tests in test_scene.py.
+    overrides.setdefault("coder_scene_mode", "code")
     return Settings(env="test", llm_provider="mock", **overrides)  # type: ignore[arg-type]
 
 

@@ -267,6 +267,8 @@ class Settings(BaseSettings):
     rag_few_shot_k: int = Field(default=2, ge=0, le=7)
     #: HTML 首稿在完整视频渲染前做 5 时刻实际布局/运行预检；整体 mock 不执行。
     coder_preflight_enabled: bool = True
+    #: HTML 默认生成场景规格；code 是特殊镜头/旧自由代码的显式出口。
+    coder_scene_mode: Literal["structured", "code"] = "structured"
     #: 送审抽帧的缩放宽度（像素）。
     #:
     #: **这个值必须同时告诉审查智能体**，否则会出现一个很隐蔽的单位错配：

@@ -98,6 +98,8 @@ SciDirector/
 │   │   ├── llm.py               # LLM/VLM 客户端（重试/结构化输出/成本/mock）
 │   │   ├── media.py             # ffmpeg 封装、抽帧、lavfi 环境镜头、字体探测
 │   │   ├── renderer.py          # 渲染器统一抽象（Manim/Html/Ambient 路由与就绪探测）
+│   │   ├── scene.py             # 内部 SceneSpec 校验与 HTML 编译（跨语言仍传 code）
+│   │   ├── scene_runtime.js     # 固定 HTML/SVG 组件与确定性 seek（作为包资源部署）
 │   │   ├── graph/               # state / nodes / builder / checkpoint
 │   │   ├── agents/              # base / director / coder / critic
 │   │   │   └── prompts/         # 提示词独立成 .md，与代码分离
@@ -225,6 +227,14 @@ SciDirector/
 
 - 硬约束：生成的代码**禁止**网络访问、文件系统写越界、`subprocess`、`eval` 之外的动态执行；
   必须只使用沙盒白名单内的导入。
+
+HTML 引擎默认 `SCID_CODER_SCENE_MODE=structured`：Coder 返回内部 `SceneSpec v1`，
+固定渲染器编译 text/card/code/bars/rect/circle/line 与归一化 keyframes，输出仍为 HTML `code`。
+DSL 嵌入不可执行 JSON，重做只回读规格，不向模型回灌运行时代码；唯一 id、数据/单位、字号、
+安全边距、时间轴及首末帧先校验，再走现有 BrowserPreflight 和完整 VLM 审核。
+结构解析、布局及浏览器问题共用一次生成内修复预算，不静默降级为自由 HTML。
+Manim 路由保留。全局 `code` 或 `shot.meta.generation_mode=code` 为复杂镜头显式出口；
+历史自由 HTML 修订保持原路径。DSL 是 Python 内部表示，未扩展 proto。
 
 ### 5.3 Critic Agent（审查 / VLM）
 - 输入：抽帧图像（3~6 帧，等间隔）+ 该镜头 `narration` + `visual_brief`
@@ -544,6 +554,8 @@ make up / make down   # docker compose 全栈
 ---
 
 ## 10. 迭代日志
+
+- **2026-10-05 · HTML-first 场景规格首版**：HTML 引擎默认结构化生成，固定组件负责 DOM/SVG 与纯时间驱动播放；规格随 HTML 保存，修订保留元素编号。共享一次 schema/布局/浏览器修复预算，保留 Manim、历史 HTML 和显式 code 出口；运行时资源纳入 Python 包和配置透传。设计、边界及验证见 `docs/HTML_SCENES.md`。
 
 | 版本 | 阶段 | 变更 |
 | --- | --- | --- |

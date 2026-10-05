@@ -90,6 +90,7 @@ x-common-env: &common-env
   # 显式指定浏览器可执行文件（Playwright 的 build 号与当前包不匹配时用）。
   SCID_CHROME: ${SCID_CHROME:-}
   SCID_CODER_PREFLIGHT_ENABLED: ${SCID_CODER_PREFLIGHT_ENABLED:-true}
+  SCID_CODER_SCENE_MODE: ${SCID_CODER_SCENE_MODE:-structured}
   #
   # 在**容器里**启用沙盒的网络/只读隔离需要额外的容器配置：
   #   `unshare` 是 Docker 默认 seccomp 配置明确拦截的系统调用，容器内调用会得到

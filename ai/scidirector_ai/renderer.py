@@ -7,7 +7,7 @@
 | `manim` | **ManimSandbox**（沙盒子进程） | Python + Manim + LaTeX | 10~60s | MATH |
 | `d3` / `echarts` | headless 浏览器逐帧截图 + ffmpeg 编码 | Playwright + Chromium | 5~30s | DATA |
 | `code_anim` | 同 HTML 路径（高亮 + 打字动画） | Playwright + Chromium | 5~20s | CODE |
-| `motion` | 同 HTML 路径（由模型自由绘制二维画面） | Playwright + Chromium | 5~30s | MOTION / AMBIENCE |
+| `motion` | 同 HTML 路径（默认由场景规格编译） | Playwright + Chromium | 5~30s | MOTION / AMBIENCE |
 | `stock` | ffmpeg lavfi 动态渐变 | 仅 ffmpeg | < 2s | **仅降级**（浏览器不可用时兜底） |
 
 分层约定：

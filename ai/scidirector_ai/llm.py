@@ -42,6 +42,10 @@ class LLMError(RuntimeError):
 class LLMParseError(LLMError):
     """模型返回的内容无法解析为要求的结构。"""
 
+    def __init__(self, message: str, *, raw_response: str = "") -> None:
+        super().__init__(message)
+        self.raw_response = raw_response
+
 
 @dataclass
 class Usage:
@@ -84,6 +88,7 @@ class Message:
 class Task:
     PLAN = "plan"          # 导演：脚本 -> 分镜表
     CODE = "code"          # 编码：分镜 -> 渲染源码
+    SCENE = "scene"        # HTML：分镜 -> 受约束的内部场景规格
     CRITIQUE = "critique"  # 审查：抽帧 -> 评审意见
     FREE = "free"          # 自由文本
 
@@ -295,10 +300,12 @@ class LLMClient:
         images: Sequence[str] = (),
         task: str = Task.FREE,
         role: str = "text",
+        max_parse_attempts: int = 2,
     ) -> BaseModel:
         """结构化对话：要求模型返回 JSON 并解析为给定 Pydantic 模型。
 
-        解析或校验失败时**重试一次**（附带错误信息），再失败则抛出
+        默认解析或校验失败时**重试一次**（附带错误信息）；已有共享修复预算的
+        场景生成可设 max_parse_attempts=1。失败则抛出
         ``LLMParseError``，由调用方决定降级策略（通常是转人工）。
         """
         # **按 role 选默认模型**，而不是一律用文本模型。
@@ -308,7 +315,8 @@ class LLMClient:
         model_name = model or (self.vision.model if role == "vision" else self.text.model)
         base_user = user
         attempt = 0
-        max_parse_attempts = 2
+        if max_parse_attempts not in (1, 2):
+            raise ValueError("max_parse_attempts 必须为 1 或 2")
         last_error: Exception | None = None
 
         while attempt < max_parse_attempts:
@@ -340,7 +348,7 @@ class LLMClient:
                     f"【上一次输出无法解析，错误信息如下，请严格按要求输出 JSON】\n{exc}"
                 )
 
-        raise LLMParseError(f"模型输出连续 {max_parse_attempts} 次无法解析：{last_error}")
+        raise LLMParseError(f"模型输出连续 {max_parse_attempts} 次无法解析：{last_error}", raw_response=raw)
 
     def vision_json(
         self,
@@ -640,12 +648,22 @@ def _mock_response(messages: list[Message], *, json_mode: bool, task: str) -> st
             ensure_ascii=False,
         )
 
+    if task == Task.SCENE:
+        return json.dumps({"version": 1, "elements": [
+            {"id": "title", "kind": "text", "box": {"x": .08, "y": .08, "width": .84, "height": .16},
+             "text": "（mock）结构化场景", "font_size": 48},
+            {"id": "comparison", "kind": "bars", "box": {"x": .08, "y": .3, "width": .84, "height": .5},
+             "font_size": 40, "color": "primary", "unit": "%", "data": [
+                 {"label": "实验组", "value": 92}, {"label": "对照组", "value": 61}],
+             "keyframes": [{"time": 0, "reveal": 0}, {"time": .85, "reveal": 1}]}
+        ], "explanation": "（mock）固定组件联调数据，不代表真实脚本内容。"}, ensure_ascii=False)
+
     if task == Task.CODE:
         return json.dumps(
             {
                 "code": (
                     "from manim import *\n\n"
-                    "class MockScene(Scene):\n"
+                    "class SciShotScene(Scene):\n"
                     "    def construct(self):\n"
                     "        title = Text('mock scene', font_size=48)\n"
                     "        self.play(Write(title), run_time=2)\n"

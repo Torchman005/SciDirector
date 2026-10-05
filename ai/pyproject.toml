@@ -47,6 +47,9 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 include = ["scidirector_ai*"]
 
+[tool.setuptools.package-data]
+scidirector_ai = ["scene_runtime.js", "agents/prompts/*.md", "rag/corpus/*.json"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 filterwarnings = ["ignore::DeprecationWarning"]

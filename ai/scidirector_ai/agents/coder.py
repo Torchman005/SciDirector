@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 
 from pydantic import BaseModel, Field
@@ -25,6 +26,7 @@ from ..rag import FewShot, FewShotRetriever, build_retriever
 from ..renderer import LLM_ENGINES, check_html_contract
 from ..sandbox.policy import PolicyReport, PolicyViolation, check_source
 from ..schemas import RenderEngine, ShotSpec, StyleGuide
+from ..scene import SceneSpec, compile_scene, extract_scene
 from .base import Agent, load_prompt, render_prompt, style_guide_to_text
 
 logger = get_logger(__name__)
@@ -144,6 +146,18 @@ class CoderAgent(Agent):
         if engine not in LLM_ENGINES:
             return self._programmatic_ambient(shot, engine)
 
+        # A historical raw HTML page keeps its code path; explicit per-shot meta
+        # overrides the deployment default.
+        mode = shot.meta.get("generation_mode", self.settings.coder_scene_mode)
+        if mode not in {"structured", "code"}:
+            raise LLMError(f"未知 generation_mode：{mode}")
+        try:
+            structured_previous = extract_scene(previous_code) if engine in _HTML_ENGINES and mode == "structured" else None
+        except ValueError as exc:
+            raise LLMError(f"上一版场景规格损坏，无法安全回读：{exc}") from exc
+        if engine in _HTML_ENGINES and mode == "structured" and (not previous_code or structured_previous is not None):
+            return self._generate_scene(shot, style_guide, attempt, feedback_text, structured_previous)
+
         # few-shot 条数可配，**默认 2 而不是原来的硬编码 3**。
         #
         # 这是 token 账上最直接的一刀：语料里每条示例约 850 token，而这段
@@ -238,6 +252,49 @@ class CoderAgent(Agent):
     # ------------------------------------------------------------------
     # 内部
     # ------------------------------------------------------------------
+
+    def _generate_scene(self, shot: ShotSpec, style: StyleGuide, attempt: int,
+                        feedback: str, previous: SceneSpec | None) -> CodeGenerationResult:
+        system = load_engine_prompt("coder_scene", self.settings, min_font_size=style.min_font_size,
+                                    duration_sec=shot.duration_sec, background_color=style.background_color,
+                                    primary_color=style.primary_color)
+        # Include the actual schema: chat_json is JSON mode, not an SDK schema API.
+        system += "\n\nJSON Schema（必须符合）：\n" + json.dumps(SceneSpec.model_json_schema(), ensure_ascii=False)
+        user = render_prompt("coder_scene_user", index=shot.index, tag=shot.tag.value,
+                             narration=shot.narration, visual_brief=shot.visual_brief,
+                             production_brief=production_brief(shot, style, self.settings),
+                             style_guide=style_guide_to_text(style), feedback=feedback or "（首稿）",
+                             previous_scene=previous.model_dump_json() if previous else "（无）")
+        result = CodeGenerationResult(artifact=CodeArtifact(language="html+js"), policy_ok=False)
+        for count in range(1, MAX_POLICY_REPAIRS + 2):
+            result.llm_attempts = count
+            scene: SceneSpec | None = None
+            try:
+                parsed = self.llm.chat_json(system, user, SceneSpec, task=Task.SCENE, max_parse_attempts=1)
+                scene = SceneSpec.model_validate(parsed.model_dump())
+                code = compile_scene(scene, width=self.settings.render_width, height=self.settings.render_height,
+                                     duration=shot.duration_sec, style=style)
+                result.artifact = CodeArtifact(code=code, language="html+js", explanation=scene.explanation)
+                result.quality = self.quality_checker.check(code, shot, style)
+                result.policy_summary = "；".join(result.quality.issues)
+                result.policy_ok = not result.quality.issues
+                if result.policy_ok:
+                    return result
+                invalid = scene.model_dump_json()
+            except LLMParseError as exc:
+                result.policy_summary = str(exc)
+                invalid = exc.raw_response
+            except ValueError as exc:
+                result.policy_summary = str(exc)
+                invalid = scene.model_dump_json() if scene else ""
+            if count <= MAX_POLICY_REPAIRS:
+                # Shared budget: schema, layout and browser failures get at most one
+                # new response in total; never fall back silently to free HTML.
+                user += ("\n\n生成内修复：只输出完整场景 JSON。保留已正确内容。\n"
+                         + result.policy_summary + "\n上一份场景输出：\n" + _clip_code_for_prompt(invalid, what="场景规格"))
+        logger.warning("结构化场景未通过生成门禁", extra={"shot_id": shot.shot_id,
+                       "summary": result.policy_summary[:300], "attempt": attempt})
+        return result
 
     def _programmatic_ambient(self, shot: ShotSpec, engine: str) -> CodeGenerationResult:
         """氛围镜头：无需模型，直接给渲染器空代码 + 一个标题。
