@@ -17,14 +17,16 @@ EVIDENCE_WIDTH = 320
 
 
 def repair_times(task: RepairTask, samples: list[dict[str, Any]]) -> list[float]:
-    if task.frame_indices:
-        if any(i > len(samples) for i in task.frame_indices):
-            return []
-        return sorted({float(samples[i - 1]["ts"]) for i in task.frame_indices})
+    if task.start_sec > 0 and task.end_sec == task.start_sec:
+        return [task.start_sec]
     if task.end_sec > task.start_sec:
         margin = min(0.05, (task.end_sec - task.start_sec) / 4)
         return [task.start_sec + margin, (task.start_sec + task.end_sec) / 2,
                 task.end_sec - margin]
+    if task.frame_indices:
+        if any(i > len(samples) for i in task.frame_indices):
+            return []
+        return sorted({float(samples[i - 1]["ts"]) for i in task.frame_indices})
     return []
 
 

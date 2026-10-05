@@ -43,7 +43,7 @@ from ..media import (
     extract_frames_with_times,
 )
 from ..pbconv import shots_payload_json
-from ..review_tasks import format_repairs
+from ..review_tasks import format_repairs, merge_repairs
 from ..repair_evidence import precheck_repairs, skip_full_review
 from ..renderer import LLM_ENGINES, Renderer, RendererError, RenderRequest, build_renderer
 from ..sandbox.runner import SandboxRunner
@@ -833,10 +833,21 @@ class PipelineNodes:
             style_guide=style,
             attempt=attempt,
             previous_feedback=_collect_feedback(state, shot.shot_id),
+            previous_review=(state.get("feedback") or {}).get(shot.shot_id),
+            repair_prechecks=(state.get("repair_prechecks") or {}).get(shot.shot_id, []),
         )
 
         feedback_map = dict(state.get("feedback") or {})
         previous_feedback = feedback_map.get(shot.shot_id)
+        if outcome.degraded:
+            outcome.feedback = merge_repairs(previous_feedback, outcome.feedback, [], set())
+        old_ids = {t.task_id for t in previous_feedback.repair_tasks} if previous_feedback else set()
+        samples = (state.get("review_samples") or {}).get(shot.shot_id, [])
+        for task in outcome.feedback.repair_tasks:
+            if task.task_id not in old_ids and task.frame_indices and task.end_sec == 0:
+                times = [samples[i - 1]["ts"] for i in task.frame_indices if i <= len(samples)]
+                if times:
+                    task.start_sec, task.end_sec = min(times), max(times)
         feedback_map[shot.shot_id] = outcome.feedback
         stagnation = dict(state.get("revision_stagnation") or {})
         stagnated = _same_unresolved_feedback(previous_feedback, outcome.feedback)

@@ -20,6 +20,9 @@
 from __future__ import annotations
 
 import re
+import json
+from pathlib import Path
+from typing import Any, Literal
 from dataclasses import dataclass, field
 
 from pydantic import BaseModel, Field
@@ -28,6 +31,7 @@ from ..config import Settings, get_settings
 from ..llm import LLMClient, LLMError, LLMParseError, Task
 from ..media import frame_change_summary
 from ..logging import get_logger
+from ..review_tasks import active_repairs, merge_repairs
 from ..schemas import (
     CriticFeedback,
     FeedbackSource,
@@ -68,6 +72,13 @@ _DIMENSION_LABELS = {
 }
 
 
+class _RepairResult(BaseModel):
+    task_id: str
+    status: Literal["open", "partial", "resolved", "unverified"]
+    evidence: str = ""
+    image_indices: list[int] = Field(default_factory=list)
+
+
 class _RawCritique(BaseModel):
     """模型直出的评审结果。
 
@@ -87,6 +98,7 @@ class _RawCritique(BaseModel):
     # Only concrete rendering failures may veto a quantitatively passing shot.
     fatal_issues: list[str] = Field(default_factory=list)
     repair_tasks: list[RepairTask] = Field(default_factory=list)
+    repair_results: list[_RepairResult] = Field(default_factory=list)
 
 
 @dataclass
@@ -138,6 +150,8 @@ class CriticAgent(Agent):
         style_guide: StyleGuide,
         attempt: int,
         previous_feedback: str = "",
+        previous_review: CriticFeedback | None = None,
+        repair_prechecks: list[dict[str, Any]] | None = None,
     ) -> CritiqueOutcome:
         """审查一个渲染产物。
 
@@ -213,12 +227,36 @@ class CriticAgent(Agent):
             frame_change_summary=_safe_frame_change_summary(frames),
         )
 
+        images = list(frames)
+        current_indices = set(range(1, len(frames) + 1))
+        paired_ids: set[str] = set()
+        task_current_indices: dict[str, set[int]] = {}
+        repair_context = []
+        for task in active_repairs(previous_review):
+            row = next((r for r in (repair_prechecks or []) if r["task_id"] == task.task_id), {})
+            pairs = []
+            for pair in row.get("pairs", [])[:3]:
+                if not all(Path(pair[k]).is_file() for k in ("before", "after")):
+                    continue
+                images.extend([pair["before"], pair["after"]])
+                current_indices.add(len(images))
+                task_current_indices.setdefault(task.task_id, set()).add(len(images))
+                pairs.append({"ts": pair["ts"], "before_image": len(images) - 1,
+                              "after_image": len(images)})
+            if pairs:
+                paired_ids.add(task.task_id)
+            repair_context.append({"task": task.model_dump(), "precheck": row.get("status", "unverified"),
+                                   "evidence_pairs": pairs})
+        if repair_context:
+            user_prompt += "\n" + render_prompt("repair_review", current_count=len(frames),
+                                                  repair_context=json.dumps(repair_context, ensure_ascii=False))
+
         try:
             parsed = self.llm.vision_json(
                 system_prompt,
                 user_prompt,
                 _RawCritique,
-                images=frames,
+                images=images,
                 task=Task.CRITIQUE,
             )
         except (LLMError, LLMParseError) as exc:
@@ -236,7 +274,13 @@ class CriticAgent(Agent):
 
         assert isinstance(parsed, _RawCritique)
         feedback, program_passed = self._decide(parsed, shot=shot, attempt=attempt)
-        if not feedback.passed and not _valid_task_locations(feedback.repair_tasks, artifact):
+        needs_locations = not feedback.passed or any(t.severity != "advisory" for t in feedback.repair_tasks)
+        invalid_new_tasks = any(
+            t.end_sec > artifact.duration_sec or any(i > len(frames) for i in t.frame_indices)
+            for t in feedback.repair_tasks if t.severity != "advisory"
+        )
+        if (invalid_new_tasks or (needs_locations and not _valid_task_locations(feedback.repair_tasks, artifact)
+                                  and not active_repairs(previous_review))):
             # One bounded clarification, never a render retry with vague feedback.
             try:
                 parsed = self.llm.vision_json(
@@ -244,17 +288,27 @@ class CriticAgent(Agent):
                     user_prompt + "\n上一份判负反馈缺少有效 repair_tasks。请重新输出完整 JSON，"
                     "补充真实帧号/时间段、具体对象、画面证据、修改指令与可验收条件。"
                     "不能用泛泛建议或编造定位补齐。上一份输出：" + str(parsed.model_dump()),
-                    _RawCritique, images=frames, task=Task.CRITIQUE,
+                    _RawCritique, images=images, task=Task.CRITIQUE,
                 )
                 feedback, program_passed = self._decide(parsed, shot=shot, attempt=attempt)
             except (LLMError, LLMParseError) as exc:
                 return self._degrade(shot=shot, attempt=attempt,
                                      reason=f"审核意见定位补充失败：{exc}", frames=len(frames))
-            if not feedback.passed and not _valid_task_locations(feedback.repair_tasks, artifact):
+            if ((not feedback.passed or any(t.severity != "advisory" for t in feedback.repair_tasks))
+                    and not _valid_task_locations(feedback.repair_tasks, artifact)
+                    and (feedback.repair_tasks or not active_repairs(previous_review))):
                 return self._degrade(shot=shot, attempt=attempt,
                                      reason="审核意见缺少有效定位、证据或验收条件，停止无目标重做",
                                      frames=len(frames))
 
+        verified_ids = {
+            r.task_id for r in parsed.repair_results
+            if r.task_id in paired_ids and r.evidence.strip() and r.image_indices
+            and all(i in current_indices for i in r.image_indices)
+            and bool(set(r.image_indices) & task_current_indices.get(r.task_id, set()))
+        }
+        feedback = merge_repairs(previous_review, feedback,
+                                 [r.model_dump() for r in parsed.repair_results], verified_ids)
         outcome = CritiqueOutcome(
             feedback=feedback,
             frames_reviewed=len(frames),
