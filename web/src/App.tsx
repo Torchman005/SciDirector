@@ -69,6 +69,7 @@ const GRADES = [
 ]
 
 interface SubmitForm {
+  animation_style: 'precise' | 'anime'
   raw_script: string
   /** null = 留空 = 按脚本自动估算（提交时转成 0）。 */
   target_duration_sec: number | null
@@ -263,6 +264,7 @@ export function App() {
         target_duration_sec: values.target_duration_sec ?? 0,
         locale: 'zh-CN',
         style_guide: {
+          animation_style: values.animation_style,
           preset: values.preset,
           background_style: values.background_style,
         },
@@ -341,11 +343,13 @@ export function App() {
           <Card title="提交脚本">
             <Form<SubmitForm>
               form={form}
+              noValidate
               layout="vertical"
               onFinish={(values) => void submit(values)}
               initialValues={{
                 target_duration_sec: null,
                 preset: 'default',
+                animation_style: 'anime',
                 background_style: 'auto',
                 grade: 'none',
                 grade_strength: 1,
@@ -371,6 +375,11 @@ export function App() {
               </Form.Item>
 
               <Row gutter={16} align="top">
+                <Col xs={24} sm={12} md={8}>
+                  <Form.Item name="animation_style" label="动画演出" extra="二次元模式在关键镜头穿插角色，公式与数据仍按科学图示呈现。">
+                    <Select options={[{value:'anime',label:'二次元科学剧场'}, {value:'precise',label:'严谨图解'}]} />
+                  </Form.Item>
+                </Col>
                 <Col xs={24} sm={12} md={4}>
                   <Form.Item
                     name="target_duration_sec"

@@ -182,6 +182,7 @@ export interface GenerateRequest {
 }
 
 export interface StyleGuide {
+  animation_style?: 'precise' | 'anime'
   preset?: string
   /** 背景**图案**：auto / solid / gradient / grid / vignette / noise / scanlines。 */
   background_style?: string

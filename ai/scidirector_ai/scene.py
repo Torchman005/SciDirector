@@ -49,7 +49,15 @@ class Keyframe(SceneModel):
     dy: float = Field(default=0, ge=-1, le=1)
     rotation: float = Field(default=0, ge=-3600, le=3600)
     reveal: float = Field(default=1, ge=0, le=1)
-    easing: Literal["linear", "smooth", "step"] = "smooth"
+    scale: float = Field(default=1, ge=.5, le=1.5)
+    expression: Literal["neutral", "smile", "curious", "surprised", "focused"] = "neutral"
+    gesture: Literal["idle", "explain", "point", "think", "wave"] = "idle"
+    easing: Literal["linear", "smooth", "step", "ease_in", "ease_out", "spring"] = "smooth"
+
+
+class Point(SceneModel):
+    x: float = Field(ge=0, le=1)
+    y: float = Field(ge=0, le=1)
 
 
 class Datum(SceneModel):
@@ -59,7 +67,7 @@ class Datum(SceneModel):
 
 class Element(SceneModel):
     id: str = Field(pattern=r"^[A-Za-z][A-Za-z0-9_-]{0,47}$")
-    kind: Literal["text", "card", "code", "bars", "rect", "circle", "line"]
+    kind: Literal["text", "card", "code", "bars", "rect", "circle", "line", "polyline", "character"]
     box: Box
     text: str = Field(default="", max_length=4000)
     font_size: int = Field(default=48, ge=12, le=200)
@@ -69,6 +77,8 @@ class Element(SceneModel):
     unit: str = Field(default="", max_length=30)
     keyframes: list[Keyframe] = Field(default_factory=list, max_length=24)
     arrow: bool = False
+    points: list[Point] = Field(default_factory=list, max_length=64)
+    stroke_width: float = Field(default=4, ge=1, le=20)
 
     @model_validator(mode="after")
     def content_and_time(self) -> Element:
@@ -78,18 +88,24 @@ class Element(SceneModel):
             raise ValueError(f"#{self.id} 柱状图必须提供真实数据及单位")
         if self.kind != "bars" and (self.data or self.unit):
             raise ValueError(f"#{self.id} 只有 bars 可以包含 data/unit")
-        if self.kind in {"rect", "circle", "line"} and self.text:
+        if self.kind in {"rect", "circle", "line", "polyline", "character"} and self.text:
             raise ValueError(f"#{self.id} 图形文字请使用独立 text 元素")
-        if self.kind != "line" and self.arrow:
+        if self.kind not in {"line", "polyline"} and self.arrow:
             raise ValueError(f"#{self.id} 只有 line 支持 arrow")
         if self.keyframes:
             times = [k.time for k in self.keyframes]
             if times[0] != 0 or any(b <= a for a, b in zip(times, times[1:])):
                 raise ValueError(f"#{self.id} keyframes 必须从 0 开始且严格递增")
-        if self.kind not in {"rect", "circle", "line"} and any(k.rotation for k in self.keyframes):
+        if self.kind == "polyline" and len(self.points) < 2:
+            raise ValueError(f"#{self.id} polyline 至少需要两个 points")
+        if self.kind != "polyline" and self.points:
+            raise ValueError(f"#{self.id} points 仅用于 polyline")
+        if self.kind not in {"rect", "circle", "line", "polyline", "character"} and any(k.rotation or k.scale != 1 for k in self.keyframes):
             raise ValueError(f"#{self.id} 文字/图表不可旋转；请用几何元素表达旋转")
-        if self.kind not in {"code", "bars"} and any(k.reveal != 1 for k in self.keyframes):
-            raise ValueError(f"#{self.id} reveal 仅支持 code/bars；其他元素请用 opacity")
+        if self.kind not in {"code", "bars", "line", "polyline"} and any(k.reveal != 1 for k in self.keyframes):
+            raise ValueError(f"#{self.id} reveal 仅支持 code/bars/line/polyline；其他元素请用 opacity")
+        if self.kind != "character" and any(k.expression != "neutral" or k.gesture != "idle" for k in self.keyframes):
+            raise ValueError(f"#{self.id} expression/gesture 仅用于 character")
         return self
 
 
@@ -116,14 +132,14 @@ def validate_layout(scene: SceneSpec, *, width: int, height: int, duration: floa
             raise ValueError(f"#{el.id} 字号 {el.font_size}px 小于下限 {style.min_font_size}px")
         b = el.box
         for k in el.keyframes or [Keyframe(time=0)]:
-            x, y = b.x + k.dx, b.y + k.dy
+            x, y = b.x + k.dx - b.width * (k.scale - 1) / 2, b.y + k.dy - b.height * (k.scale - 1) / 2
             # An entrance can begin outside the viewport while fully transparent.
             # Safe margins are a design recommendation, actual clipping is a defect.
-            if k.opacity > .1 and (min(x, y) < -GEOMETRY_EPSILON or x + b.width > 1 + GEOMETRY_EPSILON or y + b.height > 1 + GEOMETRY_EPSILON):
+            if k.opacity > .1 and (min(x, y) < -GEOMETRY_EPSILON or x + b.width * k.scale > 1 + GEOMETRY_EPSILON or y + b.height * k.scale > 1 + GEOMETRY_EPSILON):
                 raise ValueError(f"#{el.id} 在 time={k.time:g} 超出画布；修改 box/dx/dy")
         # Rotating a non-square box sweeps a larger envelope between keyframes.
         if any(k.rotation for k in el.keyframes):
-            radius = math.hypot(b.width * width, b.height * height) / 2
+            radius = math.hypot(b.width * width, b.height * height) / 2 * max(k.scale for k in el.keyframes)
             for k in el.keyframes:
                 cx, cy = b.x + b.width / 2 + k.dx, b.y + b.height / 2 + k.dy
                 if k.opacity > .1 and (cx - radius / width < -GEOMETRY_EPSILON or cx + radius / width > 1 + GEOMETRY_EPSILON or cy - radius / height < -GEOMETRY_EPSILON or cy + radius / height > 1 + GEOMETRY_EPSILON):
@@ -145,7 +161,8 @@ def validate_layout(scene: SceneSpec, *, width: int, height: int, duration: floa
 
 @lru_cache(maxsize=1)
 def scene_runtime() -> str:
-    return Path(__file__).with_name("scene_runtime.js").read_text(encoding="utf-8")
+    return (Path(__file__).with_name("character_runtime.js").read_text(encoding="utf-8") + "\n"
+            + Path(__file__).with_name("scene_runtime.js").read_text(encoding="utf-8"))
 
 
 def compile_scene(scene: SceneSpec, *, width: int, height: int, duration: float,

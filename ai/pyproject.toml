@@ -48,7 +48,7 @@ build-backend = "setuptools.build_meta"
 include = ["scidirector_ai*"]
 
 [tool.setuptools.package-data]
-scidirector_ai = ["scene_runtime.js", "agents/prompts/*.md", "rag/corpus/*.json"]
+scidirector_ai = ["*_runtime.js", "agents/prompts/*.md", "rag/corpus/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

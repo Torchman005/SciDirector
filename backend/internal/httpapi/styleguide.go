@@ -32,6 +32,11 @@ func validateStyleGuide(sg map[string]any) error {
 	if sg == nil {
 		return nil
 	}
+	if raw, exists := sg["animation_style"]; exists && raw != nil {
+		if value, ok := raw.(string); !ok || (value != "precise" && value != "anime") {
+			return fmt.Errorf("animation_style 必须为 precise 或 anime")
+		}
+	}
 	raw, present := sg["background_style"]
 	// JSON 的 null 与"字段不存在"等价：都表示没设置。
 	if !present || raw == nil {

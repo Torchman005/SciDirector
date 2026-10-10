@@ -6,7 +6,10 @@
 最小字号 {{min_font_size}}px。字体大小是成片像素，不是归一化值。
 background 可为 solid/gradient/grid/vignette/noise/scanlines；用户选择了具体背景时系统优先遵守用户选择。
 
-组件：text（自动换行的文字）、card（文字卡片）、code（等宽纯文字，可打字）、bars（横向柱图）、rect/circle/line（几何图形）。
+组件：text（自动换行的文字）、card（文字卡片）、code（等宽纯文字，可打字）、bars（横向柱图）、rect/circle/line（几何图形）、polyline（关系/轨迹线）、character（固定二次元科学讲解员）。
+polyline 使用 points=[{x,y},…]，坐标相对自己的 box，至少两点；line/polyline 可 arrow=true、stroke_width=4、reveal 描线。
+character 无 text，建议 box 宽高像素比约 2:3；不要拉成横条。角色让出主图与底部字幕区域。
+角色关键帧可 expression=neutral/smile/curious/surprised/focused、gesture=idle/explain/point/think/wave；在到达该帧时切换。
 每个元素有唯一稳定 id、kind、box={x,y,width,height}，box 坐标为画布归一化比例。
 内容建议在 x/y=0.06～0.94 安全区域内；透明入场可以从边缘开始，可见内容必须在画布内。
 文字和几何使用不同元素，图形不支持内嵌文字。
@@ -23,8 +26,9 @@ keyframes 最多 24 个，time 为秒数 / {{duration_sec}}，从 0 开始严格
 省略字段由系统恢复默认，不继承前一帧；只有非默认状态必须在该帧写出。静止元素省略 keyframes。
 通常每元素 2～6 个关键帧足够，只有运动方向或阶段改变时增加；不要复制相同状态堆满 24 帧。
 保留必要内容和全部对象，explanation 简述阶段、布局、来源和修复即可，不复述整份 JSON。
-reveal 仅影响 code 打字、bars 生长；其他组件不要用它。文字和图表不能旋转。
-easing 为 linear/smooth/step，描述到达当前关键帧的插值方式；step 在该时间点切换。
+reveal 影响 code 打字、bars 生长、line/polyline 描线；其他组件不要用它。文字和图表不能旋转或缩放。
+几何与角色可使用 scale（0.5～1.5，默认1），必须预留放大及旋转后的包围范围。
+easing 为 linear/smooth/step/ease_in/ease_out/spring，描述到达当前关键帧的插值方式；step 在该时间点切换，spring 是不越界的阻尼落定。
 不提供 keyframes 表示静止，最后一个关键帧之后定格。关键帧可在 1 结束，编译器会自动预留 min(0.5秒,总时长10%) 的完成态停留。
 首帧可短暂淡入建立场景，避免长时间空白；末帧必须可见。阶段与旁白节拍对应，阅读可停留，不用无意义抖动制造变化。
 修改时保留正确元素的 id、内容和阶段，只调整被定位的问题。

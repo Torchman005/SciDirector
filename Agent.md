@@ -204,6 +204,8 @@ SciDirector/
 镜头级并行由 `SCID_SHOT_PARALLELISM` 控制，默认 `1` 保持串行；大于 `1` 时以 LangGraph `Send` 为每个镜头建立隔离子图，按 `shot_id` 合并产物、反馈、尝试次数和事件。子图失败仍按原有重试上限与熔断规则处理，checkpoint 续跑不会重新执行已完成的镜头。
 
 ### 5.2 Coder Agent（编码）
+- `style_guide.animation_style=anime` 启用统一二次元演出指引；历史任务缺省 `precise`，新建审核台默认 anime。
+- SceneSpec v1 增加 character / polyline、角色表情手势、几何缩放及阻尼缓动；运行时纯 seek，旋转/缩放仍验证边界。
 - 路由表（**确定性映射，不允许模型自由发挥**）：
 
   | tag | engine | 产物 |

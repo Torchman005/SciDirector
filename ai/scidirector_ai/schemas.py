@@ -322,6 +322,7 @@ class StyleGuide(BaseModel):
         description="术语表：保证同一概念在全片中的译名一致",
     )
     extra: dict[str, Any] = Field(default_factory=dict)
+    animation_style: Literal["precise", "anime"] = "precise"
 
     @model_validator(mode="after")
     def _apply_preset(self) -> StyleGuide:

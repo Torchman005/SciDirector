@@ -21,6 +21,19 @@ body {
   font-family: system-ui, 'Noto Sans CJK SC', 'Microsoft YaHei', sans-serif;
 }
 
+:root { scrollbar-color: #52617f #0b1020; scrollbar-width: thin; }
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: #0b1020; }
+*::-webkit-scrollbar-thumb { background: #52617f; border: 2px solid #0b1020; border-radius: 8px; }
+*::-webkit-scrollbar-thumb:hover { background: #8a94a6; }
+*::-webkit-scrollbar-thumb:active { background: #4f8cff; }
+textarea { resize: none; }
+:focus-visible { outline: 2px solid #4f8cff; outline-offset: 3px; }
+@media (forced-colors: active) { :root { scrollbar-color: auto; } }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}
+
 /* --- 页面容器 --- */
 
 .app-header {
