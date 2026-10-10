@@ -101,10 +101,10 @@ func abortWith(c *gin.Context, status int, code, msg string, cause error) {
 	// 5xx 用 Error 级别，4xx 用 Warn：避免客户端参数错误淹没真实的服务端故障告警。
 	if status >= 500 {
 		logging.FromContext(c.Request.Context()).Error("HTTP 请求失败",
-			"path", c.FullPath(), "status", status, "code", code, "error", body.Detail)
+			"path", requestLogPath(c), "status", status, "code", code, "error", body.Detail)
 	} else {
 		logging.FromContext(c.Request.Context()).Warn("HTTP 请求被拒绝",
-			"path", c.FullPath(), "status", status, "code", code, "reason", body.Message)
+			"path", requestLogPath(c), "status", status, "code", code, "reason", body.Message)
 	}
 	c.AbortWithStatusJSON(status, body)
 }

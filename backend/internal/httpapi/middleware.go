@@ -29,6 +29,23 @@ func isProbePath(rawPath string) bool {
 	}
 }
 
+// requestLogPath keeps route templates for matched requests and the actual path
+// for 404s. Gin's FullPath is empty when no route matched, which otherwise
+// makes an unknown endpoint impossible to identify from access logs.
+func requestLogPath(c *gin.Context) string {
+	if path := c.FullPath(); path != "" {
+		return path
+	}
+	if c.Request == nil || c.Request.URL == nil {
+		return ""
+	}
+	path := c.Request.URL.Path
+	if len(path) > 512 {
+		return path[:512]
+	}
+	return path
+}
+
 // requestIDHeader 是链路追踪 ID 的传输头。
 // 复用业界通用的 X-Request-ID，便于接入既有网关与前端 SDK。
 const requestIDHeader = "X-Request-ID"
@@ -119,7 +136,7 @@ func RecoveryMiddleware() gin.HandlerFunc {
 		defer func() {
 			if r := recover(); r != nil {
 				logging.FromContext(c.Request.Context()).Error("HTTP handler panic",
-					"path", c.FullPath(),
+					"path", requestLogPath(c),
 					"method", c.Request.Method,
 					"panic", r,
 				)
@@ -143,7 +160,7 @@ func AccessLogMiddleware() gin.HandlerFunc {
 		lg := logging.FromContext(c.Request.Context())
 		attrs := []any{
 			"method", c.Request.Method,
-			"path", c.FullPath(),
+			"path", requestLogPath(c),
 			"status", c.Writer.Status(),
 			"elapsed_ms", elapsed.Milliseconds(),
 			"client_ip", c.ClientIP(),

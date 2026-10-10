@@ -373,25 +373,42 @@ rem ---------------------------------------------------------------------------
 :cmd_build
 call :setenv
 echo [build] compiling Go binaries ...
+call :build_api
+if errorlevel 1 (
+    call :maybe_pause
+    exit /b 1
+)
+call :build_worker
+if errorlevel 1 (
+    call :maybe_pause
+    exit /b 1
+)
+echo [build] done: backend\bin\scid-api.exe, scid-worker.exe
+call :maybe_pause
+exit /b 0
+
+:build_api
 if not exist "%REPO%\backend\bin" mkdir "%REPO%\backend\bin" >nul 2>&1
 pushd "%REPO%\backend"
 go build -o bin\scid-api.exe ./cmd/api
 if errorlevel 1 (
     echo [build] api build FAILED
     popd
-    call :maybe_pause
     exit /b 1
 )
+popd
+exit /b 0
+
+:build_worker
+if not exist "%REPO%\backend\bin" mkdir "%REPO%\backend\bin" >nul 2>&1
+pushd "%REPO%\backend"
 go build -o bin\scid-worker.exe ./cmd/worker
 if errorlevel 1 (
     echo [build] worker build FAILED
     popd
-    call :maybe_pause
     exit /b 1
 )
 popd
-echo [build] done: backend\bin\scid-api.exe, scid-worker.exe
-call :maybe_pause
 exit /b 0
 
 rem ---------------------------------------------------------------------------
@@ -436,23 +453,36 @@ if "!BUSY!"=="1" (
     echo   [start]  AI brain       %PORT_AI_HTTP% HTTP / %PORT_AI_GRPC% gRPC
 )
 
-rem 3) Go side - build first if needed, so users never see "file not found".
-if not exist "%REPO%\backend\bin\scid-api.exe"    call :cmd_build
-if not exist "%REPO%\backend\bin\scid-worker.exe" call :cmd_build
-
+rem 3) Go side - rebuild stopped services on every start. Cached go build is
+rem cheap and prevents a months-old binary from silently missing new routes.
 call :port_busy %PORT_API%
 if "!BUSY!"=="1" (
-    echo   [skip]   Go API already running on %PORT_API%
+    echo   [skip]   Go API already running on %PORT_API% - stop/start to load code changes
 ) else (
+    call :build_api
+    if errorlevel 1 (
+        call :maybe_pause
+        exit /b 1
+    )
     pushd "%REPO%\backend"
     start "%TITLE_PREFIX%api" cmd /k "bin\scid-api.exe"
     popd
     echo   [start]  Go API         port %PORT_API%
 )
-pushd "%REPO%\backend"
-start "%TITLE_PREFIX%worker" cmd /k "bin\scid-worker.exe"
-popd
-echo   [start]  worker         no listening port
+tasklist /fi "imagename eq scid-worker.exe" /nh 2>nul | find /i "scid-worker.exe" >nul
+if not errorlevel 1 (
+    echo   [skip]   worker already running - stop/start to load code changes
+) else (
+    call :build_worker
+    if errorlevel 1 (
+        call :maybe_pause
+        exit /b 1
+    )
+    pushd "%REPO%\backend"
+    start "%TITLE_PREFIX%worker" cmd /k "bin\scid-worker.exe"
+    popd
+    echo   [start]  worker         no listening port
+)
 
 rem 4) Frontend
 if exist "%REPO%\web\package.json" (
@@ -554,12 +584,16 @@ goto :run_end
 :run_api
 title %TITLE_PREFIX%api
 cd /d "%REPO%\backend"
+call :build_api
+if errorlevel 1 goto :run_end
 "%REPO%\backend\bin\scid-api.exe"
 goto :run_end
 
 :run_worker
 title %TITLE_PREFIX%worker
 cd /d "%REPO%\backend"
+call :build_worker
+if errorlevel 1 goto :run_end
 "%REPO%\backend\bin\scid-worker.exe"
 goto :run_end
 

@@ -79,3 +79,18 @@ func TestLive2DHTTPImportAndServerOwnedResolution(t *testing.T) {
 		t.Fatal("foreign asset accepted")
 	}
 }
+
+func TestLive2DUploadRouteIsRegistered(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	deps := Deps{Config: &config.Config{Media: config.MediaConfig{WorkDir: t.TempDir()}}}
+	router := NewRouter(NewServer(deps), deps)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/assets/live2d", nil)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusBadRequest || !strings.Contains(recorder.Body.String(), "模型 ZIP") {
+		t.Fatalf("upload route unavailable: %d %s", recorder.Code, recorder.Body.String())
+	}
+	if got := requestLogPath(&gin.Context{Request: request}); got != request.URL.Path {
+		t.Fatalf("unmatched route log path = %q, want %q", got, request.URL.Path)
+	}
+}

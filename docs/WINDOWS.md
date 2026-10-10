@@ -44,6 +44,12 @@ scripts\dev.bat status          :: 查看端口状态
 scripts\dev.bat run <服务>       :: 前台单独运行一个服务
 ```
 
+`start` 现在会在启动已停止的 Go API/worker 前重新编译，而不只检查 exe 是否存在。
+否则旧的 `backend/bin/scid-api.exe` 即使在新源码里已注册 `/api/v1/assets/live2d`，
+仍会让拖拽导入返回 404。已经运行的进程不会被脚本覆盖；改动 Go 代码后用
+`scripts\dev.bat stop` 再 `scripts\dev.bat start`，或单独重启对应服务。
+`run api` / `run worker` 同样会先编译。未匹配路由的日志会显示实际请求路径，便于区分旧进程与代理配置问题。
+
 **推荐从已打开的 cmd 窗口运行，而不是双击。** 双击时脚本跑完窗口会立刻关闭，
 输出一闪而过 —— 那是批处理的固有行为。现在脚本会检测双击并自动暂停
 （判定依据：双击时 cmd 命令行里含脚本名，而终端里手输命令时不含），

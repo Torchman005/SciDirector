@@ -33,3 +33,9 @@
 2026-10-11：使用用户本地的 Cubism SDK for Web 5-r.5 Core（SHA-256 `8741F739779B5D5210872BD3D7D99F0F1E56E6C87409E7D26D6BB4B80AA1EF47`）与 Hiyori 模型渲染 2 秒 400×600 / 12fps VP9 alpha 层，倒序 seek 校验通过；再用已有真实 TTS 旁白生成 3 秒同规格透明层，口型包络最大值 0.981，尾部音频结束后闭嘴。`.env` 的本地 Core 路径、AI 健康能力 `presenter:live2d=ok`、Compose YAML 和只读挂载声明均已验证；当前环境没有 Docker CLI，因此未运行实际容器。Core 5 与传统模型的兼容映射、旧版绘制顺序字段及离屏模型拒绝均有浏览器回归测试。
 
 部署自检：生成一段包含停顿的短视频，确认讲话时开嘴、停顿闭嘴、BGM 单独播放不触发嘴部、字幕不被遮挡。样例资源仅保留于本地忽略目录，不提交到 Git。
+
+## 上传接口返回 404
+
+Windows 本地启动器过去只在 `backend/bin/scid-api.exe` 不存在时编译，可能运行没有 Live2D 路由的旧二进制。2026-10-11 的实测旧 exe 构建于 10 月 4 日，`POST /api/v1/assets/live2d` 直连 API 和经过 Vite 都返回 404；当时 Gin 的未匹配路由日志还把 `path` 记为空。现已改为启动已停止的 Go 服务前重新编译，并在进程仍运行时提示重启。更新后无模型的 POST 返回预期的 400，完整 Hiyori ZIP 通过网页代理与真实浏览器导入返回 200；未匹配路由日志显示实际 URL。
+
+若更新代码后进程仍在运行，执行 `scripts\dev.bat stop` 再 `scripts\dev.bat start`，或单独重启 Go API/worker。Core 文件可用与否不会让上传路由消失；404 先检查当前 API 二进制及前端代理目标。
