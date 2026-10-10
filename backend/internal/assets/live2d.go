@@ -75,12 +75,7 @@ func (s *Store) ImportLive2D(tenant, archivePath, filename string) (receipt Live
 	if len(z.File) > maxModelFiles {
 		return receipt, fmt.Errorf("Live2D 文件数量超过 %d", maxModelFiles)
 	}
-	files := map[string]*zip.File{}
-	type zipEntry struct {
-		name  string
-		isDir bool
-	}
-	seen := map[string]zipEntry{}
+	files := map[string][]*zip.File{}
 	modelName := ""
 	var expanded uint64
 	for _, f := range z.File {
@@ -92,25 +87,18 @@ func (s *Store) ImportLive2D(tenant, archivePath, filename string) (receipt Live
 			return receipt, fmt.Errorf("Live2D 解压总大小超过 256 MB")
 		}
 		expanded += f.UncompressedSize64
-		key := strings.ToLower(name)
 		isDir := f.FileInfo().IsDir()
-		if previous, exists := seen[key]; exists {
-			// ZIP writers may repeat an identical directory record. It has no
-			// content to extract, so only file duplicates and case collisions
-			// need to be rejected.
-			if previous.isDir && isDir && previous.name == name {
-				continue
-			}
-			return receipt, fmt.Errorf("Live2D ZIP 含重复路径：%s（已存在 %s）", name, previous.name)
-		}
-		seen[key] = zipEntry{name: name, isDir: isDir}
 		if isDir {
 			continue
 		}
+		key := strings.ToLower(name)
 		if strings.HasSuffix(key, ".js") || strings.HasSuffix(key, ".html") || strings.HasSuffix(key, ".exe") {
 			return receipt, fmt.Errorf("模型 ZIP 不接受可执行脚本；请只打包模型数据")
 		}
-		files[name] = f
+		// Only the descriptor and its referenced moc/texture files are read.
+		// Duplicate or non-UTF-8 motion names are harmless because motions are
+		// never copied into the imported model or executed by the renderer.
+		files[name] = append(files[name], f)
 		if strings.HasSuffix(key, ".model3.json") {
 			if modelName != "" {
 				return receipt, fmt.Errorf("ZIP 必须只包含一个 .model3.json")
@@ -122,10 +110,14 @@ func (s *Store) ImportLive2D(tenant, archivePath, filename string) (receipt Live
 		return receipt, fmt.Errorf("ZIP 缺少 Cubism 3/4 的 .model3.json")
 	}
 	read := func(name string, limit int64) ([]byte, error) {
-		f := files[name]
-		if f == nil {
+		candidates := files[name]
+		if len(candidates) == 0 {
 			return nil, fmt.Errorf("模型引用的文件不存在：%s", name)
 		}
+		if len(candidates) != 1 {
+			return nil, fmt.Errorf("模型引用的文件路径重复：%s", name)
+		}
+		f := candidates[0]
 		if f.UncompressedSize64 > uint64(limit) {
 			return nil, fmt.Errorf("模型文件过大：%s", name)
 		}
@@ -169,11 +161,18 @@ func (s *Store) ImportLive2D(tenant, archivePath, filename string) (receipt Live
 		}
 	}()
 	refs := append([]string{manifest.FileReferences.Moc}, manifest.FileReferences.Textures...)
+	seenRefs := map[string]string{}
 	for i, ref := range refs {
 		if !safeModelName(ref) {
 			return receipt, fmt.Errorf("模型只能引用 ZIP 内的相对文件")
 		}
-		data, e := read(path.Join(path.Dir(modelName), ref), 64<<20)
+		name := path.Join(path.Dir(modelName), ref)
+		key := strings.ToLower(name)
+		if previous, exists := seenRefs[key]; exists {
+			return receipt, fmt.Errorf("模型引用的文件路径重复：%s（已存在 %s）", name, previous)
+		}
+		seenRefs[key] = name
+		data, e := read(name, 64<<20)
 		if e != nil {
 			return receipt, e
 		}

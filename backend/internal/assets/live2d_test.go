@@ -56,6 +56,38 @@ func TestLive2DRepeatedDirectoryRecordsAreHarmless(t *testing.T) {
 	}
 }
 
+func TestLive2DIgnoresUnusedMotionPathCollisions(t *testing.T) {
+	s, e := NewStore(t.TempDir())
+	if e != nil {
+		t.Fatal(e)
+	}
+	archive := modelZIP(t, map[string][]byte{
+		"motions/idle.motion3.json": []byte(`{}`),
+		"motions/\x81.motion3.json": []byte(`{}`),
+		"motions/\x82.motion3.json": []byte(`{}`),
+	}, "motions/idle.motion3.json")
+	if _, e = s.ImportLive2D("tenant", archive, "model.zip"); e != nil {
+		t.Fatalf("unused motion paths should not block import: %v", e)
+	}
+}
+
+func TestLive2DRejectsCaseCollisionsBetweenReferencedTextures(t *testing.T) {
+	var texture bytes.Buffer
+	_ = png.Encode(&texture, image.NewRGBA(image.Rect(0, 0, 4, 4)))
+	archive := modelZIP(t, map[string][]byte{
+		"model/a.model3.json":  []byte(`{"Version":3,"FileReferences":{"Moc":"a.moc3","Textures":["textures/a.png","textures/A.png"]}}`),
+		"model/textures/A.png": texture.Bytes(),
+	})
+	s, e := NewStore(t.TempDir())
+	if e != nil {
+		t.Fatal(e)
+	}
+	_, e = s.ImportLive2D("tenant", archive, "model.zip")
+	if e == nil || !strings.Contains(e.Error(), "路径重复") {
+		t.Fatalf("case-colliding referenced textures should be rejected: %v", e)
+	}
+}
+
 func TestLive2DDuplicateFileReportsPath(t *testing.T) {
 	s, e := NewStore(t.TempDir())
 	if e != nil {
@@ -100,7 +132,7 @@ func TestLive2DRejectsTraversalScriptsDuplicatesAndBrokenModels(t *testing.T) {
 		{"model/CON.png": []byte("bad")}, {"model/LPT1": []byte("bad")},
 		{"../escape": []byte("bad")}, {"model/evil.js": []byte("alert(1)")},
 		{"model/a.moc3": []byte("bad")}, {"model/textures/a.png": []byte("not image")},
-		{"model/A.moc3": []byte("MOC3dup")}, {"model/second.model3.json": []byte("{}")},
+		{"model/second.model3.json": []byte("{}")},
 		{"model/a.model3.json": []byte(`{"Version":3,"FileReferences":{"Moc":"../../secret.moc3","Textures":["textures/a.png"]}}`)},
 	}
 	for _, extra := range cases {
