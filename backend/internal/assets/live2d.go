@@ -76,7 +76,11 @@ func (s *Store) ImportLive2D(tenant, archivePath, filename string) (receipt Live
 		return receipt, fmt.Errorf("Live2D 文件数量超过 %d", maxModelFiles)
 	}
 	files := map[string]*zip.File{}
-	seen := map[string]bool{}
+	type zipEntry struct {
+		name  string
+		isDir bool
+	}
+	seen := map[string]zipEntry{}
 	modelName := ""
 	var expanded uint64
 	for _, f := range z.File {
@@ -84,16 +88,23 @@ func (s *Store) ImportLive2D(tenant, archivePath, filename string) (receipt Live
 		if !safeModelName(name) || f.Mode()&os.ModeSymlink != 0 {
 			return receipt, fmt.Errorf("Live2D ZIP 含不安全路径")
 		}
-		key := strings.ToLower(name)
-		if seen[key] {
-			return receipt, fmt.Errorf("Live2D ZIP 含重复路径")
-		}
-		seen[key] = true
 		if f.UncompressedSize64 > maxModelExpandedBytes-expanded {
 			return receipt, fmt.Errorf("Live2D 解压总大小超过 256 MB")
 		}
 		expanded += f.UncompressedSize64
-		if f.FileInfo().IsDir() {
+		key := strings.ToLower(name)
+		isDir := f.FileInfo().IsDir()
+		if previous, exists := seen[key]; exists {
+			// ZIP writers may repeat an identical directory record. It has no
+			// content to extract, so only file duplicates and case collisions
+			// need to be rejected.
+			if previous.isDir && isDir && previous.name == name {
+				continue
+			}
+			return receipt, fmt.Errorf("Live2D ZIP 含重复路径：%s（已存在 %s）", name, previous.name)
+		}
+		seen[key] = zipEntry{name: name, isDir: isDir}
+		if isDir {
 			continue
 		}
 		if strings.HasSuffix(key, ".js") || strings.HasSuffix(key, ".html") || strings.HasSuffix(key, ".exe") {

@@ -7,10 +7,11 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
-func modelZIP(t *testing.T, extra map[string][]byte) string {
+func modelZIP(t *testing.T, extra map[string][]byte, repeatedEntries ...string) string {
 	t.Helper()
 	var texture bytes.Buffer
 	_ = png.Encode(&texture, image.NewRGBA(image.Rect(0, 0, 4, 4)))
@@ -31,11 +32,39 @@ func modelZIP(t *testing.T, extra map[string][]byte) string {
 		}
 		_, _ = w.Write(v)
 	}
+	for _, name := range repeatedEntries {
+		w, e := z.Create(name)
+		if e != nil {
+			t.Fatal(e)
+		}
+		_, _ = w.Write(files[name])
+	}
 	if e = z.Close(); e != nil {
 		t.Fatal(e)
 	}
 	_ = f.Close()
 	return file
+}
+
+func TestLive2DRepeatedDirectoryRecordsAreHarmless(t *testing.T) {
+	s, e := NewStore(t.TempDir())
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, e = s.ImportLive2D("tenant", modelZIP(t, nil, "model/", "model/"), "model.zip"); e != nil {
+		t.Fatalf("repeated directory entries should import: %v", e)
+	}
+}
+
+func TestLive2DDuplicateFileReportsPath(t *testing.T) {
+	s, e := NewStore(t.TempDir())
+	if e != nil {
+		t.Fatal(e)
+	}
+	_, e = s.ImportLive2D("tenant", modelZIP(t, nil, "model/a.moc3"), "model.zip")
+	if e == nil || !strings.Contains(e.Error(), "model/a.moc3") {
+		t.Fatalf("duplicate file path should be named: %v", e)
+	}
 }
 
 func TestLive2DImportIsDataOnlyAndTenantIsolated(t *testing.T) {
