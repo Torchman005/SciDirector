@@ -19,5 +19,13 @@ if str(_AI_ROOT) not in sys.path:
 # 让测试默认使用 mock LLM，避免 CI 因缺少密钥而失败或产生真实费用。
 import os  # noqa: E402
 
-os.environ.setdefault("SCID_LLM_PROVIDER", "mock")
-os.environ.setdefault("SCID_ENV", "test")
+# dev-env loads real credentials/provider choices. Unit tests must never inherit
+# those choices; explicit Settings(...) / monkeypatch in individual tests still work.
+for key in list(os.environ):
+    if key.startswith("SCID_") and key not in {"SCID_CHROME", "SCID_FFMPEG", "SCID_FFPROBE"}:
+        os.environ.pop(key)
+os.environ["SCID_LLM_PROVIDER"] = "mock"
+os.environ["SCID_ENV"] = "test"
+from scidirector_ai.config import Settings  # noqa: E402
+
+Settings.model_config["env_file"] = None

@@ -16,12 +16,14 @@ pydantic 报 `literal_error`，服务直接起不来。同一个文件三个消�
 from __future__ import annotations
 
 import subprocess
+import shutil
 from pathlib import Path
 
 import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 LOADER = REPO / "scripts" / "load-env.sh"
+pytestmark = pytest.mark.skipif(shutil.which("sh") is None, reason="POSIX load-env.sh 测试需要 sh；Windows 使用 dev-env.ps1")
 
 
 def load(env_file: Path, extra_env: dict[str, str] | None = None) -> dict[str, str]:

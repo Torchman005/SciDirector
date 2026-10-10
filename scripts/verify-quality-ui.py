@@ -1,6 +1,8 @@
 """Browser acceptance of creation/import/review, using isolated HTTP/WS fixtures.
 
-Run Vite on localhost:5173 first. Backend security and media tests run separately.
+Run scripts/render-anime-demo.py --render and extract preview.png into
+.data/anime-demo first; start Vite on localhost:5173. Backend security and media
+tests run separately.
 Screenshots and the machine-readable result go to ignored .data/ui-verification.
 """
 from __future__ import annotations

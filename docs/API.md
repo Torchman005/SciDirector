@@ -610,7 +610,7 @@ ws://localhost:8080/ws/jobs/{jobID}
 ```jsonc
 {
   "healthy": true, "version": "0.1.0",
-  "llm_provider": "deepseek", "vlm_model": "qwen-vl-max",
+  "llm_provider": "deepseek", "vlm_model": "qwen3-vl-plus",
   "sandbox_ready": true,
   "capabilities": ["plan", "manim", "compose", "vlm", "tool:ffmpeg=ok", "tool:latex=missing"],
 
@@ -627,6 +627,12 @@ ws://localhost:8080/ws/jobs/{jobID}
 文本与视觉可以选**不同**服务商（如 DeepSeek 写代码 + 百炼审画面），
 合成一个字段就看不出这种组合。模型处于 mock 时会报 `llm:text=mock(配置为 xxx)`，
 不冒充实服务商。
+
+模型实际调用返回 401/403/404 后，能力列表会在 60 秒内包含
+`model:text=unavailable:<provider/model HTTP 状态与配置提示>` 或对应的 `model:vision`。
+这表示最近观察到的鉴权/模型配置失败，健康查询本身不会发起付费推理；没有此项不等于已在线验证模型。
+`POST /api/v1/generate` 在该故障有效期内返回 503，不继续入队和浪费渲染预算。
+更正配置并重启 AI 服务可立即恢复；同一进程的故障缓存到期后允许重新尝试。
 
 #### `RunPipeline`
 

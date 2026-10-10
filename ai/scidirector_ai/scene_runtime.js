@@ -51,7 +51,7 @@
     const b=el.box;
     Object.assign(root.style,{left:b.x*W+'px',top:b.y*H+'px',width:b.width*W+'px',height:b.height*H+'px',
       fontSize:el.font_size+'px',textAlign:el.align,color:color(el.color)});
-    const record={el,root,content:null,bars:[],stroke:null,character:null};
+    const record={el,root,content:null,bars:[],stroke:null,strokeLength:0,arrow:null,character:null};
     if(['text','card','code'].includes(el.kind)) {
       root.className+=' scene-text'+(el.kind==='card'?' scene-card':el.kind==='code'?' scene-code':'');
       if(el.kind!=='text') {
@@ -80,21 +80,19 @@
       if(['line','polyline'].includes(el.kind)) {
         const attrs={stroke:color(el.color),'stroke-width':el.stroke_width,fill:'none',pathLength:1,'stroke-linecap':'round'};
         if(el.kind==='line') Object.assign(attrs,{x1:4,y1:4,x2:Math.max(4,w-8),y2:Math.max(4,h-8)});
-        else attrs.points=el.points.map(p=>`${4+p.x*Math.max(0,w-8)},${4+p.y*Math.max(0,h-8)}`).join(' ');
-        if(el.arrow) {
-          const defs=svgNode('defs',svg,{});
-          const marker=svgNode('marker',defs,{id:el.id+'-arrow',markerWidth:8,markerHeight:8,refX:7,refY:4,orient:'auto',markerUnits:'userSpaceOnUse'});
-          svgNode('path',marker,{d:'M0,0 L8,4 L0,8 Z',fill:color(el.color)});
-          attrs['marker-end']=`url(#${el.id}-arrow)`;
-        }
+        else attrs.points=el.points.map(p=>`${p.x*w},${p.y*h}`).join(' ');
         record.stroke=svgNode(el.kind==='line'?'line':'polyline',svg,attrs);
+        record.strokeLength=record.stroke.getTotalLength();
+        if(el.arrow) {
+          record.arrow=svgNode('path',svg,{d:'M-10,-4.5 L0,0 L-10,4.5 Z',fill:color(el.color),'data-arrow':el.id});
+        }
       }
     }
     return record;
   });
   window.__seek = seconds => {
     const t=Math.max(0,Math.min(D,Number.isFinite(seconds)?seconds:0))/D;
-    for(const {el,root,content,bars,stroke,character} of nodes) {
+    for(const {el,root,content,bars,stroke,strokeLength,arrow,character} of nodes) {
       const last=el.keyframes.length ? el.keyframes[el.keyframes.length-1].time : 0;
       const local=last>animatedUntil ? Math.min(1,t/animatedUntil) : t;
       const s=sample(el.keyframes, local);
@@ -108,7 +106,17 @@
         s.gestureMix=frame?Math.min(1,Math.max(0,(local-frame.time)*D/.3)):1;
         character(t*D,s);
       }
-      if(stroke) {stroke.setAttribute('stroke-dasharray','1');stroke.setAttribute('stroke-dashoffset',String(1-s.reveal));}
+      if(stroke) {
+        stroke.style.visibility=s.reveal>0?'visible':'hidden';
+        stroke.setAttribute('stroke-dasharray','1');stroke.setAttribute('stroke-dashoffset',String(1-s.reveal));
+        if(arrow) {
+          arrow.style.visibility=s.reveal>0?'visible':'hidden';
+          const length=strokeLength*s.reveal, tip=stroke.getPointAtLength(length);
+          const behind=stroke.getPointAtLength(Math.max(0,length-.1));
+          const angle=Math.atan2(tip.y-behind.y,tip.x-behind.x)*180/Math.PI;
+          arrow.setAttribute('transform',`translate(${tip.x} ${tip.y}) rotate(${angle})`);
+        }
+      }
       if(el.kind==='code') content.textContent=Array.from(el.text).slice(0,Math.floor(Array.from(el.text).length*s.reveal)).join('');
       for(const bar of bars) bar.style.transform=`scaleX(${s.reveal})`;
     }

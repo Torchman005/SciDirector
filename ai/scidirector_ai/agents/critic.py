@@ -230,6 +230,7 @@ class CriticAgent(Agent):
 
         user_prompt += review_manifest(shot.code)
         images = list(frames)
+        image_labels = [f"图像 {i}：当前版本完整帧 {i}/{len(frames)}，用于本轮整体评分。" for i in range(1, len(frames) + 1)]
         current_indices = set(range(1, len(frames) + 1))
         paired_ids: set[str] = set()
         task_current_indices: dict[str, set[int]] = {}
@@ -241,6 +242,10 @@ class CriticAgent(Agent):
                 if not all(Path(pair[k]).is_file() for k in ("before", "after")):
                     continue
                 images.extend([pair["before"], pair["after"]])
+                image_labels.extend([
+                    f"图像 {len(images)-1}：历史版本 BEFORE，问题 {task.task_id}，{pair['ts']} 秒。仅作修改前对照；其中的旧错误不得计入当前评分，也不是当前第 {len(images)-1} 帧。",
+                    f"图像 {len(images)}：当前版本 AFTER，问题 {task.task_id}，{pair['ts']} 秒。请以此图核对原验收条件，在 repair_results.image_indices 引用本编号。",
+                ])
                 current_indices.add(len(images))
                 task_current_indices.setdefault(task.task_id, set()).add(len(images))
                 pairs.append({"ts": pair["ts"], "before_image": len(images) - 1,
@@ -252,6 +257,11 @@ class CriticAgent(Agent):
         if repair_context:
             user_prompt += "\n" + render_prompt("repair_review", current_count=len(frames),
                                                   repair_context=json.dumps(repair_context, ensure_ascii=False))
+            system_prompt += (
+                "\n本轮为修复验收：在整体审核 JSON 中必须额外输出 repair_results 数组，逐项回答用户清单中的 task_id。"
+                "每项包含 task_id、status（open/partial/resolved/unverified）、evidence、image_indices。"
+                "整体 passed=true 不能代替逐项验收；不得省略 repair_results。旧版 BEFORE 中存在错误不代表当前仍有错误。"
+            )
 
         try:
             parsed = self.llm.vision_json(
@@ -259,6 +269,7 @@ class CriticAgent(Agent):
                 user_prompt,
                 _RawCritique,
                 images=images,
+                image_labels=image_labels,
                 task=Task.CRITIQUE,
             )
         except (LLMError, LLMParseError) as exc:
@@ -281,16 +292,19 @@ class CriticAgent(Agent):
             t.end_sec > artifact.duration_sec or any(i > len(frames) for i in t.frame_indices)
             for t in feedback.repair_tasks if t.severity != "advisory"
         )
-        if (invalid_new_tasks or (needs_locations and not _valid_task_locations(feedback.repair_tasks, artifact)
+        missing_results = paired_ids - {result.task_id for result in parsed.repair_results}
+        if (missing_results or invalid_new_tasks or (needs_locations and not _valid_task_locations(feedback.repair_tasks, artifact)
                                   and not active_repairs(previous_review))):
             # One bounded clarification, never a render retry with vague feedback.
             try:
                 parsed = self.llm.vision_json(
                     system_prompt,
-                    user_prompt + "\n上一份判负反馈缺少有效 repair_tasks。请重新输出完整 JSON，"
+                    user_prompt + "\n上一份审核反馈缺少有效定位或逐项验收结果。请重新输出完整 JSON，"
                     "补充真实帧号/时间段、具体对象、画面证据、修改指令与可验收条件。"
+                    f"本轮完整帧的 frame_indices 只能为 1～{len(frames)}；标为历史版本 BEFORE 的图不得作为当前问题。"
+                    f"repair_results 必须回答这些已提供对比图的 task_id：{sorted(paired_ids)}，引用相应当前 AFTER 图像编号。"
                     "不能用泛泛建议或编造定位补齐。上一份输出：" + str(parsed.model_dump()),
-                    _RawCritique, images=images, task=Task.CRITIQUE,
+                    _RawCritique, images=images, image_labels=image_labels, task=Task.CRITIQUE,
                 )
                 feedback, program_passed = self._decide(parsed, shot=shot, attempt=attempt)
             except (LLMError, LLMParseError) as exc:

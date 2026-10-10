@@ -88,7 +88,7 @@ PROVIDERS: dict[str, ProviderSpec] = {
         api_key_env="SCID_DASHSCOPE_API_KEY",
         text_model="qwen-plus",
         # 百炼的视觉模型：既能审查画面，也具备中文能力。
-        vlm_model="qwen-vl-max",
+        vlm_model="qwen3-vl-plus",
         note="文本与视觉都有；兼容端点是 /compatible-mode/v1（不是根域名）。",
     ),
     "mock": ProviderSpec(

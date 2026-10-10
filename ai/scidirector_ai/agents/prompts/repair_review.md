@@ -3,6 +3,8 @@
 先按以下清单逐项核对原验收条件，再对当前镜头做整体检查。原问题编号和验收条件固定。
 前 {{current_count}} 张是本轮完整镜头抽帧；后续图像按下面的图像编号清单提供。
 旧证据只用于比较，不得当成本轮缺陷。每组 before/after 对齐到相同秒数。
+每张图前的标签是版本与编号真源。标为「历史版本 BEFORE」的图展示旧错误是正常的，不得将其计入当前的 logic_score、fatal_issues 或 repair_tasks。
+新问题的 frame_indices 仅引用前面的当前完整帧，不引用后面的对比图编号；repair_results.image_indices 才使用对比图的当前 AFTER 编号。
 局部像素变化或编码器自述不能代表修复成功。静帧不足以证明的连续运动标为 unverified。
 
 {{repair_context}}

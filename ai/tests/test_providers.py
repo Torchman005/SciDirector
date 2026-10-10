@@ -91,7 +91,7 @@ def test_vision_provider_can_differ_from_text() -> None:
     )
     text, vision = s.text_target(), s.vision_target()
     assert (text.provider, text.model) == ("deepseek", "deepseek-chat")
-    assert (vision.provider, vision.model) == ("bailian", "qwen-vl-max")
+    assert (vision.provider, vision.model) == ("bailian", "qwen3-vl-plus")
     assert text.usable and vision.usable
     # 两家密钥不能串：用错密钥的表现是 401，而 401 看起来像"密钥过期了"。
     assert text.api_key == "dk" and vision.api_key == "bk"
@@ -251,7 +251,7 @@ def test_vision_request_carries_image_parts(fake_openai, tmp_path) -> None:
     from scidirector_ai.schemas import CriticFeedback  # noqa: F401  (仅确保导入可用)
 
     c.chat_json(
-        "系统", "用户", _OkSchema, images=[str(img)], role="vision"
+        "系统", "用户", _OkSchema, images=[str(img)], image_labels=["图像 1：当前版本 AFTER"], role="vision"
     )
 
     body = fake_openai.requests[0]
@@ -261,6 +261,15 @@ def test_vision_request_carries_image_parts(fake_openai, tmp_path) -> None:
     assert isinstance(parts, list) and any(p.get("type") == "image_url" for p in parts), (
         f"视觉请求里没有图片分片：{parts}"
     )
+    assert parts[1] == {"type":"text","text":"图像 1：当前版本 AFTER"}
+    assert parts[2]["type"] == "image_url"
+
+
+def test_numbered_evidence_never_silently_shifts_when_file_is_missing(fake_openai, tmp_path):
+    client = _client_for(fake_openai, vlm_provider="bailian", dashscope_api_key="test")
+    with pytest.raises(LLMError,match="编号"):
+        client.vision_json("s","u",_OkSchema,images=[str(tmp_path/"missing.png")],image_labels=["当前图1"])
+    assert not fake_openai.requests
 
 
 def test_vision_call_is_refused_when_provider_has_no_vision(fake_openai, tmp_path) -> None:
@@ -309,6 +318,48 @@ def test_permanent_error_is_not_retried(fake_openai, monkeypatch) -> None:
     # 网络抖动或限流，而真正的原因是密钥/模型名写错了。
     assert "未重试" in str(ei.value)
     assert "已尝试" not in str(ei.value)
+
+
+def test_model_fault_is_cached_per_role_then_recovers(fake_openai, monkeypatch) -> None:
+    class Missing(Exception):
+        status_code = 404
+    client = _client_for(fake_openai, vlm_provider="bailian",dashscope_api_key="test")
+    now = [100.0]
+    monkeypatch.setattr("scidirector_ai.llm.time.monotonic",lambda: now[0])
+    actual = client._text_client.chat.completions.create
+    calls = []
+    def fail(**kwargs):
+        calls.append(kwargs)
+        raise Missing("model missing")
+    monkeypatch.setattr(client._text_client.chat.completions,"create",fail)
+    for _ in range(2):
+        with pytest.raises(LLMError): client.chat_text("s","u")
+    assert len(calls) == 1
+    assert set(client.model_faults()) == {"text"}
+    assert "404" in client.model_faults()["text"]
+    monkeypatch.setattr(client._text_client.chat.completions,"create",actual)
+    now[0] = 161.0
+    assert client.chat_text("s","u") == '{"ok": true}'
+    assert not client.model_faults()
+
+
+@pytest.mark.parametrize("status,model", [(400, None), (422, None), (404, "explicit-other-model")])
+def test_request_specific_failure_does_not_poison_configured_model(fake_openai, monkeypatch, status, model):
+    class RequestFailure(Exception):
+        status_code = status
+
+    client = _client_for(fake_openai)
+    actual = client._text_client.chat.completions.create
+
+    def fail(**_kwargs):
+        raise RequestFailure("request rejected")
+
+    monkeypatch.setattr(client._text_client.chat.completions, "create", fail)
+    with pytest.raises(LLMError):
+        client.chat_text("s", "u", model=model)
+    assert not client.model_faults()
+    monkeypatch.setattr(client._text_client.chat.completions, "create", actual)
+    assert client.chat_text("s", "u") == '{"ok": true}'
 
 
 def test_transient_error_is_retried(fake_openai, monkeypatch) -> None:

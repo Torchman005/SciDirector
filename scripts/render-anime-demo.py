@@ -12,7 +12,7 @@ def demo_scene() -> SceneSpec:
          "box":{"x":.07,"y":.08,"width":.86,"height":.12}},
         {"id":"surface","kind":"rect","color":"#526B86",
          "box":{"x":.09,"y":.67,"width":.62,"height":.014}},
-        {"id":"normal","kind":"line","color":"muted",
+        {"id":"normal","kind":"polyline","color":"muted","points":[{"x":0,"y":0},{"x":0,"y":1}],
          "box":{"x":.4,"y":.28,"width":.001,"height":.39}},
         {"id":"incident","kind":"polyline","color":"#F7BE62","arrow":True,
          "points":[{"x":0,"y":0},{"x":1,"y":1}],

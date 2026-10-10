@@ -251,7 +251,7 @@ def test_require_mode_runner_returns_failure_instead_of_raising(monkeypatch, tmp
         "scidirector_ai.sandbox.isolation.network_isolation_available", lambda *a, **k: False
     )
     runner = SandboxRunner("require")
-    res = runner.run(["echo", "should-not-run"], cwd=tmp_path)
+    res = runner.run([sys.executable, "-c", "print('should-not-run')"], cwd=tmp_path)
 
     assert res.returncode != 0
     assert not res.ok
@@ -265,7 +265,7 @@ def test_auto_mode_degrades_honestly_when_unavailable(monkeypatch, tmp_path) -> 
     monkeypatch.setattr(
         "scidirector_ai.sandbox.isolation.network_isolation_available", lambda *a, **k: False
     )
-    res = SandboxRunner("auto").run(["echo", "hi"], cwd=tmp_path)
+    res = SandboxRunner("auto").run([sys.executable, "-c", "print('hi')"], cwd=tmp_path)
 
     assert res.returncode == 0
     assert res.network_isolation == "none", "降级时必须如实上报为未隔离"
@@ -472,7 +472,7 @@ def test_read_only_require_fails_closed_when_unavailable(monkeypatch, tmp_path) 
     monkeypatch.setattr(
         "scidirector_ai.sandbox.isolation.read_only_available", lambda: False
     )
-    res = SandboxRunner("off", "require").run(["echo", "should-not-run"], cwd=tmp_path)
+    res = SandboxRunner("off", "require").run([sys.executable, "-c", "print('should-not-run')"], cwd=tmp_path)
 
     assert not res.ok
     assert "只读" in res.stderr
@@ -529,6 +529,7 @@ def _run_ptrace_probe(seccomp_mode: str, tmp_path):
     )
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="seccomp/ptrace 是 Linux 专用机制")
 def test_seccomp_blocks_denied_syscall(tmp_path) -> None:
     res = _run_ptrace_probe("deny", tmp_path)
 
@@ -541,6 +542,7 @@ def test_seccomp_blocks_denied_syscall(tmp_path) -> None:
     assert "socket OK" in res.stdout, res.stdout
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="libc ptrace 是 Linux 专用探针")
 def test_syscall_succeeds_without_seccomp(tmp_path) -> None:
     """**反向对照。**
 
@@ -558,6 +560,7 @@ def test_syscall_succeeds_without_seccomp(tmp_path) -> None:
     assert "socket OK" in res.stdout
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="seccomp 是 Linux 专用机制")
 def test_seccomp_does_not_break_rendering(tmp_path) -> None:
     """seccomp 下真实跑一次 ffmpeg：过滤不能把正常渲染弄坏。
 
@@ -582,6 +585,9 @@ def test_seccomp_does_not_break_rendering(tmp_path) -> None:
     assert out.is_file() and out.stat().st_size > 0, "seccomp 下渲染没有产出文件"
 
 
+@requires_netns
+@requires_ro
+@pytest.mark.skipif(sys.platform != "linux", reason="seccomp 是 Linux 专用机制")
 def test_seccomp_and_network_and_readonly_compose(sandbox_workdir) -> None:
     """三层同时开启：都必须如实上报已生效，且命令照常跑完。
 
@@ -610,13 +616,14 @@ def test_seccomp_require_fails_closed_when_unavailable(monkeypatch, tmp_path) ->
     monkeypatch.setattr(
         "scidirector_ai.sandbox.isolation.Isolator.seccomp_mechanism", lambda self: "none"
     )
-    res = SandboxRunner("off", "off", "require").run(["echo", "should-not-run"], cwd=tmp_path)
+    res = SandboxRunner("off", "off", "require").run([sys.executable, "-c", "print('should-not-run')"], cwd=tmp_path)
 
     assert not res.ok
     assert "seccomp" in res.stderr
     assert "should-not-run" not in res.stdout, "命令不该被执行"
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="seccomp 是 Linux 专用机制")
 def test_seccomp_report_marks_unresolved_syscalls() -> None:
     """名单里解析不到的条目必须被记下来，而不是只报"拦了 N 条"。
 

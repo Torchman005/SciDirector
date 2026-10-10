@@ -505,7 +505,7 @@ LangGraph 的条件边最容易写坏的方式，是把判断逻辑散在边函�
 | --- | --- | --- | --- |
 | `openai` | `https://api.openai.com/v1` | gpt-4o | gpt-4o |
 | `deepseek` | `https://api.deepseek.com/v1` | deepseek-chat | **无** |
-| `bailian`（阿里云百炼） | `https://dashscope.aliyuncs.com/compatible-mode/v1` | qwen-plus | qwen-vl-max |
+| `bailian`（阿里云百炼） | `https://dashscope.aliyuncs.com/compatible-mode/v1` | qwen-plus | qwen3-vl-plus |
 | `mock` | — | 占位 | 占位 |
 
 三家都提供 OpenAI 兼容端点，因此**只需要一份客户端实现**，差别只在
@@ -534,7 +534,7 @@ base_url / model / key。自建一套 SDK 抽象只会增加要维护的面。
 
 ### 健康检查分开报文本与视觉
 
-`llm:text=deepseek/deepseek-chat`、`llm:vision=bailian/qwen-vl-max`，
+`llm:text=deepseek/deepseek-chat`、`llm:vision=bailian/qwen3-vl-plus`，
 视觉不可用时报 `llm:vision=none` —— 合成一个字段就看不出"文本是某家、视觉没配"
 这种会产生严重后果的组合。mock 时报 `llm:text=mock(配置为 openai)`，
 不冒充实服务商。

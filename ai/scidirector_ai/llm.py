@@ -22,6 +22,7 @@ import mimetypes
 import random
 import re
 import time
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Sequence
@@ -77,6 +78,7 @@ class Message:
     role: str
     text: str
     images: list[str] = field(default_factory=list)
+    image_labels: list[str] = field(default_factory=list)
 
 
 #: 任务标识。**显式传参**而不是让 mock 从提示词里嗅探关键词。
@@ -189,6 +191,8 @@ class LLMClient:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self.usage = Usage()
+        self._fault_lock = threading.Lock()
+        self._model_faults: dict[str, tuple[float, str]] = {}
 
         self.text = settings.text_target()
         self.vision = settings.vision_target()
@@ -234,6 +238,13 @@ class LLMClient:
                         "reason": self.vision.problem,
                     },
                 )
+
+    def model_faults(self) -> dict[str, str]:
+        """Known auth/model failures only; health checks never trigger paid inference."""
+        with self._fault_lock:
+            now = time.monotonic()
+            self._model_faults = {role: fault for role, fault in self._model_faults.items() if fault[0] > now}
+            return {role: fault[1] for role, fault in self._model_faults.items()}
 
     def _build_client(self, target: LLMTarget, *, role: str) -> Any:
         """构造 OpenAI 兼容客户端。
@@ -303,6 +314,7 @@ class LLMClient:
         temperature: float | None = None,
         max_tokens: int | None = None,
         images: Sequence[str] = (),
+        image_labels: Sequence[str] = (),
         task: str = Task.FREE,
         role: str = "text",
         max_parse_attempts: int = 2,
@@ -331,7 +343,7 @@ class LLMClient:
                 raw = self._call(
                     messages=[
                         Message(role="system", text=system),
-                        Message(role="user", text=base_user, images=list(images)),
+                        Message(role="user", text=base_user, images=list(images), image_labels=list(image_labels)),
                     ],
                     model=model_name,
                     temperature=temperature,
@@ -367,9 +379,12 @@ class LLMClient:
         *,
         model: str | None = None,
         task: str = Task.CRITIQUE,
+        image_labels: Sequence[str] = (),
     ) -> BaseModel:
-        """视觉结构化对话（VLM 审查）。图片缺失会被跳过而不是让整体失败。"""
+        """视觉结构化对话；有编号证据必须完整，未编号的缺失图片才可跳过。"""
         usable: list[str] = []
+        if image_labels and (len(image_labels) != len(images) or any(not Path(img).is_file() for img in images)):
+            raise LLMError("带编号的审核证据缺失或标签数量不一致；停止审查，避免图片编号错位")
         for img in images:
             if Path(img).is_file():
                 usable.append(img)
@@ -396,6 +411,7 @@ class LLMClient:
             model=model or self.vision.model,
             temperature=0.0,  # 审查要求可复现，温度必须为 0
             images=usable,
+            image_labels=image_labels,
             task=task,
             role="vision",
         )
@@ -417,6 +433,10 @@ class LLMClient:
     ) -> str:
         if self._mock:
             return _mock_response(messages, json_mode=json_mode, task=task)
+
+        target = self.vision if role == "vision" else self.text
+        if model == target.model and (reason := self.model_faults().get(role)):
+            raise LLMError(f"模型配置暂不可用：{reason}；请修复配置后重启 AI，或等待 60 秒后重试")
 
         client = self._vision_client if role == "vision" else self._text_client
         if client is None:
@@ -486,6 +506,12 @@ class LLMClient:
             except Exception as exc:  # noqa: BLE001 - 需要兜住 SDK 的各种异常类型
                 last_error = exc
                 if _is_permanent_error(exc):
+                    status = getattr(exc, "status_code", None)
+                    # 400/422 can be specific to this request; do not block other jobs.
+                    if status in {401, 403, 404} and model == target.model:
+                        reason = f"{target.provider}/{model} HTTP {status}，检查模型名称、地域及访问权限"
+                        with self._fault_lock:
+                            self._model_faults[role] = (time.monotonic() + 60, reason)
                     # 配置类错误重试没有意义：401 密钥错、404 模型名错、400 参数错 ——
                     # 重试三次只会让失败晚 7 秒出现，并把日志刷满同样的信息。
                     permanent = True
@@ -520,12 +546,16 @@ class LLMClient:
             return {"role": msg.role, "content": msg.text}
 
         parts: list[dict[str, Any]] = [{"type": "text", "text": msg.text}]
-        for img in msg.images:
+        for index, img in enumerate(msg.images):
             try:
                 data_url, _ = encode_image(img)
             except LLMError as exc:
+                if msg.image_labels:
+                    raise
                 logger.warning("图片编码失败，已跳过", extra={"error": str(exc)})
                 continue
+            if msg.image_labels:
+                parts.append({"type": "text", "text": msg.image_labels[index]})
             parts.append({"type": "image_url", "image_url": {"url": data_url, "detail": "high"}})
         return {"role": msg.role, "content": parts}
 

@@ -150,6 +150,7 @@ def _write_page(tmp_path: Path) -> None:
 
 
 @requires_chrome
+@requires_netns
 def test_browser_js_cannot_reach_network_inside_sandbox(tmp_path) -> None:
     """**核心安全断言**：沙盒里浏览器内的 JS 连不出去（目标为公网地址）。
 
@@ -274,6 +275,7 @@ def test_sandboxed_capture_produces_frames(tmp_path) -> None:
             "--html", str(tmp_path / "index.html"),
             "--frames-dir", str(frames),
             "--frames", "3", "--fps", "2",
+            "--format", "png",
             "--width", "160", "--height", "100",
             "--start-sec", "0",
             "--executable", str(CHROME_BIN),
@@ -319,6 +321,7 @@ def test_capture_reports_missing_seek_contract(tmp_path) -> None:
 
 
 @requires_chrome
+@requires_netns
 def test_runner_wires_capture_into_the_sandbox(tmp_path) -> None:
     """经 runner 跑截图脚本时，网络隔离必须真的生效（防止"漏挂"）。
 
@@ -339,6 +342,7 @@ def test_runner_wires_capture_into_the_sandbox(tmp_path) -> None:
             "--html", str(tmp_path / "index.html"),
             "--frames-dir", str(frames),
             "--frames", "1", "--fps", "1",
+            "--format", "png",
             "--width", "160", "--height", "100",
             "--executable", str(CHROME_BIN),
         ],

@@ -89,6 +89,10 @@ def _patch_toolchain(monkeypatch: pytest.MonkeyPatch, toolchain: dict[str, bool]
 
 
 class TestHealthReport:
+    def test_known_model_fault_is_visible_without_network_probe(self, service, monkeypatch):
+        monkeypatch.setattr(service.llm,"model_faults",lambda: {"vision":"bailian/example HTTP 404"})
+        assert "model:vision=unavailable:bailian/example HTTP 404" in service.health().capabilities
+
     def test_sandbox_ready_is_false_when_no_engine_available(
         self, service: PipelineService, monkeypatch: pytest.MonkeyPatch
     ) -> None:

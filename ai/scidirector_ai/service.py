@@ -169,6 +169,8 @@ class PipelineService:
         engines = engine_availability(toolchain)
 
         capabilities = ["plan", "code", "critique"]
+        for role, reason in self.llm.model_faults().items():
+            capabilities.append(f"model:{role}=unavailable:{reason}")
         from .presenter import runtime_paths
         try:
             runtime_paths(self.settings)

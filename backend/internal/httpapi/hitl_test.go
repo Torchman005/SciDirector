@@ -57,7 +57,7 @@ func newHarness(t *testing.T) *harness {
 // 做成构造参数而不是「构造完再改字段」：后者要在路由已经建好之后改配置，
 // 而路由/中间件可能已经把配置读走了 —— 那样测出来的行为会取决于实现细节，
 // 而且很容易写成"设了但没生效"却依然是绿的。
-func newHarnessWithQuota(t *testing.T, maxActiveJobs int) *harness {
+func newHarnessWithQuota(t *testing.T, maxActiveJobs int, capabilities ...string) *harness {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	addr := testRedisAddr(t)
@@ -101,7 +101,7 @@ func newHarnessWithQuota(t *testing.T, maxActiveJobs int) *harness {
 	// 探活失败就 503 —— 于是「创建任务的真实路径」（归属落库、配额、入队）
 	// 在这些用例里**根本走不到**，只能靠 t.Skip 掩盖过去。
 	// 我第一版就是那样，而 skip 掉的恰恰是本节最想验的那段代码。
-	aiAddr := startFakeAIServer(t)
+	aiAddr := startFakeAIServer(t, capabilities...)
 
 	aiClient, err := ai.NewClient(config.AIConfig{
 		Addr:         aiAddr,
@@ -547,21 +547,22 @@ func TestPatchShotNotFound(t *testing.T) {
 // 没有接口可替身；而真起一个 server 顺带把「探活成功」这件事也如实覆盖了。
 type fakeAIServer struct {
 	pb.UnimplementedAiDirectorServiceServer
+	capabilities []string
 }
 
 func (f *fakeAIServer) Health(context.Context, *pb.HealthRequest) (*pb.HealthResponse, error) {
-	return &pb.HealthResponse{Healthy: true, Version: "test", LlmProvider: "mock"}, nil
+	return &pb.HealthResponse{Healthy: true, Version: "test", LlmProvider: "mock", Capabilities: f.capabilities}, nil
 }
 
 // startFakeAIServer 起一个监听随机端口的假 AI 大脑，返回其地址。
-func startFakeAIServer(t *testing.T) string {
+func startFakeAIServer(t *testing.T, capabilities ...string) string {
 	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("监听 gRPC 端口失败: %v", err)
 	}
 	gs := grpc.NewServer()
-	pb.RegisterAiDirectorServiceServer(gs, &fakeAIServer{})
+	pb.RegisterAiDirectorServiceServer(gs, &fakeAIServer{capabilities: capabilities})
 	go func() { _ = gs.Serve(lis) }()
 	t.Cleanup(gs.Stop)
 	return lis.Addr().String()

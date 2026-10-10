@@ -179,6 +179,13 @@ func (s *Server) HandleGenerate(c *gin.Context) {
 			"AI 服务当前不可用，无法接受新的生成任务", healthErr)
 		return
 	}
+	for _, capability := range health.Capabilities {
+		if strings.HasPrefix(capability, "model:text=unavailable:") || strings.HasPrefix(capability, "model:vision=unavailable:") {
+			abortWith(c, http.StatusServiceUnavailable, ErrCodeUpstream,
+				"模型配置不可用，请先修复模型名称、地域或访问权限，再重试："+strings.SplitN(capability, "unavailable:", 2)[1], nil)
+			return
+		}
+	}
 	if effects.Presenter != nil {
 		ready := false
 		for _, capability := range health.Capabilities {

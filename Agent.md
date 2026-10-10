@@ -247,6 +247,8 @@ Manim 路由保留。全局 `code` 或 `shot.meta.generation_mode=code` 为复�
 - 结构化场景复审附带当前渲染代码中的元素 ID、真实字号及布局/时序；以画面为最终依据。
 - 结构化修订使用内部 `SceneRevision`（upsert/remove）保留无关元素，空补丁/仅改说明在生成内预算中修复。
 - 文字复审证据以 1024px 提供，320px 仅用于廉价像素比较；最终 verdict 包含未关闭任务账本。
+- 多模态消息逐图标注当前完整帧、历史 BEFORE、当前 AFTER 与稳定编号；有编号证据缺失时拒绝审核，禁止静默跳过导致编号错位。修复验收必须返回逐项 `repair_results`；缺失结果与无效定位共用一次澄清预算，不为补齐审核 JSON 重渲染。
+- 百炼默认视觉模型为 `qwen3-vl-plus`。实际模型调用遇到配置模型的 401/403/404 时按角色缓存故障 60 秒，通过 Health 的 `model:text|vision=unavailable:<原因>` 暴露；Go 在入队前返回 503。健康查询不主动调用付费推理，过期允许恢复；请求特定的 400/422 与显式其他模型失败不阻断默认模型。
 
 - 输入：抽帧图像（3~6 帧，等间隔）+ 该镜头 `narration` + `visual_brief`
 - 输出：`CriticFeedback{passed, score, issues[], suggestions[], model}`

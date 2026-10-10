@@ -97,7 +97,7 @@ Go 根本不读 `.env` 文件，Python 的 `env_file` 又是相对当前目录�
 | --- | --- | --- |
 | `openai` | `gpt-4o` | `gpt-4o` |
 | `deepseek` | `deepseek-chat` | **无**（DeepSeek 没有视觉模型） |
-| `bailian`（阿里云百炼） | `qwen-plus` | `qwen-vl-max` |
+| `bailian`（阿里云百炼） | `qwen-plus` | `qwen3-vl-plus` |
 | `mock` | `mock` | `mock` |
 
 > ⚠️ **别自己编模型名。** 本项目实际遇到过把 `SCID_LLM_MODEL` 填成

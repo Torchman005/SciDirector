@@ -66,4 +66,27 @@ def test_review_uses_one_call_and_requires_current_pair(
             {"ts": 1, "before": str(before), "after": str(after)}]}])
     assert outcome.passed == expected and len(calls) == 1
     assert calls[0]["images"] == ["a", "b", str(before), str(after)]
+    assert "历史版本 BEFORE" in calls[0]["image_labels"][2]
+    assert "当前版本 AFTER" in calls[0]["image_labels"][3]
     assert outcome.feedback.repair_tasks[0].task_id == "original"
+
+
+def test_omitted_repair_results_get_one_clarification_without_rerender(tmp_path: Path):
+    before, after = tmp_path/"before.png",tmp_path/"after.png"
+    before.write_bytes(b"before"); after.write_bytes(b"after")
+    calls=[]
+    def vision(system,user,schema,**kwargs):
+        calls.append(user)
+        assert "不得省略 repair_results" in system
+        results=[] if len(calls)==1 else [_RepairResult(task_id="original",status="resolved",
+            evidence="当前 AFTER 图4中标签清晰分开",image_indices=[4])]
+        return _RawCritique(passed=True,logic_score=.95,readability_score=.95,pacing_score=.9,
+                            aesthetics_score=.9,repair_results=results)
+    old=CriticFeedback(passed=False,suggestions=["repair"],repair_tasks=[task(task_id="original")])
+    outcome=CriticAgent(SimpleNamespace(vision_json=vision),Settings()).review(
+        shot=ShotSpec(shot_id="s",tag=SceneTag.MATH,duration_sec=5),
+        artifact=RenderArtifact(duration_sec=5,frame_samples=["a","b"]),style_guide=StyleGuide(),
+        attempt=2,previous_review=old,repair_prechecks=[{"task_id":"original","status":"changed",
+          "pairs":[{"ts":1,"before":str(before),"after":str(after)}]}])
+    assert outcome.passed and len(calls)==2
+    assert outcome.feedback.repair_tasks[0].status=="resolved"

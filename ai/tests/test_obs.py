@@ -68,7 +68,7 @@ def test_log_formatter_uses_otel_trace_id() -> None:
     而不是打桩 —— 打桩会把「格式化成 32 位小写 hex」这一步一起假掉，
     而那恰恰是两侧能对上的关键（Tempo 里也是这个格式）。
     """
-    from opentelemetry.sdk.trace import TracerProvider
+    TracerProvider = pytest.importorskip("opentelemetry.sdk.trace", reason="真实追踪测试需要 telemetry 可选依赖").TracerProvider
     from opentelemetry.sdk.trace.export import SimpleSpanProcessor
     from opentelemetry.trace import set_tracer_provider
 
