@@ -362,6 +362,31 @@ class TestSingleShotRPCs:
 # ===========================================================================
 
 
+class TestPresenterRPC:
+    def test_presenter_contract_and_deadline(self, grpc_stub, service, monkeypatch):
+        captured = {}
+        def render(**kwargs):
+            captured.update(kwargs)
+            return {"video_path":"/shared/avatar.webm", "envelope_path":"/shared/mouth.json", "lip_sync":True}
+        monkeypatch.setattr(service, "render_presenter", render)
+        reply = grpc_stub.RenderPresenter(pb.RenderPresenterRequest(model_path="/shared/model.model3.json",
+            audio_path="/shared/voice.wav",output_dir="/shared",duration_sec=3,width=240,height=360,fps=30,
+            mouth_parameter="ParamMouthOpenY",mouth_gain=1.2), timeout=10)
+        assert reply.lip_sync and reply.video_path.endswith(".webm")
+        assert captured["audio_path"] == "/shared/voice.wav"
+        assert captured["mouth_gain"] == pytest.approx(1.2)
+        # grpc-timeout rounds across transport clock granularity, particularly on Windows.
+        assert 0 < captured["timeout_sec"] <= 10.5
+
+    def test_missing_dependency_is_precondition(self, grpc_stub, service, monkeypatch):
+        def missing(**kwargs):
+            raise ValueError("Live2D 运行库未就绪")
+        monkeypatch.setattr(service, "render_presenter", missing)
+        with pytest.raises(grpc.RpcError) as exc:
+            grpc_stub.RenderPresenter(pb.RenderPresenterRequest(), timeout=5)
+        assert exc.value.code() == grpc.StatusCode.FAILED_PRECONDITION
+
+
 class TestStyleGuideFallback:
     """坏的 style_guide_json 必须降级而不是让整个请求失败。"""
 

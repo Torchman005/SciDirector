@@ -192,6 +192,7 @@ export interface StyleGuide {
 }
 
 export interface Effects {
+  presenter?: { asset_id: string; mouth_parameter?: string; mouth_gain?: number }
   bgm?: BgmEffects
   grade?: string
   grade_strength?: number

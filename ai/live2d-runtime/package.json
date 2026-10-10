@@ -1,0 +1,10 @@
+{
+  "name": "scidirector-live2d-runtime",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Pinned offline rendering dependencies; Cubism Core is supplied by the operator",
+  "dependencies": {
+    "pixi.js": "6.5.10",
+    "pixi-live2d-display": "0.4.0"
+  }
+}

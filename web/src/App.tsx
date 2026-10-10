@@ -29,6 +29,7 @@ import { InboxOutlined, ReloadOutlined } from '@ant-design/icons'
 import { api, errorText } from './api'
 import { EventTimeline } from './components/EventTimeline'
 import { ShotTable } from './components/ShotTable'
+import { PresenterSettings } from './components/PresenterSettings'
 import { deriveReviewSummary, deriveStat, shotsOf } from './stream'
 import { useJobStream } from './useJobStream'
 import { BACKGROUND_STYLES, STYLE_PRESETS, formatTime, jobStatus } from './display'
@@ -96,6 +97,8 @@ export function App() {
   const [form] = Form.useForm<SubmitForm>()
   const [jobId, setJobId] = useState<string | null>(jobFromUrl)
   const [submitting, setSubmitting] = useState(false)
+  const [presenter, setPresenter] = useState<Effects['presenter']>()
+  const [presenterBusy, setPresenterBusy] = useState(false)
   const [refreshTick, setRefreshTick] = useState(0)
   const [estimate, setEstimate] = useState<number | null>(null)
   const [estimateBasis, setEstimateBasis] = useState('')
@@ -235,9 +238,11 @@ export function App() {
   }
 
   async function submit(values: SubmitForm) {
+    if (presenterBusy || bgmBusy || submitting) return
     setSubmitting(true)
     try {
       const effects: Effects = {}
+      if (presenter) effects.presenter = presenter
       if (values.grade && values.grade !== 'none') {
         effects.grade = values.grade
         effects.grade_strength = values.grade_strength
@@ -503,6 +508,7 @@ export function App() {
                 </Col>
               </Row>
 
+              <PresenterSettings value={presenter} onChange={setPresenter} onBusyChange={setPresenterBusy} />
               <Form.Item label="背景音乐" style={{ marginBottom: 8 }}>
                 {bgm ? (
                   <Space direction="vertical" style={{ width: '100%' }} size={8}>
@@ -594,7 +600,7 @@ export function App() {
                 )}
               </Form.Item>
 
-              <Button type="primary" size="large" htmlType="submit" loading={submitting}>
+              <Button type="primary" size="large" htmlType="submit" loading={submitting} disabled={bgmBusy || presenterBusy}>
                 开始生成
               </Button>
             </Form>
@@ -713,6 +719,7 @@ export function App() {
                                 ? `后期处理 ✓（${String(effectsApplied.grade || 'none')}）`
                                 : '无后期处理'}
                             </Tag>
+                            {effectsApplied.presenter_applied === true && <Tag color="cyan">Live2D · TTS 口型同步 ✓</Tag>}
                             {effectsApplied.burn_subtitles ? (
                               <Tag color="purple" bordered={false}>
                                 字幕已烧录

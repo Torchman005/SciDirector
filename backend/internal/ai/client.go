@@ -159,6 +159,18 @@ func (c *Client) GenerateShot(ctx context.Context, req *pb.GenerateShotRequest) 
 }
 
 // CritiqueShot 调用审查智能体（VLM）。
+// RenderPresenter renders the final-timeline presenter, bounded like a pipeline call.
+func (c *Client) RenderPresenter(ctx context.Context, req *pb.RenderPresenterRequest) (*pb.RenderPresenterResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, c.cfg.StreamTimeout)
+	defer cancel()
+	resp, err := c.cli.RenderPresenter(ctx, req)
+	if err != nil {
+		return nil, wrapRPCError("RenderPresenter", err)
+	}
+	return resp, nil
+}
+
+// CritiqueShot 调用审查智能体（VLM）。
 func (c *Client) CritiqueShot(ctx context.Context, req *pb.CritiqueShotRequest) (*pb.CritiqueShotResponse, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.cfg.UnaryTimeout)
 	defer cancel()

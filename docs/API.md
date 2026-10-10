@@ -46,6 +46,14 @@
 
 ## 二、REST（Go 网关，默认 `:8080`）
 
+### Live2D 模型素材
+
+`POST /api/v1/assets/live2d` 接收 multipart `file`（模型 ZIP，最大 100 MB），返回 `{ok:true,data:{asset_id,filename,mouth_parameters}}`。校验及部署要求见 [LIVE2D.md](LIVE2D.md)。
+
+生成任务的 `effects.presenter` 可设置 `{asset_id,mouth_parameter?,mouth_gain?}`。默认口型强度为 1，0 也表示使用默认值，上限 3。`model_path` 由服务器按当前租户解析，客户端传入值无条件丢弃。未启用 Core/TTS 时创建任务失败并给出依赖提示。
+
+gRPC `RenderPresenter` 输入模型路径、已对齐的纯旁白路径、输出目录、时长、尺寸、fps 和口型设置；输出透明 `video_path`、音量包络 `envelope_path`、`lip_sync`。输入或依赖不满足返回 `FAILED_PRECONDITION`，渲染失败返回 `INTERNAL`。Go 负责最终叠加和字幕合成。
+
 ### 2.1 运维探针
 
 #### `GET /healthz` —— 存活探针

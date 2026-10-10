@@ -18,6 +18,7 @@ import (
 	"github.com/itJinYu/SciDirector/backend/internal/domain"
 	"github.com/itJinYu/SciDirector/backend/internal/logging"
 	"github.com/itJinYu/SciDirector/backend/internal/media"
+	pb "github.com/itJinYu/SciDirector/backend/internal/pb/scidirector/v1"
 	"github.com/itJinYu/SciDirector/backend/internal/queue"
 	"github.com/itJinYu/SciDirector/backend/internal/store"
 )
@@ -544,6 +545,42 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 	}
 
 	videoPath := mergedPath
+	presenterApplied := false
+	if presenter := effects.Presenter; presenter != nil {
+		if err := presenter.Validate(); err != nil {
+			return err
+		}
+		if p.ai == nil || narrationTrack == "" {
+			return fmt.Errorf("worker: Live2D 需要 AI 渲染服务与实际 TTS 旁白，当前旁白不可用")
+		}
+		probe, err := p.media.Probe(ctx, mergedPath)
+		if err != nil {
+			return err
+		}
+		_, _, aw, ah := media.PresenterGeometry(probe.Width, probe.Height)
+		// Keep the alpha layer bounded even for 4K final videos.
+		if ah > 1024 {
+			aw = aw * 1024 / ah / 2 * 2
+			ah = 1024
+		}
+		if aw > 1024 {
+			ah = ah * 1024 / aw / 2 * 2
+			aw = 1024
+		}
+		_, _ = p.emit(ctx, &domain.Event{JobID: jobID, Node: "compose", Message: "正在渲染 Live2D 讲解员，口型跟随最终对齐的 TTS 旁白", Timestamp: time.Now().UTC()})
+		layer, err := p.ai.RenderPresenter(ctx, &pb.RenderPresenterRequest{ModelPath: presenter.ModelPath,
+			AudioPath: narrationTrack, OutputDir: workDir, DurationSec: outDuration, Width: int32(aw), Height: int32(ah),
+			Fps: int32(min(60, p.media.DefaultNormalizeSpec().FPS)), MouthParameter: presenter.MouthParameter, MouthGain: presenter.MouthGain})
+		if err != nil {
+			return fmt.Errorf("worker: Live2D 渲染失败: %w", err)
+		}
+		presented := filepath.Join(workDir, "presented.mp4")
+		if err = p.media.OverlayPresenter(ctx, mergedPath, layer.VideoPath, presented); err != nil {
+			return fmt.Errorf("worker: Live2D 合成失败: %w", err)
+		}
+		videoPath = presented
+		presenterApplied = true
+	}
 	softSubtitle := subtitlePath
 	postApplied := false
 	if media.NeedsPostProcess(postOpts) {
@@ -553,7 +590,7 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 		if postOpts.BurnSubtitlePath != "" {
 			softSubtitle = ""
 		}
-		perr := p.media.PostProcess(ctx, mergedPath, graded, postOpts, outDuration)
+		perr := p.media.PostProcess(ctx, videoPath, graded, postOpts, outDuration)
 		if perr != nil {
 			// 调色方案非法之类的问题在这里才会暴露（httpapi 已拦过一道，
 			// 但库里的旧任务可能带着当时合法的配置）。成片照出，只是不带效果。
@@ -620,11 +657,13 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 			// 用户问"为什么没有背景音乐"时，答案要能在界面里看到，
 			// 而不是只能去翻服务端日志。
 			"effects": map[string]any{
-				"bgm_requested":  effects.HasBGM(),
-				"bgm_applied":    bgmApplied,
-				"grade":          effects.Grade,
-				"post_applied":   postApplied,
-				"burn_subtitles": postOpts.BurnSubtitlePath != "",
+				"presenter_applied":  presenterApplied,
+				"presenter_lip_sync": presenterApplied,
+				"bgm_requested":      effects.HasBGM(),
+				"bgm_applied":        bgmApplied,
+				"grade":              effects.Grade,
+				"post_applied":       postApplied,
+				"burn_subtitles":     postOpts.BurnSubtitlePath != "",
 			},
 		},
 		Timestamp: time.Now().UTC(),

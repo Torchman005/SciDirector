@@ -18,6 +18,7 @@ import (
 // 会让"这份配置到底影响哪一段"变得不可推理 —— 而本项目已经吃过一次
 // 「配置项写对了却没人读」的亏。
 type Effects struct {
+	Presenter *PresenterEffects `json:"presenter,omitempty"`
 	// BGM 为空表示不加背景音乐。
 	BGM *BGMEffects `json:"bgm,omitempty"`
 	// Grade 是调色方案名（none/warm/cool/high_contrast/film）。
@@ -117,6 +118,9 @@ var hexColourRe = regexp.MustCompile(`^#[0-9A-Fa-f]{6}$`)
 // 只管范围，不管"grade 这个名字认不认识"：方案表在媒体层，
 // 由 httpapi 调用 media.PlanGrade 校验。这样 domain 不必反向依赖 media。
 func (e Effects) Validate() error {
+	if err := e.Presenter.Validate(); err != nil {
+		return err
+	}
 	if e.GradeStrength < MinGradeStrength || e.GradeStrength > MaxGradeStrength {
 		return fmt.Errorf("domain: grade_strength 应在 [%.1f, %.1f] 之间，实际 %.3f",
 			MinGradeStrength, MaxGradeStrength, e.GradeStrength)

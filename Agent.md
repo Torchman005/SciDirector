@@ -246,6 +246,7 @@ Manim 路由保留。全局 `code` 或 `shot.meta.generation_mode=code` 为复�
 - 结构化场景复审附带当前渲染代码中的元素 ID、真实字号及布局/时序；以画面为最终依据。
 - 结构化修订使用内部 `SceneRevision`（upsert/remove）保留无关元素，空补丁/仅改说明在生成内预算中修复。
 - 文字复审证据以 1024px 提供，320px 仅用于廉价像素比较；最终 verdict 包含未关闭任务账本。
+
 - 输入：抽帧图像（3~6 帧，等间隔）+ 该镜头 `narration` + `visual_brief`
 - 输出：`CriticFeedback{passed, score, issues[], suggestions[], model}`
 - 硬约束：`passed=false` 时**必须**至少给出 1 条**可执行**的 suggestion
@@ -272,6 +273,14 @@ plan → for each shot:
 ```
 
 ---
+
+### 5.5 Live2D 讲解员
+
+- `POST /api/v1/assets/live2d` 导入单模型 ZIP；只保留 model3 的 moc3/纹理/参数分组与布局。禁止脚本、外部路径、链接、超限/重复文件。
+- `effects.presenter` 只接受租户内 asset_id；model_path 由服务端解析。新模型素材按完整租户 ID 哈希隔离。
+- `RenderPresenter` RPC 渲染透明 VP9 层，输入为 Go 合成后的纯旁白轨；口型由离线 50Hz RMS 包络驱动，静音闭嘴，BGM 不参与。
+- Go 合成保留完整主图并预留右侧角色栏与底部字幕带，角色在后期/字幕前叠加。请求角色却缺 TTS/模型/运行库时明确失败。
+- Cubism Core 为部署依赖，不随源码分发；Pixi 6.5.10 / pixi-live2d-display 0.4.0 锁定版本。模型内动作/物理不自动执行，待机由确定性绝对参数驱动。部署和限制见 `docs/LIVE2D.md`。
 
 ## 6. 状态机（唯一真源）
 

@@ -55,6 +55,18 @@ class AiDirectorServicer(pb_grpc.AiDirectorServiceServicer):
     def __init__(self, service: PipelineService) -> None:
         self.service = service
 
+    def RenderPresenter(self, request: Any, context: grpc.ServicerContext) -> Any:  # noqa: N802
+        try:
+            result = self.service.render_presenter(model_path=request.model_path,audio_path=request.audio_path,
+                output_dir=request.output_dir,duration_sec=request.duration_sec,width=request.width,
+                height=request.height,fps=request.fps,mouth_parameter=request.mouth_parameter,
+                mouth_gain=request.mouth_gain,timeout_sec=context.time_remaining())
+            return pb.RenderPresenterResponse(**result)
+        except ValueError as exc:
+            context.abort(grpc.StatusCode.FAILED_PRECONDITION,str(exc))
+        except (RuntimeError,OSError) as exc:
+            context.abort(grpc.StatusCode.INTERNAL,str(exc))
+
     # ------------------------------------------------------------------
     # Health
     # ------------------------------------------------------------------

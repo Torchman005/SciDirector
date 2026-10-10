@@ -8,6 +8,11 @@
 # 构建：
 #   docker build -f ai/Dockerfile -t scid-ai .
 # =============================================================================
+FROM node:22-slim AS live2d-deps
+WORKDIR /runtime
+COPY ai/live2d-runtime/package*.json ./
+RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
+
 FROM python:3.11-slim AS base
 
 # ---- 系统依赖 ----
@@ -64,6 +69,8 @@ RUN if [ "$INSTALL_BROWSER" = "1" ]; then \
 
 # ---- 应用代码 ----
 COPY ai/ /app/
+COPY --from=live2d-deps /runtime/node_modules /opt/live2d-runtime/node_modules
+ENV SCID_LIVE2D_RUNTIME_DIR=/opt/live2d-runtime/node_modules
 
 # 预编译 Manim 的 LaTeX 前言：首次渲染的 TeX 编译极慢（几十秒），
 # 预热后可以显著降低第一个数学镜头的时延。

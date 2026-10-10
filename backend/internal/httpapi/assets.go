@@ -223,6 +223,26 @@ func (s *Server) resolveEffects(
 	c *gin.Context, tenant string, in domain.Effects,
 ) (domain.Effects, error) {
 	out := in
+	if out.Presenter != nil {
+		copy := *out.Presenter
+		out.Presenter = &copy
+		out.Presenter.ModelPath = ""
+		if err := out.Presenter.Validate(); err != nil {
+			abortWith(c, http.StatusBadRequest, ErrCodeBadRequest, err.Error(), nil)
+			return out, err
+		}
+		store, err := s.assetStore()
+		if err != nil {
+			mapError(c, err)
+			return out, err
+		}
+		model, err := store.ResolveLive2D(tenant, out.Presenter.AssetID)
+		if err != nil {
+			abortWith(c, http.StatusBadRequest, ErrCodeBadRequest, "Live2D 模型不存在，请重新导入", nil)
+			return out, err
+		}
+		out.Presenter.ModelPath = model
+	}
 	if out.BGM == nil {
 		return out, nil
 	}

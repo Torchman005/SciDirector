@@ -90,6 +90,15 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 const json = (body: unknown): RequestInit => ({ body: JSON.stringify(body) })
 
 export const api = {
+  uploadLive2D: async (file: File): Promise<{asset_id:string;filename:string;mouth_parameters:string[]}> => {
+    const form = new FormData(); form.append('file', file)
+    const response = await fetch('/api/v1/assets/live2d', {method:'POST',body:form})
+    let body: {message?: string; data?: {asset_id:string;filename:string;mouth_parameters:string[]}}
+    try { body = await response.json() }
+    catch { throw new Error(`模型上传未完成（HTTP ${response.status}），请检查服务连接和上传大小。`) }
+    if (!response.ok || !body.data) throw new Error(body.message || `模型导入失败（HTTP ${response.status}）`)
+    return body.data
+  },
   /** 提交生成任务。 */
   generate: (req: GenerateRequest) =>
     request<GenerateResponse>('/api/v1/generate', { method: 'POST', ...json(req) }),

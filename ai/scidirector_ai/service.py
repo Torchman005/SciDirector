@@ -138,6 +138,10 @@ class PipelineService:
             self._runner = PipelineRunner(self.settings, llm=self.llm)
         return self._runner
 
+    def render_presenter(self, **kwargs: Any) -> dict[str, Any]:
+        from .presenter import render_presenter
+        return render_presenter(self.settings, self.runner, **kwargs)
+
     def close(self) -> None:
         """释放持有外部资源的组件。进程退出时调用。"""
         if self._runner is not None:
@@ -165,6 +169,14 @@ class PipelineService:
         engines = engine_availability(toolchain)
 
         capabilities = ["plan", "code", "critique"]
+        from .presenter import runtime_paths
+        try:
+            runtime_paths(self.settings)
+            if self.settings.tts_provider in {"", "none"}:
+                raise ValueError("TTS 未启用")
+            capabilities.append("presenter:live2d=ok")
+        except ValueError:
+            capabilities.append("presenter:live2d=missing")
         if any(engines.values()):
             capabilities.append("render")
         if toolchain.get("ffmpeg"):

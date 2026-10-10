@@ -247,6 +247,9 @@ class Settings(BaseSettings):
     manim_max_memory_mb: int = Field(default=2048, ge=128, le=32768)
 
     render_fps: int = Field(default=30, ge=1, le=120)
+    live2d_core_path: str = ""
+    live2d_runtime_dir: str = ""
+    live2d_timeout_sec: int = Field(default=1800, ge=30, le=7200)
     render_width: int = Field(default=1920, ge=128, le=7680)
     render_height: int = Field(default=1080, ge=128, le=4320)
 

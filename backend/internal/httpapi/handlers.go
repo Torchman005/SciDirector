@@ -173,10 +173,23 @@ func (s *Server) HandleGenerate(c *gin.Context) {
 	// 原因不会被「上游不可用」盖住。
 	healthCtx, cancel := withTimeout(ctx, 3*time.Second)
 	defer cancel()
-	if _, err := s.deps.AI.Health(healthCtx); err != nil {
+	health, healthErr := s.deps.AI.Health(healthCtx)
+	if healthErr != nil {
 		abortWith(c, http.StatusServiceUnavailable, ErrCodeUpstream,
-			"AI 服务当前不可用，无法接受新的生成任务", err)
+			"AI 服务当前不可用，无法接受新的生成任务", healthErr)
 		return
+	}
+	if effects.Presenter != nil {
+		ready := false
+		for _, capability := range health.Capabilities {
+			if capability == "presenter:live2d=ok" {
+				ready = true
+			}
+		}
+		if !ready {
+			abortWith(c, http.StatusBadRequest, ErrCodeBadRequest, "Live2D 运行库或 TTS 未就绪：请安装渲染依赖、配置 SCID_LIVE2D_CORE_PATH 并启用 TTS", nil)
+			return
+		}
 	}
 
 	jobID := NewJobID()

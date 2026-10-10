@@ -2,10 +2,41 @@ from scidirector.v1 import common_pb2 as _common_pb2
 from google.protobuf.internal import containers as _containers
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import message as _message
-from collections.abc import Iterable as _Iterable, Mapping as _Mapping
-from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
+from typing import ClassVar as _ClassVar, Iterable as _Iterable, Mapping as _Mapping, Optional as _Optional, Union as _Union
 
 DESCRIPTOR: _descriptor.FileDescriptor
+
+class RenderPresenterRequest(_message.Message):
+    __slots__ = ("model_path", "audio_path", "output_dir", "duration_sec", "width", "height", "fps", "mouth_parameter", "mouth_gain")
+    MODEL_PATH_FIELD_NUMBER: _ClassVar[int]
+    AUDIO_PATH_FIELD_NUMBER: _ClassVar[int]
+    OUTPUT_DIR_FIELD_NUMBER: _ClassVar[int]
+    DURATION_SEC_FIELD_NUMBER: _ClassVar[int]
+    WIDTH_FIELD_NUMBER: _ClassVar[int]
+    HEIGHT_FIELD_NUMBER: _ClassVar[int]
+    FPS_FIELD_NUMBER: _ClassVar[int]
+    MOUTH_PARAMETER_FIELD_NUMBER: _ClassVar[int]
+    MOUTH_GAIN_FIELD_NUMBER: _ClassVar[int]
+    model_path: str
+    audio_path: str
+    output_dir: str
+    duration_sec: float
+    width: int
+    height: int
+    fps: int
+    mouth_parameter: str
+    mouth_gain: float
+    def __init__(self, model_path: _Optional[str] = ..., audio_path: _Optional[str] = ..., output_dir: _Optional[str] = ..., duration_sec: _Optional[float] = ..., width: _Optional[int] = ..., height: _Optional[int] = ..., fps: _Optional[int] = ..., mouth_parameter: _Optional[str] = ..., mouth_gain: _Optional[float] = ...) -> None: ...
+
+class RenderPresenterResponse(_message.Message):
+    __slots__ = ("video_path", "envelope_path", "lip_sync")
+    VIDEO_PATH_FIELD_NUMBER: _ClassVar[int]
+    ENVELOPE_PATH_FIELD_NUMBER: _ClassVar[int]
+    LIP_SYNC_FIELD_NUMBER: _ClassVar[int]
+    video_path: str
+    envelope_path: str
+    lip_sync: bool
+    def __init__(self, video_path: _Optional[str] = ..., envelope_path: _Optional[str] = ..., lip_sync: bool = ...) -> None: ...
 
 class CheckpointSnapshotRequest(_message.Message):
     __slots__ = ("job_id", "thread_id")
@@ -29,7 +60,7 @@ class CheckpointSnapshotResponse(_message.Message):
     shots: _containers.RepeatedCompositeFieldContainer[CheckpointShotState]
     backend: str
     detail: str
-    def __init__(self, found: _Optional[bool] = ..., finished: _Optional[bool] = ..., cursor: _Optional[int] = ..., shots: _Optional[_Iterable[_Union[CheckpointShotState, _Mapping]]] = ..., backend: _Optional[str] = ..., detail: _Optional[str] = ...) -> None: ...
+    def __init__(self, found: bool = ..., finished: bool = ..., cursor: _Optional[int] = ..., shots: _Optional[_Iterable[_Union[CheckpointShotState, _Mapping]]] = ..., backend: _Optional[str] = ..., detail: _Optional[str] = ...) -> None: ...
 
 class CheckpointShotState(_message.Message):
     __slots__ = ("shot_id", "attempt", "has_artifact")
@@ -39,7 +70,7 @@ class CheckpointShotState(_message.Message):
     shot_id: str
     attempt: int
     has_artifact: bool
-    def __init__(self, shot_id: _Optional[str] = ..., attempt: _Optional[int] = ..., has_artifact: _Optional[bool] = ...) -> None: ...
+    def __init__(self, shot_id: _Optional[str] = ..., attempt: _Optional[int] = ..., has_artifact: bool = ...) -> None: ...
 
 class RunPipelineRequest(_message.Message):
     __slots__ = ("job_id", "raw_script", "style_guide_json", "target_duration_sec", "max_attempts_per_shot", "locale", "resume", "checkpoint_thread_id")
@@ -59,7 +90,7 @@ class RunPipelineRequest(_message.Message):
     locale: str
     resume: bool
     checkpoint_thread_id: str
-    def __init__(self, job_id: _Optional[str] = ..., raw_script: _Optional[str] = ..., style_guide_json: _Optional[str] = ..., target_duration_sec: _Optional[float] = ..., max_attempts_per_shot: _Optional[int] = ..., locale: _Optional[str] = ..., resume: _Optional[bool] = ..., checkpoint_thread_id: _Optional[str] = ...) -> None: ...
+    def __init__(self, job_id: _Optional[str] = ..., raw_script: _Optional[str] = ..., style_guide_json: _Optional[str] = ..., target_duration_sec: _Optional[float] = ..., max_attempts_per_shot: _Optional[int] = ..., locale: _Optional[str] = ..., resume: bool = ..., checkpoint_thread_id: _Optional[str] = ...) -> None: ...
 
 class PlanScriptRequest(_message.Message):
     __slots__ = ("job_id", "raw_script", "style_guide_json", "target_duration_sec", "locale")
@@ -107,7 +138,7 @@ class GenerateShotRequest(_message.Message):
     output_dir: str
     range_start_sec: float
     range_end_sec: float
-    def __init__(self, job_id: _Optional[str] = ..., shot: _Optional[_Union[_common_pb2.ShotSpec, _Mapping]] = ..., attempt: _Optional[int] = ..., feedback: _Optional[_Union[_common_pb2.CriticFeedback, _Mapping]] = ..., style_guide_json: _Optional[str] = ..., draft_only: _Optional[bool] = ..., output_dir: _Optional[str] = ..., range_start_sec: _Optional[float] = ..., range_end_sec: _Optional[float] = ...) -> None: ...
+    def __init__(self, job_id: _Optional[str] = ..., shot: _Optional[_Union[_common_pb2.ShotSpec, _Mapping]] = ..., attempt: _Optional[int] = ..., feedback: _Optional[_Union[_common_pb2.CriticFeedback, _Mapping]] = ..., style_guide_json: _Optional[str] = ..., draft_only: bool = ..., output_dir: _Optional[str] = ..., range_start_sec: _Optional[float] = ..., range_end_sec: _Optional[float] = ...) -> None: ...
 
 class GenerateShotResponse(_message.Message):
     __slots__ = ("shot", "artifact", "success", "error", "total_tokens", "elapsed_sec", "partial_range_honored")
@@ -125,7 +156,7 @@ class GenerateShotResponse(_message.Message):
     total_tokens: int
     elapsed_sec: float
     partial_range_honored: bool
-    def __init__(self, shot: _Optional[_Union[_common_pb2.ShotSpec, _Mapping]] = ..., artifact: _Optional[_Union[_common_pb2.RenderArtifact, _Mapping]] = ..., success: _Optional[bool] = ..., error: _Optional[str] = ..., total_tokens: _Optional[int] = ..., elapsed_sec: _Optional[float] = ..., partial_range_honored: _Optional[bool] = ...) -> None: ...
+    def __init__(self, shot: _Optional[_Union[_common_pb2.ShotSpec, _Mapping]] = ..., artifact: _Optional[_Union[_common_pb2.RenderArtifact, _Mapping]] = ..., success: bool = ..., error: _Optional[str] = ..., total_tokens: _Optional[int] = ..., elapsed_sec: _Optional[float] = ..., partial_range_honored: bool = ...) -> None: ...
 
 class CritiqueShotRequest(_message.Message):
     __slots__ = ("job_id", "shot", "artifact", "attempt", "style_guide_json")
@@ -151,7 +182,7 @@ class CritiqueShotResponse(_message.Message):
     degraded: bool
     total_tokens: int
     elapsed_sec: float
-    def __init__(self, feedback: _Optional[_Union[_common_pb2.CriticFeedback, _Mapping]] = ..., degraded: _Optional[bool] = ..., total_tokens: _Optional[int] = ..., elapsed_sec: _Optional[float] = ...) -> None: ...
+    def __init__(self, feedback: _Optional[_Union[_common_pb2.CriticFeedback, _Mapping]] = ..., degraded: bool = ..., total_tokens: _Optional[int] = ..., elapsed_sec: _Optional[float] = ...) -> None: ...
 
 class ReviseShotRequest(_message.Message):
     __slots__ = ("job_id", "shot", "human_comment", "attempt", "style_guide_json", "output_dir", "range_start_sec", "range_end_sec")
@@ -191,4 +222,4 @@ class ReviseShotResponse(_message.Message):
     total_tokens: int
     elapsed_sec: float
     partial_range_honored: bool
-    def __init__(self, shot: _Optional[_Union[_common_pb2.ShotSpec, _Mapping]] = ..., artifact: _Optional[_Union[_common_pb2.RenderArtifact, _Mapping]] = ..., feedback: _Optional[_Union[_common_pb2.CriticFeedback, _Mapping]] = ..., success: _Optional[bool] = ..., error: _Optional[str] = ..., total_tokens: _Optional[int] = ..., elapsed_sec: _Optional[float] = ..., partial_range_honored: _Optional[bool] = ...) -> None: ...
+    def __init__(self, shot: _Optional[_Union[_common_pb2.ShotSpec, _Mapping]] = ..., artifact: _Optional[_Union[_common_pb2.RenderArtifact, _Mapping]] = ..., feedback: _Optional[_Union[_common_pb2.CriticFeedback, _Mapping]] = ..., success: bool = ..., error: _Optional[str] = ..., total_tokens: _Optional[int] = ..., elapsed_sec: _Optional[float] = ..., partial_range_honored: bool = ...) -> None: ...
