@@ -284,6 +284,8 @@ plan → for each shot:
 - `RenderPresenter` RPC 渲染透明 VP9 层，输入为 Go 合成后的纯旁白轨；口型由离线 50Hz RMS 包络驱动，静音闭嘴，BGM 不参与。
 - Go 合成保留完整主图并预留右侧角色栏与底部字幕带，角色在后期/字幕前叠加。请求角色却缺 TTS/模型/运行库时明确失败。
 - Cubism Core 为部署依赖，不随源码分发；Pixi 6.5.10 / pixi-live2d-display 0.4.0 锁定版本。模型内动作/物理不自动执行，待机由确定性绝对参数驱动。部署和限制见 `docs/LIVE2D.md`。
+- Windows 本地 Core 放在 Git 忽略的 `.data/live2d-core/`，`SCID_LIVE2D_CORE_PATH` 用宿主绝对路径；Docker AI 服务将该目录只读挂载到 `/opt/live2d-core/`，容器内始终使用容器路径，不透传 Windows 路径。安装脚本只复制用户提供的官方 SDK Core 与许可文件并核对 SHA-256。
+- Cubism SDK 5 Core 将绘制顺序移到模型对象；旧显示库只读 drawable 字段。兼容桥仅在模型没有离屏绘制对象且绘制顺序是完整排列时映射该数组，带离屏效果的 Cubism 5 模型必须明确报错，不得悄悄丢层出片。
 
 ## 6. 状态机（唯一真源）
 

@@ -225,7 +225,8 @@ services:
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
       SCID_SANDBOX_TIMEOUT_SEC: "180"
       SCID_SANDBOX_MAX_MEMORY_MB: "2048"
-      SCID_LIVE2D_CORE_PATH: ${SCID_LIVE2D_CORE_PATH:-}
+      # Host .env uses a Windows path; the container always reads its own read-only bind mount.
+      SCID_LIVE2D_CORE_PATH: /opt/live2d-core/live2dcubismcore.min.js
       SCID_LIVE2D_TIMEOUT_SEC: ${SCID_LIVE2D_TIMEOUT_SEC:-1800}
     ports:
       - "${SCID_AI_GRPC_PORT:-50051}:50051"
@@ -233,6 +234,7 @@ services:
     volumes:
       - media-work:/data/work
       - ./ai:/app:delegated
+      - ./.data/live2d-core:/opt/live2d-core:ro
     # Manim 渲染 + LaTeX 编译对 CPU/内存要求较高，按需开启
     shm_size: "1gb"
     depends_on:

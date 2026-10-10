@@ -1,9 +1,25 @@
 /* Pinned Cubism 4 adapter. Absolute parameter values make random access repeatable. */
+function bridgeCoreRenderOrders(core) {
+  const native=core._model, drawables=native.drawables;
+  if(drawables.renderOrders) return;
+  // Cubism 5 moved the render order array from drawables to Model. The older
+  // display adapter still reads drawables.renderOrders. Its renderer cannot
+  // composite Cubism 5 offscreen objects, so reject those models explicitly.
+  if((native.offscreens?.count||0)>0)
+    throw new Error('当前渲染器不支持含 Cubism 5 离屏绘制效果的模型');
+  const orders=native.getRenderOrders?.();
+  if(!orders || orders.length!==drawables.count ||
+     new Set(orders).size!==orders.length ||
+     Array.from(orders).some(order=>order<0 || order>=orders.length))
+    throw new Error('Cubism Core 的绘制顺序格式与当前渲染器不兼容');
+  drawables.renderOrders=orders;
+}
 window.setupPresenter = async config => {
   const app=new PIXI.Application({view:document.getElementById('avatar'),width:config.width,height:config.height,
     backgroundAlpha:0,autoStart:false,antialias:true,preserveDrawingBuffer:true});
   const model=await PIXI.live2d.Live2DModel.from('https://scid.local/model.model3.json',
     {autoUpdate:false,autoInteract:false,motionPreload:0});
+  bridgeCoreRenderOrders(model.internalModel.coreModel);
   app.stage.addChild(model);
   const size=Math.min(config.width/model.width,config.height/model.height)*.94;
   model.scale.set(size); model.anchor.set(.5,1);model.position.set(config.width/2,config.height*.98);
