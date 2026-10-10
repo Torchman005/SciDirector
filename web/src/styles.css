@@ -106,6 +106,12 @@ textarea { resize: none; }
   border-radius: 8px;
 }
 
+.evidence-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 12px; }
+.evidence-grid a { display: flex; flex-direction: column; gap: 6px; }
+.evidence-grid img { width: 100%; aspect-ratio: 16 / 9; object-fit: contain; border-radius: 8px; background: #0b1020; }
+.repair-ledger { padding-left: 20px; overflow-wrap: anywhere; }
+.repair-ledger li + li { margin-top: 12px; }
+
 /* --- 分镜表 --- */
 
 /* 「待人工」是唯一需要人立刻处理的状态，给它一条左侧色条，

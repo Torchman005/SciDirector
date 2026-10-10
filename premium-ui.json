@@ -1,0 +1,12 @@
+{
+  "profile": "product-admin",
+  "sourceRoots": ["web/src"],
+  "canonicalMap": "UX-CONTRACT.md",
+  "requiredCapabilities": ["Select/Listbox", "Form", "Scrollbar", "Toast", "CRUD"],
+  "commands": {
+    "typecheck": "npm --prefix web run lint",
+    "test": "npm --prefix web test",
+    "build": "npm --prefix web run build",
+    "browser": "python scripts/verify-quality-ui.py"
+  }
+}

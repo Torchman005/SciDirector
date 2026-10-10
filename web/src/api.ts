@@ -127,6 +127,9 @@ export const api = {
   artifactUrl: (jobId: string) =>
     `/api/v1/jobs/${encodeURIComponent(jobId)}/artifact`,
 
+  shotMediaUrl: (jobId: string, shotId: string, version: string, frame?: number) =>
+    `/api/v1/jobs/${encodeURIComponent(jobId)}/shots/${encodeURIComponent(shotId)}/${frame === undefined ? 'artifact' : `frames/${frame}`}?version=${encodeURIComponent(version)}`,
+
   /** 上传素材的试听地址（浏览器直接播，支持 Range）。 */
   assetUrl: (assetId: string) => `/api/v1/assets/${encodeURIComponent(assetId)}`,
 

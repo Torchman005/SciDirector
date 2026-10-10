@@ -54,6 +54,13 @@
 
 gRPC `RenderPresenter` 输入模型路径、已对齐的纯旁白路径、输出目录、时长、尺寸、fps 和口型设置；输出透明 `video_path`、音量包络 `envelope_path`、`lip_sync`。输入或依赖不满足返回 `FAILED_PRECONDITION`，渲染失败返回 `INTERNAL`。Go 负责最终叠加和字幕合成。
 
+### 单镜头审核媒体
+
+- `GET /api/v1/jobs/:jobID/shots/:shotID/artifact`：当前镜头视频，支持 HTTP Range。
+- `GET /api/v1/jobs/:jobID/shots/:shotID/frames/:frameIndex`：当前 `artifact.frame_samples` 的 0 基索引抽帧。
+
+均先检查任务租户归属，仅接受服务端已记录的文件；不接受任意文件路径。可附 `?version=<artifact_id>`，版本已更新返回 409；未生成、索引无效或文件已清理返回 404。响应禁止缓存，避免新反馈误配旧画面。这里只提供当前版本，历史反馈中的文字证据不等于历史视频存档。
+
 ### 2.1 运维探针
 
 #### `GET /healthz` —— 存活探针

@@ -14,6 +14,19 @@ if (!rootEl) {
   throw new Error('找不到 #root 挂载点，请检查 index.html')
 }
 
+function ThemeRoot() {
+  const [reducedMotion, setReducedMotion] = React.useState(() => window.matchMedia('(prefers-reduced-motion: reduce)').matches)
+  React.useEffect(() => {
+    const media = window.matchMedia('(prefers-reduced-motion: reduce)')
+    const changed = () => setReducedMotion(media.matches)
+    media.addEventListener('change', changed)
+    return () => media.removeEventListener('change', changed)
+  }, [])
+  return <ConfigProvider theme={{ ...antdTheme, token: { ...antdTheme.token, motion: !reducedMotion } }} locale={zhCN}>
+    <AntApp><App /></AntApp>
+  </ConfigProvider>
+}
+
 ReactDOM.createRoot(rootEl).render(
   <React.StrictMode>
     {/*
@@ -25,10 +38,6 @@ ReactDOM.createRoot(rootEl).render(
           不套的话 `App.useApp()` 会拿到一个只会在控制台 warning 的降级实例，
           表现是"提示弹不出来"。
     */}
-    <ConfigProvider theme={antdTheme} locale={zhCN}>
-      <AntApp>
-        <App />
-      </AntApp>
-    </ConfigProvider>
+    <ThemeRoot />
   </React.StrictMode>,
 )

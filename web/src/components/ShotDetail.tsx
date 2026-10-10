@@ -16,6 +16,7 @@ import {
 import { SHOT_BACKGROUND_OPTIONS, backgroundLabel, shotStatus } from '../display'
 import type { Shot } from '../types'
 import { ReviewHistory } from './ReviewHistory'
+import { ShotMedia } from './ShotMedia'
 import { useShotActions } from './useShotActions'
 
 const { Text, Paragraph } = Typography
@@ -68,12 +69,15 @@ export function ShotDetail({ jobId, shot, disabled, onChanged }: Props) {
         <Alert
           type="warning"
           showIcon
-          message="已达重试上限，等待人工决策"
-          description="自动重试已经用尽。可以「放行并继续」接受当前效果，也可以「打回重做」并给出具体修改意见。"
+          message="自动修复已暂停，等待人工复核"
+          description="请先核对当前视频、证据帧和未关闭的问题。确认科学内容与可读性满足要求后再放行，或给出明确的修改目标重新制作。"
         />
       )}
 
       {shot.error && <Alert type="error" showIcon message="该镜头报错" description={shot.error} />}
+
+      {shot.artifact?.video_path && <ShotMedia key={shot.artifact.artifact_id} jobId={jobId}
+        shotId={shot.shot_id} artifact={shot.artifact} onRefresh={onChanged} />}
 
       <Descriptions
         size="small"

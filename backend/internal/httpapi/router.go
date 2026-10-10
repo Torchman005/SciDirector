@@ -91,6 +91,8 @@ func NewRouter(s *Server, deps Deps) *gin.Engine {
 			// 成片直出：浏览器可以直接播（支持 Range），
 			// 不必让用户去文件系统里找路径。
 			jobs.GET("/artifact", s.HandleGetArtifact)
+			jobs.GET("/shots/:shotID/artifact", s.HandleShotMedia)
+			jobs.GET("/shots/:shotID/frames/:frameIndex", s.HandleShotMedia)
 			// 成本单独成端点：审计视角，见 HandleGetJobCost 的说明。
 			jobs.GET("/cost", s.HandleGetJobCost)
 			// 状态对账：默认只读，?repair=true 才改状态（见 HandleReconcileJob）。

@@ -90,7 +90,7 @@ func requestFor(route, jobID, shotID string) (method, path, body string) {
 		return http.MethodPost, fill(route, jobID, shotID), `{"comment":"越权试探用的意见"}`
 	case strings.HasSuffix(route, "/approve"):
 		return http.MethodPost, fill(route, jobID, shotID), `{}`
-	case strings.Contains(route, ":shotID"):
+	case strings.HasSuffix(route, ":shotID"):
 		return http.MethodPatch, fill(route, jobID, shotID), `{"narration":"越权试探"}`
 	default:
 		return http.MethodGet, fill(route, jobID, shotID), ""
@@ -99,7 +99,8 @@ func requestFor(route, jobID, shotID string) (method, path, body string) {
 
 func fill(route, jobID, shotID string) string {
 	path := strings.ReplaceAll(route, ":jobID", jobID)
-	return strings.ReplaceAll(path, ":shotID", shotID)
+	path = strings.ReplaceAll(path, ":shotID", shotID)
+	return strings.ReplaceAll(path, ":frameIndex", "0")
 }
 
 // normalizeBody 去掉每次请求都不同、且与归属无关的字段，便于比较两种响应是否一致。

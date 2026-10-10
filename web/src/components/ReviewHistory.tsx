@@ -1,6 +1,6 @@
 import { Alert, Space, Tag, Tooltip, Typography } from 'antd'
 
-import type { Feedback } from '../types'
+import type { Feedback, RepairTask } from '../types'
 
 const { Text, Paragraph } = Typography
 
@@ -13,12 +13,11 @@ const { Text, Paragraph } = Typography
  * 靠猜着打回等于烧钱。
  *
  * 两个刻意做出来的细节：
- *  1. **标出未达硬性下限的维度**。通过条件是「加权总分 ≥ 0.75」**且**「逻辑 ≥ 0.70」
+ *  1. **标出未达硬性下限的维度**。默认通过条件是「加权总分 ≥ 0.70」**且**「逻辑 ≥ 0.70」
  *     且「可读 ≥ 0.60」—— 一个镜头完全可能总分 0.80 却因为可读性 0.55 被判负。
  *     不标出来，人只会看到"分数不低怎么会不过"。
  *  2. **指出"同一问题被反复提出"**。实测有镜头连着三次拿到一字不差的意见，
- *     说明编码智能体没有能力改掉它 —— 再打回一次只是重复消耗，
- *     这种时候放行（或改文案绕开）比继续重做更明智。
+ *     提醒核对实际画面和未关闭任务；重复意见本身不是放行证据。
  */
 
 /** 与 Python 侧 `critic.DIMENSION_FLOORS` / 加权公式保持一致。 */
@@ -29,8 +28,10 @@ const DIMENSIONS = [
   { key: 'aesthetics_score', label: '美观', weight: 0.15, floor: 0 },
 ] as const
 
-/** 通过线（`SCID_CRITIC_SCORE_THRESHOLD` 缺省 0.75）。 */
-const SCORE_THRESHOLD = 0.75
+const REPAIR_STATUS: Record<RepairTask['status'], string> = {
+  open: '未修复', partial: '部分改善', resolved: '已验证解决', unverified: '证据不足',
+}
+const SEVERITY: Record<RepairTask['severity'], string> = { blocking: '阻断', major: '主要', advisory: '建议' }
 
 const SOURCE: Record<string, { label: string; color: string }> = {
   VLM: { label: '机器审查', color: 'blue' },
@@ -45,12 +46,20 @@ export function ReviewHistory({ feedbacks }: { feedbacks?: Feedback[] }) {
   }
 
   const repeated = detectRepeatedIssue(list)
+  const reviews = list.filter(f => f.source === 'VLM')
+  const latest = reviews[reviews.length - 1]
+  const previous = reviews[reviews.length - 2]
+  const tasks = latest?.repair_tasks ?? []
+  const closed = tasks.filter(t => t.status === 'resolved').length
+  const blockers = tasks.filter(t => t.severity !== 'advisory' && t.status !== 'resolved').length
+  const delta = typeof latest?.score === 'number' && typeof previous?.score === 'number'
+    ? latest.score - previous.score : null
 
   return (
     <Space direction="vertical" size={10} style={{ width: '100%' }}>
       <Space size={8} wrap>
         <Tooltip
-          title={`通过需要同时满足：加权总分 ≥ ${SCORE_THRESHOLD}，逻辑 ≥ 0.70，可读 ≥ 0.60。权重：逻辑 35% / 可读 30% / 节奏 20% / 美观 15%。`}
+          title="默认通过线为 0.70（部署可配置），逻辑 ≥ 0.70，可读 ≥ 0.60。致命问题和未解决的阻断/主要问题仍会拦截；以服务端最终结论为准。"
         >
           <Text type="secondary" style={{ cursor: 'help' }}>
             审查记录（共 {list.length} 次）
@@ -59,15 +68,23 @@ export function ReviewHistory({ feedbacks }: { feedbacks?: Feedback[] }) {
         {list.length > 1 && <Text type="secondary" style={{ fontSize: 12 }}>最新在上</Text>}
       </Space>
 
+      {latest && <Space wrap>
+        {delta !== null && <Text>较上次评分 {delta >= 0 ? '+' : ''}{delta.toFixed(2)}</Text>}
+        {tasks.length > 0 && <>
+          <Tag color="success">已验证解决 {closed}/{tasks.length}</Tag>
+          <Tag color={blockers ? 'error' : 'default'}>待解决的阻断/主要问题 {blockers}</Tag>
+        </>}
+        <Text type="secondary">评分变化不能代替修复验收。</Text>
+      </Space>}
+
       {repeated && (
         <Alert
           type="info"
           showIcon
           message="最近两次的审查意见完全相同"
           description={
-            '这说明编码智能体没能改掉这个问题 —— 再打回一次很可能得到同样结果，' +
-            '而且会再消耗一次尝试额度。可以考虑：放行接受当前效果，或改文案绕开它' +
-            '（见下方「编辑文案」）。'
+            '请核对实际画面与修复任务的验收条件。重复意见可能来自修改无效或审核不稳定；' +
+            '补充具体对象、时间点和期望变化后再重做，不能仅凭意见重复放行。'
           }
         />
       )}
@@ -93,10 +110,10 @@ function FeedbackItem({ fb }: { fb: Feedback }) {
         <Tag color={src.color} bordered={false}>
           {src.label}
         </Tag>
-        {typeof fb.score === 'number' && fb.score > 0 && (
+        {typeof fb.score === 'number' && fb.source === 'VLM' && (
           <Text>
             总分{' '}
-            <Text strong type={fb.score >= SCORE_THRESHOLD ? undefined : 'danger'}>
+            <Text strong>
               {fb.score.toFixed(2)}
             </Text>
           </Text>
@@ -141,6 +158,22 @@ function FeedbackItem({ fb }: { fb: Feedback }) {
           {fb.suggestions!.join('；')}
         </Paragraph>
       )}
+      {!!fb.fatal_issues?.length && <Alert type="error" showIcon message="致命问题" description={fb.fatal_issues.join('；')} />}
+      {!!fb.repair_tasks?.length && <ul className="repair-ledger" aria-label={`第 ${fb.attempt} 次修复任务`}>
+        {fb.repair_tasks.map(task => <li key={task.task_id}>
+          <Space wrap size={6}>
+            <Text strong>{task.target || task.task_id}</Text>
+            <Tag color={task.status === 'resolved' ? 'success' : task.severity === 'advisory' ? 'default' : 'warning'}>
+              {REPAIR_STATUS[task.status] || task.status}
+            </Tag>
+            <Text type="secondary">{SEVERITY[task.severity] || task.severity} · {task.start_sec.toFixed(1)}–{task.end_sec.toFixed(1)} 秒</Text>
+          </Space>
+          <Paragraph style={{ margin: '4px 0' }}>证据：{task.evidence}</Paragraph>
+          <Paragraph style={{ margin: '4px 0' }}>修改：{task.instruction}</Paragraph>
+          <Paragraph style={{ margin: '4px 0' }}>验收：{task.acceptance}</Paragraph>
+          {task.resolution_evidence && <Paragraph style={{ margin: '4px 0' }}>复核：{task.resolution_evidence}</Paragraph>}
+        </li>)}
+      </ul>}
     </div>
   )
 }

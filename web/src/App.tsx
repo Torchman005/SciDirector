@@ -368,6 +368,7 @@ export function App() {
             >
               <Form.Item
                 name="raw_script"
+                label="科普脚本"
                 rules={[
                   { required: true, message: '请输入脚本' },
                   { min: 20, message: '脚本至少 20 字' },
@@ -600,7 +601,8 @@ export function App() {
                 )}
               </Form.Item>
 
-              <Button type="primary" size="large" htmlType="submit" loading={submitting} disabled={bgmBusy || presenterBusy}>
+              <Button type="primary" size="large" htmlType="submit" aria-label="开始生成" aria-busy={submitting}
+                loading={submitting} disabled={submitting || bgmBusy || presenterBusy}>
                 开始生成
               </Button>
             </Form>
@@ -740,8 +742,8 @@ export function App() {
               <Alert
                 type="warning"
                 showIcon
-                message={`有 ${pending} 个镜头自动重试已达上限，需要你确认`}
-                description="可以「打回重做」给出具体修改意见，也可以「放行并继续」接受当前效果。待人工的镜头已在下方默认展开。"
+                message={`有 ${pending} 个镜头需要人工复核`}
+                description="镜头已在下方展开。请先检查视频、抽帧和未解决的问题，再决定放行或提出具体修改意见。"
               />
             )}
 
