@@ -284,3 +284,4 @@ coverage/
 
 # Python 沙盒运行期工作目录（ai 服务在 ai/ 下运行时生成）
 /ai/.data/
+*.tsbuildinfo

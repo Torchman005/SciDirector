@@ -14,6 +14,9 @@ from .schemas import CriticFeedback, RenderArtifact, RepairTask
 
 # Small local evidence images bound storage and decode cost; VLM retains full current frames.
 EVIDENCE_WIDTH = 320
+# Reading labels at 320px made the evidence too small to verify the requested fix.
+# Keep the cheap pixel comparison small, but send legible evidence to the critic.
+REVIEW_EVIDENCE_WIDTH = 1024
 
 
 def repair_times(task: RepairTask, samples: list[dict[str, Any]]) -> list[float]:
@@ -54,7 +57,7 @@ def _samples_at(
     if missing:
         extra = extract_frames_with_times(artifact.video_path, out_dir, runner,
                                           duration_sec=artifact.duration_sec,
-                                          width=EVIDENCE_WIDTH, timestamps=missing)
+                                          width=REVIEW_EVIDENCE_WIDTH, timestamps=missing)
         found.update({s.ts: s.path for s in extra})
     return found
 

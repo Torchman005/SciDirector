@@ -89,6 +89,7 @@ class Task:
     PLAN = "plan"          # 导演：脚本 -> 分镜表
     CODE = "code"          # 编码：分镜 -> 渲染源码
     SCENE = "scene"        # HTML：分镜 -> 受约束的内部场景规格
+    SCENE_REPAIR = "scene_repair"  # 按稳定元素 id 修订场景
     CRITIQUE = "critique"  # 审查：抽帧 -> 评审意见
     FREE = "free"          # 自由文本
 
@@ -668,6 +669,12 @@ def _mock_response(messages: list[Message], *, json_mode: bool, task: str) -> st
             {"outline": "（mock）问题 -> 原理 -> 数据 -> 总结", "shots": shots},
             ensure_ascii=False,
         )
+
+    if task == Task.SCENE_REPAIR:
+        return json.dumps({"upsert": [{"id": "repair_note", "kind": "text",
+            "box": {"x": .08, "y": .8, "width": .8, "height": .12},
+            "text": "（mock）修订占位，仅用于联调", "font_size": 36}], "remove": [],
+            "explanation": "（mock）添加修订标记，不代表真实问题已解决。"}, ensure_ascii=False)
 
     if task == Task.SCENE:
         return json.dumps({"version": 1, "elements": [

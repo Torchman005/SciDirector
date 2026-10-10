@@ -833,7 +833,7 @@ class PipelineNodes:
         started = time.monotonic()
 
         outcome = self.deps.critic.review(
-            shot=shot,
+            shot=shot.model_copy(update={"code": state.get("current_code", shot.code)}),
             artifact=artifact,
             style_guide=style,
             attempt=attempt,

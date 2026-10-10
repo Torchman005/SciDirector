@@ -27,6 +27,7 @@ from ..renderer import LLM_ENGINES, check_html_contract
 from ..sandbox.policy import PolicyReport, PolicyViolation, check_source
 from ..schemas import RenderEngine, ShotSpec, StyleGuide
 from ..scene import SceneSpec, compile_scene, extract_scene
+from ..scene_revision import SceneRevision, apply_revision, changed_elements
 from .base import Agent, load_prompt, render_prompt, style_guide_to_text
 
 logger = get_logger(__name__)
@@ -259,7 +260,10 @@ class CoderAgent(Agent):
                                     duration_sec=shot.duration_sec, background_color=style.background_color,
                                     primary_color=style.primary_color)
         # Include the actual schema: chat_json is JSON mode, not an SDK schema API.
-        system += "\n\nJSON Schema（必须符合）：\n" + json.dumps(SceneSpec.model_json_schema(), ensure_ascii=False)
+        schema = SceneRevision if previous is not None else SceneSpec
+        if previous is not None:
+            system += "\n\n" + render_prompt("coder_scene_revision")
+        system += "\n\nJSON Schema（必须符合）：\n" + json.dumps(schema.model_json_schema(), ensure_ascii=False)
         user = render_prompt("coder_scene_user", index=shot.index, tag=shot.tag.value,
                              narration=shot.narration, visual_brief=shot.visual_brief,
                              production_brief=production_brief(shot, style, self.settings),
@@ -270,9 +274,13 @@ class CoderAgent(Agent):
             result.llm_attempts = count
             scene: SceneSpec | None = None
             try:
-                parsed = self.llm.chat_json(system, user, SceneSpec, task=Task.SCENE,
+                parsed = self.llm.chat_json(system, user, schema,
+                                           task=Task.SCENE_REPAIR if previous is not None else Task.SCENE,
                                            max_tokens=self.settings.coder_scene_max_tokens, max_parse_attempts=1)
-                scene = SceneSpec.model_validate(parsed.model_dump())
+                scene = (apply_revision(previous, parsed) if isinstance(parsed, SceneRevision) and previous is not None
+                         else SceneSpec.model_validate(parsed.model_dump()))
+                if previous is not None and not changed_elements(previous, scene):
+                    raise ValueError("修订没有改变任何画面元素，请按反馈修改实际对象")
                 code = compile_scene(scene, width=self.settings.render_width, height=self.settings.render_height,
                                      duration=shot.duration_sec, style=style)
                 result.artifact = CodeArtifact(code=code, language="html+js", explanation=scene.explanation)
@@ -310,7 +318,7 @@ class CoderAgent(Agent):
             if count <= MAX_POLICY_REPAIRS:
                 # Shared budget: schema, layout and browser failures get at most one
                 # new response in total; never fall back silently to free HTML.
-                user += ("\n\n生成内修复：只输出完整场景 JSON。保留已正确内容。\n"
+                user += ("\n\n生成内修复：只输出符合当前 JSON Schema 的完整 JSON。保留已正确内容。\n"
                          + result.policy_summary + "\n上一份场景输出：\n" + _clip_code_for_prompt(invalid, what="场景规格"))
         result.policy_summary = f"场景生成已尝试 {result.llm_attempts} 次，仍未通过；最后一次错误：{result.policy_summary}"
         logger.warning("结构化场景未通过生成门禁", extra={"shot_id": shot.shot_id,

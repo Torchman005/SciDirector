@@ -241,6 +241,9 @@ Manim 路由保留。全局 `code` 或 `shot.meta.generation_mode=code` 为复�
 历史自由 HTML 修订保持原路径。DSL 是 Python 内部表示，未扩展 proto。
 
 ### 5.3 Critic Agent（审查 / VLM）
+- 结构化场景复审附带当前渲染代码中的元素 ID、真实字号及布局/时序；以画面为最终依据。
+- 结构化修订使用内部 `SceneRevision`（upsert/remove）保留无关元素，空补丁/仅改说明在生成内预算中修复。
+- 文字复审证据以 1024px 提供，320px 仅用于廉价像素比较；最终 verdict 包含未关闭任务账本。
 - 输入：抽帧图像（3~6 帧，等间隔）+ 该镜头 `narration` + `visual_brief`
 - 输出：`CriticFeedback{passed, score, issues[], suggestions[], model}`
 - 硬约束：`passed=false` 时**必须**至少给出 1 条**可执行**的 suggestion

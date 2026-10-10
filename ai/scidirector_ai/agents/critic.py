@@ -32,6 +32,7 @@ from ..llm import LLMClient, LLMError, LLMParseError, Task
 from ..media import frame_change_summary
 from ..logging import get_logger
 from ..review_tasks import active_repairs, merge_repairs
+from ..scene_revision import review_manifest
 from ..schemas import (
     CriticFeedback,
     FeedbackSource,
@@ -227,6 +228,7 @@ class CriticAgent(Agent):
             frame_change_summary=_safe_frame_change_summary(frames),
         )
 
+        user_prompt += review_manifest(shot.code)
         images = list(frames)
         current_indices = set(range(1, len(frames) + 1))
         paired_ids: set[str] = set()
@@ -313,7 +315,7 @@ class CriticAgent(Agent):
             feedback=feedback,
             frames_reviewed=len(frames),
             model_passed=bool(parsed.passed),
-            program_passed=program_passed,
+            program_passed=feedback.passed,
             raw_response=str(parsed.model_dump())[:2000],
         )
 
