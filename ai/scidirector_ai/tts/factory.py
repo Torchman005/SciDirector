@@ -88,5 +88,6 @@ def build_tts_provider(settings, *, provider: str | None = None) -> TTSProvider 
         endpoint=getattr(settings, "fish_endpoint", "") or "https://api.fish.audio/v1/tts",
         model=getattr(settings, "fish_model", "s1"),
         reference_id=getattr(settings, "fish_reference_id", ""),
+        with_timestamp=getattr(settings, "fish_with_timestamp", True),
         timeout_sec=getattr(settings, "tts_timeout_sec", 60),
     )

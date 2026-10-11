@@ -203,6 +203,7 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 	// durations[i] 是归一化**之后**的时长，转场 offset 必须用它而不是原始时长：
 	// 归一化的 fps 变换会带来毫秒级差异，而 offset 是累积量，误差会逐段放大。
 	durations := make([]float64, len(items))
+	narrationSec := make([]float64, len(items))
 	// drift 记录"实际时长与计划明显不符"的镜头，稍后如实上报。
 	//
 	// 必须留痕而不是默默裁掉：一个计划 8 秒、实际渲染 12.3 秒的 manim 镜头
@@ -221,6 +222,13 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 		durations[i] = probe.DurationSec
 
 		spec := p.media.DefaultNormalizeSpec()
+		if items[i].audioPath != "" {
+			sec, aerr := p.media.ProbeAudio(gctx, items[i].audioPath)
+			if aerr != nil {
+				return fmt.Errorf("分镜 %d 配音不可用: %w", items[i].index, aerr)
+			}
+			narrationSec[i] = sec
+		}
 		// 对齐到计划时长。计划为 0 的旧任务不做对齐 —— 那种数据没有可对齐的目标，
 		// 强行按 0 处理会把片段裁没。
 		if items[i].plannedSec > 0 {
@@ -230,6 +238,14 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 				driftByShot[i] = fmt.Sprintf("#%d 计划 %.1fs、实际 %.1fs（%+.1fs，已对齐）",
 					items[i].index, items[i].plannedSec, probe.DurationSec, delta)
 			}
+		}
+		// Speech is the timing authority. Reserve the outgoing transition plus a
+		// short breath, and stretch the complete animation instead of cutting speech.
+		target := media.NarrationSafeDuration(spec.AlignTo, probe.DurationSec, narrationSec[i], p.media.Transition(), i < len(items)-1, spec.FPS)
+		if target > spec.AlignTo && narrationSec[i] > 0 {
+			spec.AlignFrom, spec.AlignTo = probe.DurationSec, target
+			spec.Retime = true
+			driftByShot[i] = fmt.Sprintf("#%d 按完整配音 %.2fs 扩展到 %.2fs（含转场和换气）", items[i].index, narrationSec[i], target)
 		}
 
 		// 已经符合目标规格**且不需要对齐**时才跳过转码：转码既有损又耗时，能省则省。
@@ -360,7 +376,6 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 	// 逐镜头对齐到各自的画面时长后拼成整轨，而不是把全片文本一次合成：
 	// 这样字幕能拿到每个镜头的真实配音时长（见 PlanCuesWithNarration），
 	// 且某个镜头被打回重做时只需重做它那一段音频。
-	narrationSec := make([]float64, len(items))
 	// 句级时间戳（TTS 服务商给的，经 sidecar JSON 传来）。没有就是 nil，
 	// 字幕退回按配音时长比例分配 —— 两种情形在 PlanCuesWithMarks 里走同一个入口。
 	narrationMarks := make([][]media.NarrationMark, len(items))
@@ -372,13 +387,6 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 				continue
 			}
 			anyNarration = true
-			sec, aerr := p.media.ProbeAudio(composeCtx, items[i].audioPath)
-			if aerr != nil {
-				lg.Warn("探测配音时长失败，该镜头回退到按文本估算",
-					"shot", items[i].index, "path", items[i].audioPath, "error", aerr.Error())
-				continue
-			}
-			narrationSec[i] = sec
 
 			// 句级时间戳：拿到就用，拿不到（该服务商不给、或 sidecar 坏了）就回退。
 			// 注意区分「没有 sidecar」与「sidecar 用不了」—— 后者意味着
@@ -418,12 +426,15 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 					target = windows[i].End - windows[i].Start
 				}
 				parts[i] = media.NarrationPart{AudioPath: items[i].audioPath, TargetSec: target}
+				if narrationSec[i] > target+0.01 {
+					return fmt.Errorf("分镜 %d 的配音仍超出窗口，拒绝截断旁白", items[i].index)
+				}
 			}
 			track := filepath.Join(workDir, "narration.m4a")
 			if berr := p.media.BuildNarrationTrack(composeCtx, parts, track); berr != nil {
 				// 配音轨失败不应让整部片子失败：画面与字幕才是主体，
 				// 观众看不到「配音轨构建失败」，但会立刻看到成片失败。
-				lg.Error("配音轨构建失败，将产出无配音成片", "error", berr.Error())
+				return fmt.Errorf("配音轨构建失败: %w", berr)
 			} else {
 				narrationTrack = track
 				lg.Info("配音轨已生成", "parts", len(parts), "path", track)

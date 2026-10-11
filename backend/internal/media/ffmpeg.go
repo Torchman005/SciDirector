@@ -635,6 +635,8 @@ type NormalizeSpec struct {
 	// 不在这里自己 Probe 是有原因的：Probe 会去抢 Runner 的全局并发闸门，
 	// 而 Normalize 内部已经持有它 —— 闸门上限为 1 时那会直接死锁。
 	AlignFrom float64
+	// Retime stretches the whole animation when narration requires more time.
+	Retime bool
 }
 
 // NeedsAlign 报告这个片段是否需要为了对齐时长而重新编码。
@@ -685,7 +687,9 @@ func (s NormalizeSpec) normalizeVideoFilter() string {
 	)
 	// stop_mode=clone 表示冻结最后一帧，而不是补黑帧 ——
 	// 补黑会让观众以为片子断了。
-	if pad := s.alignPadSec(); pad > 0 {
+	if s.Retime && s.AlignFrom > 0 && s.NeedsAlign() {
+		vf = fmt.Sprintf("setpts=(PTS-STARTPTS)*%.9f,", s.AlignTo/s.AlignFrom) + vf
+	} else if pad := s.alignPadSec(); pad > 0 {
 		vf += fmt.Sprintf(",tpad=stop_mode=clone:stop_duration=%.3f", pad)
 	}
 	if eq := s.Color.filterExpr(); eq != "" {

@@ -10,26 +10,17 @@
 * 请求体：`{text, reference_id?, format?: mp3|wav|pcm|opus, latency?, prosody?}`
 * 响应：二进制音频（`audio/mpeg`）
 
-## ⚠️ 验证状态：**未经真实验证**
+## 时间戳
 
-本机到 `api.fish.audio` 的连接不通（`curl` 无响应），因此这条适配器
-只按规范写就、未跑通过。与豆包适配器同样处理：端点/模型/音色可配置、
-响应严格校验、并在此明确标注。
-
-## 时间戳：接口有，但**故意没实现**
-
-Fish Audio 另有 `POST /v1/tts/stream/with-timestamp`（SSE，返回音频分片 + 时间信息）。
-但可获取到的规范里**只写了 `text/event-stream`、没有定义事件负载结构**，
-我无法在不臆造字段的前提下实现它。
-
-因此这里只用不返回时间戳的 `/v1/tts`，字幕回退到「按镜头真实音频时长对齐」。
-要更细的对齐，当前**本机可真实验证**的选择是 Edge TTS（句级时间戳）。
-待拿到该 SSE 的事件结构后，再补上即可 —— 适配器接口已经容得下（`marks` 字段现成）。
+默认使用非流式 /v1/tts/with-timestamp，保留原始字/词级 alignment。
+Go 根据原稿中的标点和长度组织字幕，禁止先合并成无标点的整段。
+自定义端点保持原地址；不支持时间戳的服务可显式关闭配置。
 """
 
 from __future__ import annotations
 
 import base64
+import math
 import re
 from pathlib import Path
 
@@ -58,16 +49,7 @@ _SENTENCE_END = "。！？；…!?;"
 
 
 def marks_from_alignment(alignment: object) -> tuple[SentenceMark, ...]:
-    """把 Fish 的**逐字对齐**合并成**句级** marks。
-
-    两种形状都要支持，因为流式与非流式端点给的不一样：
-      * 非流式：`[{"text","start","end"}, ...]`（扁平列表）
-      * 流式：  `{"segments": [...], "audio_duration": N}`
-
-    合并规则：遇到句末标点就收一句；末尾残余也收一句（否则最后半句会丢字幕）。
-    时间取**首字 start 到末字 end**，而不是按字数比例 —— 后者正是"字幕比语音
-    早/晚一点"的来源：模型念每个字的时长本来就不一样。
-    """
+    """保留字/词级真实时间，不依赖服务商返回标点。"""
     segments: list = []
     if isinstance(alignment, dict):
         raw = alignment.get("segments")
@@ -77,8 +59,6 @@ def marks_from_alignment(alignment: object) -> tuple[SentenceMark, ...]:
         segments = alignment
 
     marks: list[SentenceMark] = []
-    buf: list[str] = []
-    start: float | None = None
     last_end = 0.0
 
     for seg in segments:
@@ -92,22 +72,10 @@ def marks_from_alignment(alignment: object) -> tuple[SentenceMark, ...]:
             e = float(seg.get("end"))
         except (TypeError, ValueError):
             continue
-        if start is None:
-            start = s
-        buf.append(ch)
-        last_end = max(last_end, e, s)
-        if ch[-1] in _SENTENCE_END:
-            marks.append(SentenceMark(
-                text="".join(buf), start_sec=start or 0.0,
-                duration_sec=max(0.0, last_end - (start or 0.0)),
-            ))
-            buf, start = [], None
-
-    if buf and start is not None:
-        marks.append(SentenceMark(
-            text="".join(buf), start_sec=start,
-            duration_sec=max(0.0, last_end - start),
-        ))
+        if not math.isfinite(s) or not math.isfinite(e) or s < 0 or e <= s or s < last_end - .05:
+            return ()  # Do not silently align a partial or non-monotonic transcript.
+        marks.append(SentenceMark(text=ch, start_sec=s, duration_sec=e-s))
+        last_end = e
     return tuple(marks)
 
 MAX_TEXT_CHARS = 4000
@@ -127,18 +95,7 @@ class FishAudioTTSProvider:
         reference_id: str = "",
         audio_format: str = "mp3",
         timeout_sec: int = 60,
-        #: 是否使用带**逐字时间戳**的端点。
-        #
-        # **默认 False（尚未启用）**，原因如实说明：真机探测已经拿到结构
-        # （`/v1/tts/with-timestamp` -> `{audio_base64, text, alignment:[{text,start,end}]}`），
-        # marks 也确实能产出了；但还剩一步没做完 ——
-        # **API 的 alignment 不含标点**，所以"遇到句末标点就切句"永远切不开，
-        # 目前只会产出 1 条覆盖全文的 mark。正确做法是拿 alignment 去对齐
-        # **原始文本**、按原文里的标点切句。
-        #
-        # 在那一步做完之前保持关闭：开着会退化成"整段一句话"，比按文本比例
-        # 猜还要粗，反而更差。打开它就是一行配置的事。
-        with_timestamp: bool = False,
+        with_timestamp: bool = True,
     ) -> None:
         self.api_key = api_key
         self.endpoint = endpoint
@@ -209,8 +166,8 @@ class FishAudioTTSProvider:
         # 选端点：要时间戳就走 with-timestamp —— **字幕对齐完全靠它**。
         # 只在自己没显式配端点时才切换：用户显式配的地址优先。
         endpoint = self.endpoint
-        want_ts = self.with_timestamp and endpoint == DEFAULT_ENDPOINT
-        if want_ts:
+        want_ts = endpoint == TIMESTAMP_ENDPOINT or (self.with_timestamp and endpoint == DEFAULT_ENDPOINT)
+        if self.with_timestamp and endpoint == DEFAULT_ENDPOINT:
             endpoint = TIMESTAMP_ENDPOINT
 
         try:
@@ -288,5 +245,5 @@ class FishAudioTTSProvider:
             # marks 一定要传出去：它由时间戳端点解析而来，Go 侧据此把字幕
             # 对齐到**真实说话时刻**而不是按文本比例猜。
             # （这里曾经硬编码 ms=() ，于是"接了时间戳"看起来毫无效果。）
-            audio_path=written, duration_sec=0.0, marks=marks, provider=self.name
+            audio_path=written, duration_sec=max((m.end_sec for m in marks), default=0.0), marks=marks, provider=self.name
         )

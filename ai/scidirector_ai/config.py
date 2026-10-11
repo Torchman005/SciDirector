@@ -124,6 +124,7 @@ class Settings(BaseSettings):
     fish_model: str = "s1"
     fish_reference_id: str = ""
     fish_endpoint: str = ""
+    fish_with_timestamp: bool = True
 
     # OpenAI TTS（复用 openai_api_key / openai_base_url）。
     openai_tts_model: str = "gpt-4o-mini-tts"

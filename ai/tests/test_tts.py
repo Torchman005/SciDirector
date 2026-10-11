@@ -291,7 +291,7 @@ class TestFishRequestShape:
         # 占位符 `ref1` 会被当场拦下 —— 那正是为了拦住"SCID_TTS_VOICE 里
         # 留着别家音色名"这类事故。旧的占位符本来也不是合法的 Fish id。
         ref = "0dcdcfacd3934bb799c38498b507e5c5"
-        res = FishAudioTTSProvider(api_key="k", model="s2-pro", reference_id=ref).synthesize(
+        res = FishAudioTTSProvider(api_key="k", model="s2-pro", reference_id=ref, with_timestamp=False).synthesize(
             "你好", out_path=tmp_path / "f.mp3"
         )
 
@@ -314,7 +314,7 @@ class TestFishRequestShape:
             "scidirector_ai.tts.fish.httpx.post", lambda *a, **k: _FakeResponse(429, None)
         )
         with pytest.raises(TTSError) as exc:
-            FishAudioTTSProvider(api_key="k").synthesize("x", out_path=tmp_path / "f.mp3")
+            FishAudioTTSProvider(api_key="k", with_timestamp=False).synthesize("x", out_path=tmp_path / "f.mp3")
         assert exc.value.retryable is True
 
     def test_json_instead_of_audio_is_rejected(self, tmp_path: Path, monkeypatch) -> None:
@@ -325,7 +325,7 @@ class TestFishRequestShape:
             lambda *a, **k: _FakeResponse(200, None, content=b'{"error":"bad model"}'),
         )
         with pytest.raises(TTSError) as exc:
-            FishAudioTTSProvider(api_key="k").synthesize("x", out_path=tmp_path / "f.mp3")
+            FishAudioTTSProvider(api_key="k", with_timestamp=False).synthesize("x", out_path=tmp_path / "f.mp3")
         assert "JSON" in str(exc.value)
         assert not (tmp_path / "f.mp3").exists()
 
@@ -389,7 +389,7 @@ class TestOutputPathIsAbsolute:
 
     def test_relative_out_path_becomes_absolute(self, tmp_path: Path, monkeypatch) -> None:
         monkeypatch.chdir(tmp_path)
-        provider = FishAudioTTSProvider(api_key="k")
+        provider = FishAudioTTSProvider(api_key="k", with_timestamp=False)
         monkeypatch.setattr(
             "scidirector_ai.tts.fish.httpx.post",
             lambda *a, **k: _FakeResponse(200, None, content=b"ID3-audio"),
@@ -403,7 +403,7 @@ class TestOutputPathIsAbsolute:
     def test_sidecar_path_is_absolute_too(self, tmp_path: Path, monkeypatch) -> None:
         """sidecar 跟着音频走：音频绝对了，sidecar 也必须绝对，否则 Go 同样读不到。"""
         monkeypatch.chdir(tmp_path)
-        provider = FishAudioTTSProvider(api_key="k")
+        provider = FishAudioTTSProvider(api_key="k", with_timestamp=False)
         monkeypatch.setattr(
             "scidirector_ai.tts.fish.httpx.post",
             lambda *a, **k: _FakeResponse(200, None, content=b"ID3-audio"),

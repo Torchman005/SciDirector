@@ -2,6 +2,8 @@ package media
 
 import (
 	"fmt"
+	"html"
+	"math"
 	"os"
 	"strings"
 	"unicode"
@@ -346,7 +348,7 @@ func planCuesForShot(w Window, narration string, narrationSec float64, opt Subti
 // marks[i] 是第 i 个镜头配音里每句话的起止时间（来自 TTS 服务商，经 sidecar JSON 传入，
 // 见 narration_marks.go）。
 //
-//	镜头内句数与时间戳条数一致 → 每句话都落在它**真实被念出来的那段时间**里；
+//	原稿字符与时间戳文本一致 → 每句话都落在它**真实被念出来的那段时间**里；
 //	对不上（或没有时间戳）       → 该镜头退回 PlanCuesWithNarration 的比例分配。
 //
 // 为什么要按句锚定：按镜头时长比例分配时，句与句之间的**停顿**会被均摊掉 ——
@@ -386,7 +388,7 @@ func PlanCuesWithMarks(
 			cues = append(cues, aligned...)
 			continue
 		}
-		// 时间戳用不上（没有 / 条数对不上 / 数据是坏的）→ 退回比例分配。
+		// 时间戳用不上（没有 / 原稿对不上 / 数据是坏的）→ 退回比例分配。
 		cues = append(cues, planCuesForShot(windows[i], narrations[i], sec, opt)...)
 	}
 
@@ -400,36 +402,70 @@ func planCuesFromMarks(w Window, narration string, marks []NarrationMark, opt Su
 		return nil
 	}
 
-	sentences := splitSentences(text)
-	// 句数对不上就不用：硬凑会把 A 句的时间安到 B 句头上，
-	// 那比「按比例分配」更糟 —— 后者至少整体是单调的。
-	if len(sentences) != len(marks) {
-		return nil
-	}
-
-	cues := make([]Cue, 0, len(sentences))
-	for i, sentence := range sentences {
-		start := w.Start + marks[i].StartSec
-		end := w.Start + marks[i].EndSec()
-		// 夹到窗口：时间戳来自音频，而窗口来自画面，两者可能略有出入。
-		if start < w.Start {
-			start = w.Start
-		}
-		if end > w.End {
-			end = w.End
-		}
-		if end <= start {
-			// 坏数据（或该句完全在窗口之外）：跳过这一句，不产出零长字幕。
+	// Match normalized spoken characters against the ORIGINAL script. Providers may
+	// return words, characters or sentences, and often omit punctuation entirely.
+	// Never accept merely equal sentence counts: stale audio can have the same count.
+	type anchor struct{ start, end float64 }
+	var anchors []anchor
+	var spoken strings.Builder
+	previous := -1.0
+	for _, m := range marks {
+		chars := spokenRunes(m.Text)
+		if len(chars) == 0 {
 			continue
 		}
-		// 单句过长时仍要按长度上限拆分，但**只在它自己的真实时间片内**拆。
-		segs := splitLongSegment(sentence, opt.MaxCharsPerCue)
-		cues = append(cues, allocate(Window{Start: start, End: end}, segs)...)
+		if math.IsNaN(m.StartSec) || math.IsInf(m.StartSec, 0) || math.IsNaN(m.DurationSec) || math.IsInf(m.DurationSec, 0) || m.DurationSec <= 0 || m.StartSec < previous {
+			return nil
+		}
+		previous = m.StartSec
+		spoken.WriteString(string(chars))
+		for j := range chars {
+			anchors = append(anchors, anchor{m.StartSec + m.DurationSec*float64(j)/float64(len(chars)), m.StartSec + m.DurationSec*float64(j+1)/float64(len(chars))})
+		}
+	}
+	if spoken.String() != string(spokenRunes(text)) || len(anchors) == 0 {
+		return nil
+	}
+	var segs []string
+	for _, sentence := range splitSentences(text) {
+		segs = append(segs, splitLongSegment(sentence, opt.MaxCharsPerCue)...)
+	}
+	var cues []Cue
+	cursor := 0
+	for _, seg := range segs {
+		count := len(spokenRunes(seg))
+		if count == 0 {
+			continue
+		}
+		start := math.Max(w.Start, w.Start+anchors[cursor].start)
+		end := math.Min(w.End, w.Start+anchors[cursor+count-1].end)
+		cursor += count
+		if end > start {
+			cues = append(cues, Cue{Start: start, End: end, Text: seg})
+		}
+	}
+	// Some providers have a tiny overlap between boundary records. Preserve the
+	// next onset and avoid duplicate captions on screen.
+	for i := 0; i+1 < len(cues); i++ {
+		if cues[i].End > cues[i+1].Start {
+			cues[i].End = cues[i+1].Start
+		}
 	}
 	if len(cues) == 0 {
 		return nil
 	}
 	return cues
+}
+
+// spokenRunes strips formatting only; scientific symbols/numbers are not rewritten.
+func spokenRunes(text string) []rune {
+	var out []rune
+	for _, r := range html.UnescapeString(text) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			out = append(out, unicode.ToLower(r))
+		}
+	}
+	return out
 }
 
 // mergeToAtMost 把片段合并到不超过 max 条，尽量合并最短的相邻对。
