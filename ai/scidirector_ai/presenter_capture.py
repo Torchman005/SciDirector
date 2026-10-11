@@ -6,6 +6,7 @@ from pathlib import Path
 
 _HERE = str(Path(__file__).resolve().parent)
 sys.path[:] = [p for p in sys.path if str(Path(p or ".").resolve()) != _HERE]
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import array
 import json
@@ -51,14 +52,21 @@ def capture(config_path: Path) -> None:
     (root/"mouth.json").write_text(json.dumps({"hz":ENVELOPE_HZ,"values":envelope}),encoding="utf-8")
     wav.unlink()
     model_path = Path(config["model"])
+    portrait = config.get("kind") == "portrait"
     manifest = json.loads(model_path.read_text(encoding="utf-8"))
-    refs = manifest["FileReferences"]
+    refs = manifest.get("FileReferences", {})
     # A second allowlist at the renderer boundary prevents even a forged internal request
     # from using the browser as a filesystem or network proxy.
-    safe_manifest = {"Version":3,"FileReferences":{"Moc":refs["Moc"],"Textures":refs["Textures"]},
+    safe_manifest = {"Version":3,"FileReferences":refs,
                      "Groups":manifest.get("Groups",[]),"Layout":manifest.get("Layout",{})}
     allowed = {}
-    for name in [refs["Moc"],*refs["Textures"]]:
+    if portrait:
+        from scidirector_ai.portraits import load_portrait, portrait_timeline, POSE_FADE_SEC
+        poses, allowed = load_portrait(model_path)
+        config.update(portrait=poses.model_dump(),poseTimeline=portrait_timeline(poses,envelope,ENVELOPE_HZ,config["duration"]),poseFade=POSE_FADE_SEC)
+    else:
+        safe_manifest["FileReferences"] = {"Moc":refs["Moc"],"Textures":refs["Textures"]}
+    for name in ([] if portrait else [refs["Moc"],*refs["Textures"]]):
         candidate = (model_path.parent/name).resolve()
         if not candidate.is_relative_to(model_path.parent.resolve()) or not candidate.is_file():
             raise ValueError("模型引用超出导入目录或文件不存在")
@@ -83,9 +91,9 @@ def capture(config_path: Path) -> None:
             page=browser.new_page(viewport={"width":config["width"],"height":config["height"]},device_scale_factor=1)
             page.route("**/*",route)
             page.goto("https://scid.local/",timeout=15000)
-            for library in ("core","pixi","display"):
+            for library in (() if portrait else ("core","pixi","display")):
                 page.add_script_tag(content=Path(config["libraries"][library]).read_text(encoding="utf-8"))
-            page.add_script_tag(content=Path(__file__).with_name("presenter_runtime.js").read_text(encoding="utf-8"))
+            page.add_script_tag(content=Path(__file__).with_name("portrait_runtime.js" if portrait else "presenter_runtime.js").read_text(encoding="utf-8"))
             page.evaluate("config => window.setupPresenter(config)", {**config,"envelope":envelope,"hz":ENVELOPE_HZ})
             # Catch SDK/model state that depends on playback history before encoding.
             sample = min(.37, config["duration"] / 2)

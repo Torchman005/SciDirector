@@ -1,4 +1,4 @@
-"""Live2D is rendered as an alpha layer; Go retains ownership of final composition."""
+"""Cubism/portrait alpha rendering; Go retains ownership of final composition."""
 from __future__ import annotations
 
 import json
@@ -28,21 +28,27 @@ def render_presenter(settings: Settings, runner: SandboxRunner, *, model_path: s
                      output_dir: str, duration_sec: float, width: int, height: int, fps: int,
                      mouth_parameter: str = "", mouth_gain: float = 1,
                      timeout_sec: float | None = None) -> dict[str, Any]:
-    libraries = runtime_paths(settings)
-    if not math.isfinite(duration_sec) or not 0 < duration_sec <= 1800:
-        raise ValueError("Live2D 视频时长须在 0～1800 秒之间")
-    if not (64 <= width <= 1024 and 64 <= height <= 1024 and 1 <= fps <= 60):
-        raise ValueError("Live2D 画布或帧率超出限制")
-    if not math.isfinite(mouth_gain) or not 0 <= mouth_gain <= 3:
-        raise ValueError("Live2D 口型强度超出限制")
     model = Path(model_path).resolve()
-    if not model.is_file() or not model.name.endswith(".model3.json"):
-        raise ValueError("Live2D 模型文件不存在")
+    portrait = model.name.endswith(".portrait.json")
+    libraries = {} if portrait else runtime_paths(settings)
+    if not math.isfinite(duration_sec) or not 0 < duration_sec <= 1800:
+        raise ValueError("讲解员视频时长须在 0～1800 秒之间")
+    if not (64 <= width <= 1024 and 64 <= height <= 1024 and 1 <= fps <= 60):
+        raise ValueError("讲解员画布或帧率超出限制")
+    if not math.isfinite(mouth_gain) or not 0 <= mouth_gain <= 3:
+        raise ValueError("讲解员口型强度超出限制")
+    if not model.is_file() or not (portrait or model.name.endswith(".model3.json")):
+        raise ValueError("讲解员模型文件不存在")
+    lip_sync = True
+    if portrait:
+        from .portraits import load_portrait
+        manifest, _ = load_portrait(model)
+        lip_sync = all(p.mouth_open for p in manifest.states.values())
     if not audio_path or not Path(audio_path).is_file():
-        raise ValueError("Live2D 口型需要实际 TTS 旁白，当前任务没有可用旁白")
+        raise ValueError("讲解员需要实际 TTS 旁白，当前任务没有可用旁白")
     root = Path(output_dir).resolve() / ("presenter-" + uuid.uuid4().hex[:12])
     root.mkdir(parents=True, exist_ok=False)
-    config = {"libraries": libraries, "model": str(model), "audio": str(Path(audio_path).resolve()),
+    config = {"libraries": libraries, "model": str(model), "kind": "portrait" if portrait else "live2d", "audio": str(Path(audio_path).resolve()),
               "duration": duration_sec, "width": width, "height": height, "fps": fps,
               "mouth_parameter": mouth_parameter, "gain": mouth_gain or 1,
               "chrome": os.environ.get("SCID_CHROME", "")}
@@ -50,10 +56,10 @@ def render_presenter(settings: Settings, runner: SandboxRunner, *, model_path: s
     config_path.write_text(json.dumps(config, ensure_ascii=False), encoding="utf-8")
     timeout = min(settings.live2d_timeout_sec, timeout_sec if timeout_sec is not None else settings.live2d_timeout_sec)
     if timeout <= 0:
-        raise RuntimeError("Live2D 渲染请求已超时")
+        raise RuntimeError("讲解员渲染请求已超时")
     result = runner.run([sys.executable, str(Path(__file__).with_name("presenter_capture.py")), str(config_path)],
                         cwd=root, limits=ResourceLimits(timeout_sec=timeout))
     video = root / "presenter.webm"
     if not result.ok or not video.is_file():
-        raise RuntimeError("Live2D 渲染失败：" + result.summary() + " " + result.tail(1500))
-    return {"video_path": str(video), "envelope_path": str(root / "mouth.json"), "lip_sync": True}
+        raise RuntimeError("讲解员渲染失败：" + result.summary() + " " + result.tail(1500))
+    return {"video_path": str(video), "envelope_path": str(root / "mouth.json"), "lip_sync": lip_sync}

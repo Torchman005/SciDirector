@@ -172,6 +172,10 @@ class PipelineService:
         for role, reason in self.llm.model_faults().items():
             capabilities.append(f"model:{role}=unavailable:{reason}")
         from .presenter import runtime_paths
+        if self.settings.tts_provider not in {"", "none"} and toolchain.get("ffmpeg") and any(engines.get(e) for e in ("d3", "motion", "code_anim")):
+            capabilities.append("presenter:portrait=ok")
+        else:
+            capabilities.append("presenter:portrait=missing")
         try:
             runtime_paths(self.settings)
             if self.settings.tts_provider in {"", "none"}:

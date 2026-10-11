@@ -1,5 +1,15 @@
 # 质量升级验证（2026-10-10）
 
+## 2026-10-11 程序升级复验
+
+- Python 全量：822 passed / 30 skipped，281 秒；包含新材质、共用时间轴、重叠拦截、立绘 alpha 真实编码及倒序一致性。Go `go test ./internal/... -count=1` 全部通过。
+- 新场景相关 57 项、材质/背景 11 项通过；生成了 1600×900 / 10 秒 FlashAttention 演示，真实浏览器预检没有遮挡/裁切问题。
+- 立绘/Live2D 9 项通过，带/不带口型图片分别验证；Go 立绘安全包校验、租户隔离、HTTP 导入预览验证通过。
+- 前端 tsc、18 项状态测试、生产构建通过；Chromium 导入/失败恢复/四状态预览/390px/键盘/视频检查通过。构建仍有既存的大包提示。
+- DESIGN.md lint 为 0 errors / 0 warnings。Premium 静态审计仍报告此前的 18 个 JSX 解析误报（见下文）；实际 DOM 和交互检查通过。
+- `.data/live-attention-review` 实际文本/视觉审核一轮修订：0.6925 → 0.8825，通过；改动 compute/name_O/output_label/tile_O，两项 major 有当前证据并关闭。初审仍有不准确的目测字号推断，不能以单例宣称批量通过率；历史任务 Redis 记录不可用，未计算生产通过率。
+- 本轮没有调用生图；立绘测试使用几何 PNG 夹具，仅验证程序，不作为角色画稿交付。
+
 ## 已执行
 
 - 最终全量 `python -m pytest ai/tests -q`：**807 passed / 30 skipped**，221 秒；包含真实 Chromium、FFmpeg 和 gRPC。修正 Windows 中使用 shell 内建 echo 的探针、明确 Linux 专属用例条件，以及 PNG/JPEG 断言格式；保留不可隔离时必须拒绝执行的负向测试。

@@ -546,6 +546,7 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 
 	videoPath := mergedPath
 	presenterApplied := false
+	presenterLipSync := false
 	if presenter := effects.Presenter; presenter != nil {
 		if err := presenter.Validate(); err != nil {
 			return err
@@ -567,7 +568,7 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 			ah = ah * 1024 / aw / 2 * 2
 			aw = 1024
 		}
-		_, _ = p.emit(ctx, &domain.Event{JobID: jobID, Node: "compose", Message: "正在渲染 Live2D 讲解员，口型跟随最终对齐的 TTS 旁白", Timestamp: time.Now().UTC()})
+		_, _ = p.emit(ctx, &domain.Event{JobID: jobID, Node: "compose", Message: "正在渲染讲解员，使用最终对齐的 TTS 旁白", Timestamp: time.Now().UTC()})
 		layer, err := p.ai.RenderPresenter(ctx, &pb.RenderPresenterRequest{ModelPath: presenter.ModelPath,
 			AudioPath: narrationTrack, OutputDir: workDir, DurationSec: outDuration, Width: int32(aw), Height: int32(ah),
 			Fps: int32(min(60, p.media.DefaultNormalizeSpec().FPS)), MouthParameter: presenter.MouthParameter, MouthGain: presenter.MouthGain})
@@ -580,6 +581,7 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 		}
 		videoPath = presented
 		presenterApplied = true
+		presenterLipSync = layer.LipSync
 	}
 	softSubtitle := subtitlePath
 	postApplied := false
@@ -658,7 +660,7 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 			// 而不是只能去翻服务端日志。
 			"effects": map[string]any{
 				"presenter_applied":  presenterApplied,
-				"presenter_lip_sync": presenterApplied,
+				"presenter_lip_sync": presenterLipSync,
 				"bgm_requested":      effects.HasBGM(),
 				"bgm_applied":        bgmApplied,
 				"grade":              effects.Grade,

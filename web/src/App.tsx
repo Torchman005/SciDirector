@@ -382,7 +382,7 @@ export function App() {
 
               <Row gutter={16} align="top">
                 <Col xs={24} sm={12} md={8}>
-                  <Form.Item name="animation_style" label="动画演出" extra="二次元模式在关键镜头穿插角色，公式与数据仍按科学图示呈现。">
+                  <Form.Item name="animation_style" label="动画演出" extra="二次元模式使用分色轮廓与动作演出；导入立绘或 Live2D 后加入讲解员。">
                     <Select options={[{value:'anime',label:'二次元科学剧场'}, {value:'precise',label:'严谨图解'}]} />
                   </Form.Item>
                 </Col>

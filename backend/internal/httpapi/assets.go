@@ -236,9 +236,9 @@ func (s *Server) resolveEffects(
 			mapError(c, err)
 			return out, err
 		}
-		model, err := store.ResolveLive2D(tenant, out.Presenter.AssetID)
+		model, err := store.ResolvePresenter(tenant, out.Presenter.AssetID)
 		if err != nil {
-			abortWith(c, http.StatusBadRequest, ErrCodeBadRequest, "Live2D 模型不存在，请重新导入", nil)
+			abortWith(c, http.StatusBadRequest, ErrCodeBadRequest, "讲解员素材不存在，请重新导入", nil)
 			return out, err
 		}
 		out.Presenter.ModelPath = model

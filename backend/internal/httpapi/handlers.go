@@ -187,13 +187,21 @@ func (s *Server) HandleGenerate(c *gin.Context) {
 		}
 	}
 	if effects.Presenter != nil {
+		kind := "live2d"
+		if strings.HasSuffix(effects.Presenter.ModelPath, ".portrait.json") {
+			kind = "portrait"
+		}
 		ready := false
 		for _, capability := range health.Capabilities {
-			if capability == "presenter:live2d=ok" {
+			if capability == "presenter:"+kind+"=ok" {
 				ready = true
 			}
 		}
 		if !ready {
+			if kind == "portrait" {
+				abortWith(c, http.StatusBadRequest, ErrCodeBadRequest, "立绘渲染需要可用的浏览器、FFmpeg 与 TTS", nil)
+				return
+			}
 			abortWith(c, http.StatusBadRequest, ErrCodeBadRequest, "Live2D 运行库或 TTS 未就绪：请安装渲染依赖、配置 SCID_LIVE2D_CORE_PATH 并启用 TTS", nil)
 			return
 		}

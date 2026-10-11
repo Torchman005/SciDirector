@@ -74,6 +74,8 @@ func NewRouter(s *Server, deps Deps) *gin.Engine {
 		// 在 /generate 的 effects.bgm.asset_id 里引用它。
 		v1.POST("/assets", s.HandleUploadAsset)
 		v1.POST("/assets/live2d", s.HandleUploadLive2D)
+		v1.POST("/assets/portraits", s.HandleUploadPortrait)
+		v1.GET("/assets/portraits/:id/:state", s.HandlePortraitPreview)
 		// 试听：把上传的素材原样交回浏览器（支持 Range）。
 		// 没有它用户就只能靠猜 —— 听不到就不可能判断音量合不合适。
 		v1.GET("/assets/:assetID", s.HandleGetAsset)

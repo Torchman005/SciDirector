@@ -94,3 +94,52 @@ func TestLive2DUploadRouteIsRegistered(t *testing.T) {
 		t.Fatalf("unmatched route log path = %q, want %q", got, request.URL.Path)
 	}
 }
+
+func TestPortraitHTTPImportPreviewAndIsolation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	deps := Deps{Config: &config.Config{Media: config.MediaConfig{WorkDir: t.TempDir()}}}
+	s := NewServer(deps)
+	router := NewRouter(s, deps)
+	var tex, archive, body bytes.Buffer
+	_ = png.Encode(&tex, image.NewNRGBA(image.Rect(0, 0, 8, 12)))
+	z := zip.NewWriter(&archive)
+	manifest := `{"version":1,"states":{"neutral":{"image":"a.png"},"explain":{"image":"a.png"},"think":{"image":"a.png"},"surprised":{"image":"a.png"}}}`
+	for name, data := range map[string][]byte{"portrait.json": []byte(manifest), "a.png": tex.Bytes()} {
+		w, _ := z.Create(name)
+		_, _ = w.Write(data)
+	}
+	_ = z.Close()
+	m := multipart.NewWriter(&body)
+	w, _ := m.CreateFormFile("file", "poses.zip")
+	_, _ = w.Write(archive.Bytes())
+	_ = m.Close()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/assets/portraits", &body)
+	req.Header.Set("Content-Type", m.FormDataContentType())
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("%d %s", recorder.Code, recorder.Body.String())
+	}
+	var result struct {
+		Data assets.Live2DAsset `json:"data"`
+	}
+	_ = json.Unmarshal(recorder.Body.Bytes(), &result)
+	if result.Data.Kind != "portrait" || result.Data.LipSync {
+		t.Fatalf("bad receipt %+v", result.Data)
+	}
+	preview := "/api/v1/assets/portraits/" + result.Data.AssetID + "/neutral"
+	for _, tc := range []struct {
+		path, tenant string
+		code         int
+	}{{preview, "", 200}, {preview, "other", 404}, {preview + ".open", "", 404}} {
+		req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+		if tc.tenant != "" {
+			req.Header.Set("X-Tenant-ID", tc.tenant)
+		}
+		out := httptest.NewRecorder()
+		router.ServeHTTP(out, req)
+		if out.Code != tc.code {
+			t.Fatalf("%s tenant=%s: %d %s", tc.path, tc.tenant, out.Code, out.Body.String())
+		}
+	}
+}

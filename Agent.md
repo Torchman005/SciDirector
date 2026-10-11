@@ -13,6 +13,8 @@
 
 2026-10-11 场景美术契约：内部 SceneSpec 增加语义色 secondary/accent/success/warning、material（solid/gradient/glass/outline）、stroke_color、corner_radius、layer 与柱图逐项 color；auto 在 anime 风格使用渐变与清楚轮廓。这些仅改变视觉材质，不改变数据数值。新镜头不再生成历史 character 简笔角色，真人设由导入立绘/Live2D 图层承担；旧源码仍可播放。
 
+2026-10-11 立绘契约：POST /api/v1/assets/portraits 导入四状态 PNG 包（portrait.json v1），GET /api/v1/assets/portraits/:id/:state 按租户返回预览。资源仍用 presenter.asset_id 引用，API 解析 model_path；RenderPresenter 同一 RPC 接受服务端解析的 model.model3.json 或 model.portrait.json，不增加客户端文件路径权限。四种口型图全部提供才报告 lip_sync=true；默认随语音切换待机/讲解，显式归一化 cues 控制思考/惊讶。PNG 同尺寸，纯 seek、离线加载、透明合成仍是强约束。立绘不依赖 Cubism，仍需要 TTS、浏览器、FFmpeg。Go 合成事件如实记录 presenter_lip_sync。
+
 SciDirector（科学视频导演）**不生成像素，而是生成"可验证的渲染计划"**：
 用多智能体把科普脚本拆成分镜，把每个分镜路由到最合适的**确定性渲染引擎**
 （Manim 渲染数学、D3/ECharts 渲染数据、代码高亮动画渲染代码），

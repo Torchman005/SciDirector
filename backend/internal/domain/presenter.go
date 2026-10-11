@@ -6,7 +6,7 @@ import (
 	"regexp"
 )
 
-// PresenterEffects selects a server-owned Cubism model for final-video compositing.
+// PresenterEffects selects a server-owned Cubism model or portrait pack for final compositing.
 type PresenterEffects struct {
 	AssetID        string  `json:"asset_id"`
 	ModelPath      string  `json:"model_path,omitempty"` // resolved only by the API
@@ -20,7 +20,7 @@ func (p *PresenterEffects) Validate() error {
 		return nil
 	}
 	if !regexp.MustCompile(`^[0-9a-f]{16,64}$`).MatchString(p.AssetID) {
-		return fmt.Errorf("请选择已导入的 Live2D 模型")
+		return fmt.Errorf("请选择已导入的 Live2D 模型或立绘包")
 	}
 	if p.MouthParameter != "" && !regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{0,63}$`).MatchString(p.MouthParameter) {
 		return fmt.Errorf("口型参数名无效")

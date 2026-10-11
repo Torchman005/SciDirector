@@ -26,6 +26,9 @@ type Live2DAsset struct {
 	AssetID         string   `json:"asset_id"`
 	Filename        string   `json:"filename"`
 	MouthParameters []string `json:"mouth_parameters"`
+	Kind            string   `json:"kind,omitempty"`
+	States          []string `json:"states,omitempty"`
+	LipSync         bool     `json:"lip_sync"`
 }
 
 type modelManifest struct {

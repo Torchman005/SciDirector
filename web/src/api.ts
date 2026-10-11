@@ -89,18 +89,23 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 const json = (body: unknown): RequestInit => ({ body: JSON.stringify(body) })
 
+type PresenterAsset = {asset_id:string;filename:string;mouth_parameters:string[];kind?:'live2d'|'portrait';states?:string[];lip_sync?:boolean}
+
+async function uploadPresenter(file: File, kind: 'live2d'|'portraits', signal?: AbortSignal): Promise<PresenterAsset> {
+  const form = new FormData(); form.append('file', file)
+  const response = await fetch(`/api/v1/assets/${kind}`, {method:'POST',body:form,signal})
+  let body: {code?:string;message?:string;data?:PresenterAsset}
+  try { body = await response.json() }
+  catch { throw new Error(`模型上传未完成（HTTP ${response.status}），请检查服务连接和上传大小。`) }
+  if (response.status === 404 && body.code === 'NOT_FOUND')
+    throw new Error('讲解员上传接口不存在；请重建并重启 Go API，或检查前端代理地址。')
+  if (!response.ok || !body.data) throw new Error(body.message || `素材导入失败（HTTP ${response.status}）`)
+  return body.data
+}
+
 export const api = {
-  uploadLive2D: async (file: File): Promise<{asset_id:string;filename:string;mouth_parameters:string[]}> => {
-    const form = new FormData(); form.append('file', file)
-    const response = await fetch('/api/v1/assets/live2d', {method:'POST',body:form})
-    let body: {code?: string; message?: string; data?: {asset_id:string;filename:string;mouth_parameters:string[]}}
-    try { body = await response.json() }
-    catch { throw new Error(`模型上传未完成（HTTP ${response.status}），请检查服务连接和上传大小。`) }
-    if (response.status === 404 && body.code === 'NOT_FOUND')
-      throw new Error('Live2D 上传接口不存在；请重建并重启 Go API，或检查前端代理地址。')
-    if (!response.ok || !body.data) throw new Error(body.message || `模型导入失败（HTTP ${response.status}）`)
-    return body.data
-  },
+  uploadLive2D: (file: File, signal?: AbortSignal) => uploadPresenter(file,'live2d',signal),
+  uploadPortrait: (file: File, signal?: AbortSignal) => uploadPresenter(file,'portraits',signal),
   /** 提交生成任务。 */
   generate: (req: GenerateRequest) =>
     request<GenerateResponse>('/api/v1/generate', { method: 'POST', ...json(req) }),

@@ -1,4 +1,18 @@
 /* Pinned Cubism 4 adapter. Absolute parameter values make random access repeatable. */
+function resolveMouthParameters(ids,groups,explicit){
+  if(explicit){
+    if(!ids.has(explicit))throw new Error('指定的口型参数不存在：'+explicit);
+    return [explicit];
+  }
+  const grouped=(groups.find(g=>g.Name==='LipSync')?.Ids||[]).filter(id=>ids.has(id));
+  if(grouped.length)return grouped;
+  // Exported models often omit LipSync groups or use Cubism 2-style names.
+  const candidates=Array.from(ids).filter(id=>/mouth.*open|open.*mouth/i.test(id));
+  const preferred=candidates.find(id=>id.replace(/_/g,'').toLowerCase()==='parammouthopeny');
+  if(preferred)return [preferred];
+  if(candidates.length===1)return candidates;
+  throw new Error('无法确定口型参数，请在导入设置中指定实际 MouthOpen 参数。候选：'+(candidates.join('、')||'无'));
+}
 function bridgeCoreRenderOrders(core) {
   const native=core._model, drawables=native.drawables;
   if(drawables.renderOrders) return;
@@ -26,9 +40,7 @@ window.setupPresenter = async config => {
   const core=model.internalModel.coreModel;
   const ids=new Set(core._model.parameters.ids);
   const groups=model.internalModel.settings.groups||[];
-  const lips=config.mouth_parameter?[config.mouth_parameter]:
-    (groups.find(g=>g.Name==='LipSync')?.Ids||['ParamMouthOpenY']);
-  if(!lips.length || lips.some(id=>!ids.has(id))) throw new Error('模型缺少口型参数，请在导入设置中指定实际的 MouthOpen 参数');
+  const lips=resolveMouthParameters(ids,groups,config.mouth_parameter);
   core.saveParameters();model.deltaTime=0;
   const set=(id,value)=>{if(ids.has(id)) core.setParameterValueById(id,value);};
   window.seekPresenter = seconds => {

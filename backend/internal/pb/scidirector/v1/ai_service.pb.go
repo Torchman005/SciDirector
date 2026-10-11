@@ -33,16 +33,18 @@ const (
 )
 
 type RenderPresenterRequest struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	ModelPath      string                 `protobuf:"bytes,1,opt,name=model_path,json=modelPath,proto3" json:"model_path,omitempty"`
-	AudioPath      string                 `protobuf:"bytes,2,opt,name=audio_path,json=audioPath,proto3" json:"audio_path,omitempty"`
-	OutputDir      string                 `protobuf:"bytes,3,opt,name=output_dir,json=outputDir,proto3" json:"output_dir,omitempty"`
-	DurationSec    float64                `protobuf:"fixed64,4,opt,name=duration_sec,json=durationSec,proto3" json:"duration_sec,omitempty"`
-	Width          int32                  `protobuf:"varint,5,opt,name=width,proto3" json:"width,omitempty"`
-	Height         int32                  `protobuf:"varint,6,opt,name=height,proto3" json:"height,omitempty"`
-	Fps            int32                  `protobuf:"varint,7,opt,name=fps,proto3" json:"fps,omitempty"`
-	MouthParameter string                 `protobuf:"bytes,8,opt,name=mouth_parameter,json=mouthParameter,proto3" json:"mouth_parameter,omitempty"`
-	MouthGain      float64                `protobuf:"fixed64,9,opt,name=mouth_gain,json=mouthGain,proto3" json:"mouth_gain,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// API-resolved tenant asset: model.model3.json (Cubism) or model.portrait.json
+	// (version 1 state-image manifest). Never accept a user-supplied filesystem path.
+	ModelPath      string  `protobuf:"bytes,1,opt,name=model_path,json=modelPath,proto3" json:"model_path,omitempty"`
+	AudioPath      string  `protobuf:"bytes,2,opt,name=audio_path,json=audioPath,proto3" json:"audio_path,omitempty"`
+	OutputDir      string  `protobuf:"bytes,3,opt,name=output_dir,json=outputDir,proto3" json:"output_dir,omitempty"`
+	DurationSec    float64 `protobuf:"fixed64,4,opt,name=duration_sec,json=durationSec,proto3" json:"duration_sec,omitempty"`
+	Width          int32   `protobuf:"varint,5,opt,name=width,proto3" json:"width,omitempty"`
+	Height         int32   `protobuf:"varint,6,opt,name=height,proto3" json:"height,omitempty"`
+	Fps            int32   `protobuf:"varint,7,opt,name=fps,proto3" json:"fps,omitempty"`
+	MouthParameter string  `protobuf:"bytes,8,opt,name=mouth_parameter,json=mouthParameter,proto3" json:"mouth_parameter,omitempty"`
+	MouthGain      float64 `protobuf:"fixed64,9,opt,name=mouth_gain,json=mouthGain,proto3" json:"mouth_gain,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -144,7 +146,7 @@ type RenderPresenterResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	VideoPath     string                 `protobuf:"bytes,1,opt,name=video_path,json=videoPath,proto3" json:"video_path,omitempty"`
 	EnvelopePath  string                 `protobuf:"bytes,2,opt,name=envelope_path,json=envelopePath,proto3" json:"envelope_path,omitempty"`
-	LipSync       bool                   `protobuf:"varint,3,opt,name=lip_sync,json=lipSync,proto3" json:"lip_sync,omitempty"`
+	LipSync       bool                   `protobuf:"varint,3,opt,name=lip_sync,json=lipSync,proto3" json:"lip_sync,omitempty"` // False for portrait packs with no mouth-open variants.
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }

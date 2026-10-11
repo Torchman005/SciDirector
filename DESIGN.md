@@ -39,7 +39,7 @@ SciDirector 是中文科学视频制作与审核工具。界面沿用深蓝审�
 Ant Design darkAlgorithm 负责层级与浮层，不在单个表单另建主题。
 
 ## Shapes
-控件与媒体圆角 8px。动画人物是影片里的原创图形组件，不能作为科学数据的替代。
+控件与媒体圆角 8px。影片讲解员使用用户导入的多状态立绘或 Live2D，不能作为科学数据的替代；新影片不再使用历史简笔人物组件。
 
 ## Components
 Select/Listbox、Form、Upload、Modal、Table 归 Ant Design；Toast 归 AntApp.useApp。

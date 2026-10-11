@@ -47,6 +47,10 @@ def main():
 
         def api(route):
             path = route.request.url.split("?")[0]
+            if path.endswith("/assets/portraits"):
+                route.fulfill(json={"ok":True,"data":{"asset_id":"b"*32,"filename":"poses.zip","kind":"portrait","lip_sync":False}}); return
+            if "/assets/portraits/" in path:
+                route.fulfill(path=str(ROOT/".data/anime-demo/preview.png"),content_type="image/png"); return
             if path.endswith("/assets/live2d"):
                 if state["upload"] == "hold": pending.append(route); return
                 route.fulfill(status=400,json={"message":"模型 ZIP 缺少 moc3，请重新打包。"}); return
@@ -101,6 +105,12 @@ def main():
         assert script.input_value().startswith("光的反射")
         assert generate_calls[-1]["effects"]["presenter"]["asset_id"] == "a"*32
         assert generate_calls[-1]["style_guide"]["animation_style"] == "anime"
+        page.get_by_text("多状态立绘",exact=True).click()
+        expect(page.get_by_text("已导入：character.zip",exact=True)).to_be_visible()
+        upload.set_input_files({"name":"poses.zip","mimeType":"application/zip","buffer":b"fixture"})
+        expect(page.get_by_text("已导入：poses.zip",exact=True)).to_be_visible()
+        expect(page.get_by_text("此包未提供张嘴图片：可切换状态，暂不产生口型动画。",exact=True)).to_be_visible()
+        expect(page.get_by_alt_text("思考立绘预览")).to_be_visible()
         page.screenshot(path=str(OUT/"create-desktop.png"),full_page=True)
         page.set_viewport_size({"width":390,"height":844})
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
@@ -137,6 +147,7 @@ def main():
     result={"passed":True,"checks":["required validation","keyboard select and Escape","upload busy guard",
         "upload replacement failure retains model","submission failure retains form","successful creation and deep link",
         "current media and repair ledger","video seeking","390px reflow","modal keyboard","media failure recovery affordance",
+        "portrait import and four previews","honest missing mouth feedback",
         "reduced motion","no browser exceptions"],"api":"isolated fixtures; Go tests verify real HTTP behavior"}
     (OUT/"result.json").write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding="utf-8")
     print(json.dumps(result,ensure_ascii=False))

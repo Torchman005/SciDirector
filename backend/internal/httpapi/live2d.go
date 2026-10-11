@@ -6,10 +6,43 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strings"
 )
 
 // HandleUploadLive2D imports a data-only Cubism archive with bounded extraction.
 func (s *Server) HandleUploadLive2D(c *gin.Context) {
+	s.uploadPresenter(c, false)
+}
+
+// HandlePortraitPreview serves only canonical state images from a tenant-owned pack.
+func (s *Server) HandlePortraitPreview(c *gin.Context) {
+	state := c.Param("state")
+	if state != "neutral" && state != "explain" && state != "think" && state != "surprised" {
+		abortWith(c, http.StatusNotFound, ErrCodeNotFound, "立绘状态不存在", nil)
+		return
+	}
+	store, err := s.assetStore()
+	if err != nil {
+		mapError(c, err)
+		return
+	}
+	file, err := store.ResolvePresenter(tenantOf(c), c.Param("id"))
+	if err != nil || !strings.HasSuffix(file, ".portrait.json") {
+		abortWith(c, http.StatusNotFound, ErrCodeNotFound, "立绘素材不存在", nil)
+		return
+	}
+	c.Header("Cache-Control", "private, max-age=3600")
+	c.Header("X-Content-Type-Options", "nosniff")
+	c.File(filepath.Join(filepath.Dir(file), state+".png"))
+}
+
+// HandleUploadPortrait imports a four-pose portrait pack without executable code.
+func (s *Server) HandleUploadPortrait(c *gin.Context) {
+	s.uploadPresenter(c, true)
+}
+
+func (s *Server) uploadPresenter(c *gin.Context, portrait bool) {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, assets.MaxModelZipBytes+(1<<20))
 	header, err := c.FormFile("file")
 	if c.Request.MultipartForm != nil {
@@ -42,7 +75,12 @@ func (s *Server) HandleUploadLive2D(c *gin.Context) {
 		mapError(c, err)
 		return
 	}
-	asset, err := store.ImportLive2D(tenantOf(c), tmp.Name(), header.Filename)
+	var asset assets.Live2DAsset
+	if portrait {
+		asset, err = store.ImportPortrait(tenantOf(c), tmp.Name(), header.Filename)
+	} else {
+		asset, err = store.ImportLive2D(tenantOf(c), tmp.Name(), header.Filename)
+	}
 	if err != nil {
 		abortWith(c, http.StatusBadRequest, ErrCodeBadRequest, err.Error(), nil)
 		return
