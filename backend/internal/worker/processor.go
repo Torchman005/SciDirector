@@ -535,7 +535,9 @@ func (p *Processor) HandleRenderShot(ctx context.Context, task RenderShotTask) e
 
 	// 熔断判断：人工打回同样计入 attempt，超过上限就转人工而不是继续烧钱。
 	// 人工额度是自动重试的 2 倍：人愿意多给几次机会，但也要有底线。
-	if domain.MaxAttemptsExceeded(shot.Attempt, p.cfg.Pipeline.ShotMaxAttempts*2) {
+	// Attempt is already incremented by the request handler. Allow the last
+	// numbered attempt; the old >= check discarded it before doing any work.
+	if domain.MaxAttemptsExceeded(shot.Attempt-1, p.cfg.Pipeline.ShotMaxAttempts*2) {
 		lg.Warn("人工打回次数已达上限，转人工处理")
 		_, _ = p.store.UpdateJob(ctx, jobID, func(j *domain.Job) error {
 			if s := j.FindShot(shotID); s != nil {
@@ -565,6 +567,7 @@ func (p *Processor) HandleRenderShot(ctx context.Context, task RenderShotTask) e
 				"from", string(s.Status), "to", string(domain.StatusGenerating))
 		}
 		s.Status = domain.StatusGenerating
+		s.Error = ""
 		s.UpdatedAt = time.Now().UTC()
 		return nil
 	}); err != nil {
@@ -674,6 +677,9 @@ func (p *Processor) HandleRenderShot(ctx context.Context, task RenderShotTask) e
 			s.Language = resp.GetShot().GetLanguage()
 		}
 		if art := pbconv.ArtifactFromPB(resp.GetArtifact()); art != nil {
+			if art.Attempt > s.Attempt {
+				s.Attempt = art.Attempt
+			}
 			if resp.GetPartialRangeHonored() && shot.Artifact != nil {
 				art.AudioPath = shot.Artifact.AudioPath
 			}

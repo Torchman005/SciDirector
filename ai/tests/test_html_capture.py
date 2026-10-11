@@ -56,7 +56,7 @@ def test_script_imports_cleanly() -> None:
     v0.6.15 给它加 `import asyncio` 时正是踩了这个坑。这条用例会在那种改动下立刻变红。
     """
     res = subprocess.run(
-        [sys.executable, str(CAPTURE), "--help"], capture_output=True, text=True, timeout=120
+        [sys.executable, "-X", "utf8", str(CAPTURE), "--help"], capture_output=True, text=True, encoding="utf-8", timeout=120
     )
     assert res.returncode == 0, f"--help 都跑不起来，导入链有问题：{res.stderr[-800:]}"
     assert "usage" in res.stdout

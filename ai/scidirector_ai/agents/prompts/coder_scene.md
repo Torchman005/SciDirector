@@ -33,16 +33,17 @@ keyframes 最多 24 个，time 为秒数 / {{duration_sec}}，严格递增。第
 省略字段由系统恢复默认，不继承前一帧；只有非默认状态必须在该帧写出。静止元素省略 keyframes。
 通常每元素 2～6 个关键帧足够，只有运动方向或阶段改变时增加；不要复制相同状态堆满 24 帧。
 保留必要内容和全部对象，explanation 简述阶段、布局、来源和修复即可，不复述整份 JSON。
-reveal 影响 code 打字、bars 生长、line/polyline 描线；其他组件不要用它。文字和图表不能旋转；可轻微缩放，但实际 font_size × scale 必须保持可读。
+reveal 影响 code 打字、bars 生长、line/polyline 描线、grid 逐格显示；其他组件不要用它。文字和图表不能旋转；可轻微缩放，但实际 font_size × scale 必须保持可读。
 几何与角色可使用 scale（0.5～1.5，默认1），必须预留放大及旋转后的包围范围。
 easing 为 linear/smooth/step/ease_in/ease_out/spring，描述到达当前关键帧的插值方式；step 在该时间点切换，spring 是不越界的阻尼落定。
 不提供 keyframes 表示静止，最后一个关键帧之后定格。关键帧可在 1 结束，编译器会自动预留 min(0.5秒,总时长10%) 的完成态停留。
 所有元素共用同一时间轴，包括末尾停留压缩；配合运动的对象使用相同关键帧时间。line 带 points 会规范化为 polyline。
 同屏对象必须边界可辨，不要用相同填色的实心块互相覆盖。标签置于主图上层且互不重叠；若设置了讲解员避让区，只让右下角的关键内容避让，不设角色栏。背景无语义几何可 decorative=true，文字/数据/关系线不能借此绕过遮挡检查。
+存在右下讲解员区域 x≥0.78、y≥0.55 时，对每个可见关键帧先验算：元素的右边界≤0.77 或下边界≤0.54，两者满足一个即可。包括所有标签、卡片、连线与移动/缩放后的边界。具体做法：宽幅主图放上半屏（下边界≤0.54），下半屏注释放左侧（右边界≤0.77）；右上仍使用全画宽。不要把标签锚点位于区域外误当作整个标签都在区域外，也不要让右侧卡片一直延伸到下半屏。
 确有科学含义的复合图形可以使用相同 overlap_group 标记有意叠合，不能用它掩盖文字遮挡。
 首帧可短暂淡入建立场景，避免长时间空白；末帧必须可见。阶段与旁白节拍对应，阅读可停留，不用无意义抖动制造变化。
 修改时保留正确元素的 id、内容和阶段，只调整被定位的问题。
 explanation 必须说明阶段、布局和数据来源；修复任务逐项写编号、对象、时间段和可见变化。
 
 例子（结构用法，替换成当前内容与真实字号；不能复制示例数字作为脚本数据）：
-{"version":1,"elements":[{"id":"title","kind":"text","text":"解释主题","font_size":48,"box":{"x":0.08,"y":0.08,"width":0.84,"height":0.16}},{"id":"cause","kind":"card","text":"原因","font_size":48,"box":{"x":0.08,"y":0.35,"width":0.38,"height":0.3},"keyframes":[{"time":0,"opacity":0},{"time":0.2,"opacity":1},{"time":0.8,"opacity":1}]},{"id":"result","kind":"card","text":"结果","font_size":48,"box":{"x":0.54,"y":0.35,"width":0.38,"height":0.3},"keyframes":[{"time":0,"opacity":0},{"time":0.45,"opacity":0},{"time":0.65,"opacity":1}]}],"explanation":"先标题、再原因、再结果"}
+{"version":1,"elements":[{"id":"title","kind":"text","text":"解释主题","font_size":48,"box":{"x":0.06,"y":0.06,"width":0.88,"height":0.14}},{"id":"source","kind":"grid","cells":[{"label":"x₁"},{"label":"x₂"}],"columns":2,"font_size":40,"color":"secondary","box":{"x":0.08,"y":0.3,"width":0.18,"height":0.16}},{"id":"process","kind":"icon","glyph":"chip","color":"accent","box":{"x":0.42,"y":0.26,"width":0.15,"height":0.26},"keyframes":[{"time":0,"opacity":0},{"time":0.25}]},{"id":"relation","kind":"polyline","points":[{"x":0,"y":0.5},{"x":1,"y":0.5}],"arrow":true,"flow":true,"color":"secondary","box":{"x":0.28,"y":0.36,"width":0.12,"height":0.04},"keyframes":[{"time":0.15,"reveal":0},{"time":0.4}]},{"id":"result","kind":"text","text":"输出结果","font_size":48,"box":{"x":0.68,"y":0.3,"width":0.24,"height":0.16},"keyframes":[{"time":0.45,"opacity":0},{"time":0.65}]},{"id":"note","kind":"text","text":"机制解释放在这里","font_size":40,"box":{"x":0.08,"y":0.68,"width":0.62,"height":0.14}}],"explanation":"宽幅上方机制主图、左下解释，右下局部避让；网格标签仅作格式示例，不是测量数据"}

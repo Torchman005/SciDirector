@@ -640,7 +640,14 @@ func (s *Server) HandlePatchShot(c *gin.Context) {
 			changed = append(changed, "narration")
 		}
 		if req.VisualBrief != nil {
-			shot.VisualBrief = strings.TrimSpace(*req.VisualBrief)
+			brief := strings.TrimSpace(*req.VisualBrief)
+			if brief != shot.VisualBrief {
+				// Beats/keywords were derived from the old intent and can otherwise
+				// steer a corrected scientific explanation back to the old error.
+				shot.Beats = nil
+				shot.Keywords = nil
+			}
+			shot.VisualBrief = brief
 			changed = append(changed, "visual_brief")
 		}
 		// 逐镜头切换背景：空串表示"回到全片统一设置"，因此同样用指针区分

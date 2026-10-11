@@ -373,6 +373,37 @@ func TestPatchShotCanClearField(t *testing.T) {
 	}
 }
 
+func TestPatchVisualIntentClearsDerivedOldDirections(t *testing.T) {
+	h := newHarness(t)
+	jobID := "test-patch-intent-" + time.Now().Format("150405.000000")
+	job := h.seedJob(t, jobID, domain.StatusApproved)
+	_, err := h.store.UpdateJob(h.ctx, jobID, func(j *domain.Job) error {
+		j.Shots[0].Beats = []string{"旧的错误曲线"}
+		j.Shots[0].Keywords = []string{"旧关键词"}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	route := "/api/v1/jobs/" + jobID + "/shots/" + job.Shots[0].ShotID
+	w := h.do(t, http.MethodPatch, route, map[string]any{"visual_brief": "原始画面说明"})
+	if w.Code != http.StatusOK {
+		t.Fatal(w.Body.String())
+	}
+	got, _ := h.store.GetJob(h.ctx, jobID)
+	if len(got.Shots[0].Beats) != 1 {
+		t.Fatal("unchanged intent lost beats")
+	}
+	w = h.do(t, http.MethodPatch, route, map[string]any{"visual_brief": "更正后的门控结构"})
+	if w.Code != http.StatusOK {
+		t.Fatal(w.Body.String())
+	}
+	got, _ = h.store.GetJob(h.ctx, jobID)
+	if len(got.Shots[0].Beats) != 0 || len(got.Shots[0].Keywords) != 0 {
+		t.Fatal("old derived directions survived intent change")
+	}
+}
+
 func TestPatchShotRejectsEmptyRequest(t *testing.T) {
 	h := newHarness(t)
 	jobID := "test-patch-empty-" + time.Now().Format("150405.000000")

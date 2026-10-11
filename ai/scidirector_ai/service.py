@@ -27,9 +27,11 @@ from .agents.critic import CriticAgent
 from .agents.director import DirectorAgent
 from .config import Settings, engine_availability, get_settings
 from .graph.builder import PipelineRunner
-from .llm import LLMClient
+from .llm import LLMClient, LLMError
 from .logging import get_logger
-from .media import MediaToolError, extract_frames
+from .media import MediaToolError, FrameSample, extract_frames, frame_sample_times
+from .repair_evidence import precheck_repairs, skip_full_review
+from .review_tasks import active_repairs
 from .renderer import RendererError, RenderRequest, build_renderer, renderer_availability
 from .sandbox.runner import SandboxRunner
 from .tts.factory import build_tts_provider
@@ -409,37 +411,65 @@ class PipelineService:
             attempt=attempt,
         )
 
-        result = self.coder.generate(
-            shot=shot,
-            style_guide=style_guide,
-            attempt=attempt,
-            feedback_text=_feedback_to_text(human_feedback),
-            previous_code=shot.code,
-        )
-        if not result.policy_ok:
-            raise RenderFailed(f"重写后的代码未通过安全/质量检查：{result.policy_summary}")
+        current = shot
+        feedback_text = _feedback_to_text(human_feedback)
+        last_valid = None
+        previous_review = None
+        failure = "修订未产出可用视频"
+        # Partial patches cannot be reviewed as complete scenes until Go splices
+        # them. Full-shot edits get the same bounded repair opportunity as initial generation.
+        rounds = 1 if range_end_sec > range_start_sec else min(3, self.settings.shot_max_attempts)
+        for revision_round in range(rounds):
+            round_attempt = attempt + revision_round
+            logger.info("单镜修订轮次", extra={"shot_id": shot.shot_id, "round": revision_round+1, "limit": rounds})
+            try:
+                result = self.coder.generate(
+                    shot=current, style_guide=style_guide, attempt=round_attempt,
+                    feedback_text=feedback_text, previous_code=current.code,
+                )
+                if not result.policy_ok:
+                    raise RenderFailed(f"重写后的代码未通过安全/质量检查：{result.policy_summary}")
+                if current.code and result.code.strip() == current.code.strip():
+                    raise RenderFailed("修订未改变实际代码，请重构反馈中的对象，不能只改说明")
+                updated = current.model_copy(update={"code": result.code, "language": result.artifact.language})
+                if result.overlay_text:
+                    updated = updated.model_copy(update={"meta": {**updated.meta, "overlay_text": result.overlay_text}})
+                artifact, honored = self._render_shot(
+                    job_id=job_id, shot=updated, code=result.code, style_guide=style_guide,
+                    attempt=round_attempt, output_dir=output_dir, draft_only=False,
+                    range_start_sec=range_start_sec, range_end_sec=range_end_sec,
+                    speech_path=last_valid[1].audio_path if last_valid else "",
+                )
+            except (RenderFailed, LLMError, ValueError) as exc:
+                failure = str(exc)
+                feedback_text += "\n本轮失败，必须修复后重新输出：" + failure[:2000]
+                continue
 
-        updated = shot.model_copy(
-            update={"code": result.code, "language": result.artifact.language}
-        )
-        if result.overlay_text:
-            updated = updated.model_copy(
-                update={"meta": {**updated.meta, "overlay_text": result.overlay_text}}
+            rows = []
+            if last_valid and previous_review:
+                before = last_valid[1]
+                before_samples = _artifact_samples(before, self.settings.critic_frame_samples)
+                after_samples = _artifact_samples(artifact, self.settings.critic_frame_samples)
+                rows = precheck_repairs(previous_review, before, artifact,
+                    [dict(path=s.path, ts=s.ts) for s in before_samples], after_samples,
+                    Path(artifact.video_path).parent / "repair_evidence", self.runner)
+                if skip_full_review(rows):
+                    feedback_text += "\n对应问题的证据帧没有可见变化，请重构实际对象；跳过重复审核。"
+                    continue
+            outcome = self.critic.review(
+                shot=updated, artifact=artifact, style_guide=style_guide,
+                attempt=round_attempt, previous_feedback=feedback_text,
+                previous_review=previous_review, repair_prechecks=rows,
             )
+            last_valid = (updated, artifact, outcome.feedback, honored)
+            if outcome.feedback.passed or outcome.degraded or not active_repairs(outcome.feedback):
+                return last_valid
+            current, previous_review = updated, outcome.feedback
+            feedback_text = human_comment + "\n" + _feedback_to_text(previous_review)
 
-        artifact, honored = self._render_shot(
-            job_id=job_id, shot=updated, code=result.code, style_guide=style_guide,
-            attempt=attempt, output_dir=output_dir, draft_only=False,
-            range_start_sec=range_start_sec, range_end_sec=range_end_sec,
-        )
-
-        # 重做后自动复审：让审核台立刻知道"改好了没有"，
-        # 而不是让人自己盯着预览视频判断。
-        outcome = self.critic.review(
-            shot=updated, artifact=artifact, style_guide=style_guide,
-            attempt=attempt, previous_feedback=human_comment,
-        )
-        return updated, artifact, outcome.feedback, honored
+        if last_valid:
+            return last_valid
+        raise RenderFailed(f"单镜修订已尝试 {rounds} 轮，{failure}")
 
     # ------------------------------------------------------------------
     # 内部：渲染
@@ -457,6 +487,7 @@ class PipelineService:
         draft_only: bool = False,
         range_start_sec: float = 0.0,
         range_end_sec: float = 0.0,
+        speech_path: str = "",
     ) -> tuple[RenderArtifact, bool]:
         """渲染单个镜头并抽帧。
 
@@ -472,6 +503,8 @@ class PipelineService:
             if output_dir
             else Path(self.settings.sandbox_work_dir) / job_id / f"shot_{shot.index:03d}"
         )
+        # Render/TTS failures must never overwrite the currently published clip.
+        work_dir = work_dir / f"render_{attempt}_{uuid.uuid4().hex[:10]}"
 
         request = RenderRequest(
             shot_id=shot.shot_id,
@@ -512,8 +545,8 @@ class PipelineService:
                 extra={"shot_id": shot.shot_id, "error": str(exc)[:200]},
             )
 
-        audio_path = ""
-        if not draft_only and not result.partial_range_honored and shot.narration.strip():
+        audio_path = speech_path if speech_path and Path(speech_path).is_file() else ""
+        if not audio_path and not draft_only and not result.partial_range_honored and shot.narration.strip():
             provider = build_tts_provider(self.settings)
             if provider is not None:
                 try:
@@ -539,6 +572,19 @@ class PipelineService:
             rendered_at_unix_ms=int(time.time() * 1000),
             render_cost_sec=round(result.render_cost_sec, 3),
         ), result.partial_range_honored
+
+
+def _artifact_samples(artifact: RenderArtifact, count: int) -> list[FrameSample]:
+    """Preserve skipped-frame indices; never zip a shortened list onto wrong times."""
+    times = frame_sample_times(artifact.duration_sec, count)
+    samples = []
+    for path in artifact.frame_samples:
+        stem = Path(path).stem
+        if stem.startswith("frame_") and stem[6:].isdigit():
+            index = int(stem[6:])
+            if index < len(times):
+                samples.append(FrameSample(path=path, ts=times[index]))
+    return samples
 
 
 def _feedback_to_text(feedback: CriticFeedback | None) -> str:

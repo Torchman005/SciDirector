@@ -296,6 +296,32 @@ func (h *reviseHarness) shot(t *testing.T) *domain.Shot {
 // B4 用例
 // ---------------------------------------------------------------------------
 
+func TestRevisionBudgetAllowsLastAttemptAndStopsTheNext(t *testing.T) {
+	for _, attempt := range []int{6, 7} {
+		t.Run(strconv.Itoa(attempt), func(t *testing.T) {
+			fake := &fakeAIServer{}
+			h := newReviseHarness(t, fake)
+			_, err := h.store.UpdateJob(context.Background(), h.jobID, func(j *domain.Job) error {
+				j.Shots[0].Attempt = attempt
+				return nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := h.deliver(context.Background(), attempt); err != nil {
+				t.Fatal(err)
+			}
+			want := int32(0)
+			if attempt == 6 {
+				want = 1
+			}
+			if fake.reviseCalls.Load() != want {
+				t.Fatalf("attempt %d: calls=%d", attempt, fake.reviseCalls.Load())
+			}
+		})
+	}
+}
+
 // TestB4ConcurrentDuplicateDeliveryRendersOnce 覆盖最危险的一种重复投递：
 // 第一次**仍在渲染中**时，同一次 attempt 的消息又到达了一次。
 //

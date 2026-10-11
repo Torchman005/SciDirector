@@ -17,7 +17,7 @@ from scidirector_ai.schemas import SceneTag, ShotSpec, StyleGuide
 
 def test_entry_point_imports_without_shadowing_logging() -> None:
     script = Path(quality.__file__).with_name("browser_preflight.py")
-    result = subprocess.run([sys.executable, str(script), "--help"], capture_output=True, text=True, timeout=15)
+    result = subprocess.run([sys.executable, "-X", "utf8", str(script), "--help"], capture_output=True, text=True, encoding="utf-8", timeout=15)
     assert result.returncode == 0, result.stderr
 
 
