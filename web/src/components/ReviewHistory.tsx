@@ -84,7 +84,7 @@ export function ReviewHistory({ feedbacks }: { feedbacks?: Feedback[] }) {
           message="最近两次的审查意见完全相同"
           description={
             '请核对实际画面与修复任务的验收条件。重复意见可能来自修改无效或审核不稳定；' +
-            '补充具体对象、时间点和期望变化后再重做，不能仅凭意见重复放行。'
+            '可直接自动诊断修复，也可补充看到的现象；不能仅凭意见重复放行。'
           }
         />
       )}

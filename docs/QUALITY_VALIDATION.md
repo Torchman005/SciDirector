@@ -62,6 +62,8 @@
 
 ## 结论边界
 
+2026-10-12 自动恢复回归：Python 修订、图路由、重试效率、SceneRevision 共 48 项通过；Manim 诊断/零等待、生成门禁、沙盒、Coder 等关联测试通过（先修正一条测试对 PolicyReport.summary 的错误断言，诊断专项 7/7）。Go HTTP、worker、pbconv 通过；新用例覆盖空意见、重复请求 409、系统错误/机器审核/旧产物跨 RPC 传递及历史 attempt 不再锁死。前端类型检查、18 项测试和生产构建通过；真实 Chromium 的隔离 API 测试覆盖修复失败保留意见、空意见成功提交、加载状态、无片可修复但不可放行、桌面/390px 和键盘操作。静态审计仍为上文同一组 Ant Design JSX 解析误报；原始结果在 `.data/ui-verification/premium-audit-recovery.json`，未降低审核标准来隐藏问题。
+
 上述证明修订链路和媒体功能可运行，不能据此宣称任意脚本的审核通过率已提高某个百分比。尚无固定真实模型基准集的前后统计。模型供应商输出、复杂镜头表现和导入模型兼容性仍需按实际素材验收。
 
 Windows 无 Linux namespace/seccomp 时，相关 Linux 隔离测试不可覆盖；SDK Core 和模型属于本地验证资产，未提交。Live2D 是音量驱动开合，不是逐音素嘴形生成。浏览器验证范围不等同于全设备或读屏认证。

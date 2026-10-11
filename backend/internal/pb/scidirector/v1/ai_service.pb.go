@@ -416,6 +416,11 @@ func (x *CheckpointShotState) GetHasArtifact() bool {
 // -----------------------------------------------------------------------------
 // RunPipeline
 // -----------------------------------------------------------------------------
+// style_guide_json contract shared by all generation/review RPCs:
+// presenter_safe_area?: {x:number,y:number,width:number,height:number}, normalized
+// to [0,1]. Go derives it from enabled presenter effects; the full-size animation
+// must keep important content outside this LOCAL bottom-right overlay rectangle.
+// It is not a separate lane and must not scale/crop the base video.
 type RunPipelineRequest struct {
 	state              protoimpl.MessageState `protogen:"open.v1"`
 	JobId              string                 `protobuf:"bytes,1,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
@@ -1045,8 +1050,13 @@ type ReviseShotRequest struct {
 	// range_end_sec <= range_start_sec 表示整镜重渲。
 	RangeStartSec float64 `protobuf:"fixed64,7,opt,name=range_start_sec,json=rangeStartSec,proto3" json:"range_start_sec,omitempty"`
 	RangeEndSec   float64 `protobuf:"fixed64,8,opt,name=range_end_sec,json=rangeEndSec,proto3" json:"range_end_sec,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// System diagnostics are independent of the optional human preference.
+	// Always forward the latest actual error/review, even for an empty comment.
+	PreviousError    string          `protobuf:"bytes,9,opt,name=previous_error,json=previousError,proto3" json:"previous_error,omitempty"`
+	PreviousFeedback *CriticFeedback `protobuf:"bytes,10,opt,name=previous_feedback,json=previousFeedback,proto3" json:"previous_feedback,omitempty"`
+	PreviousArtifact *RenderArtifact `protobuf:"bytes,11,opt,name=previous_artifact,json=previousArtifact,proto3" json:"previous_artifact,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *ReviseShotRequest) Reset() {
@@ -1133,6 +1143,27 @@ func (x *ReviseShotRequest) GetRangeEndSec() float64 {
 		return x.RangeEndSec
 	}
 	return 0
+}
+
+func (x *ReviseShotRequest) GetPreviousError() string {
+	if x != nil {
+		return x.PreviousError
+	}
+	return ""
+}
+
+func (x *ReviseShotRequest) GetPreviousFeedback() *CriticFeedback {
+	if x != nil {
+		return x.PreviousFeedback
+	}
+	return nil
+}
+
+func (x *ReviseShotRequest) GetPreviousArtifact() *RenderArtifact {
+	if x != nil {
+		return x.PreviousArtifact
+	}
+	return nil
 }
 
 type ReviseShotResponse struct {
@@ -1329,7 +1360,7 @@ const file_scidirector_v1_ai_service_proto_rawDesc = "" +
 	"\bdegraded\x18\x02 \x01(\bR\bdegraded\x12!\n" +
 	"\ftotal_tokens\x18\x03 \x01(\x05R\vtotalTokens\x12\x1f\n" +
 	"\velapsed_sec\x18\x04 \x01(\x01R\n" +
-	"elapsedSec\"\xac\x02\n" +
+	"elapsedSec\"\xed\x03\n" +
 	"\x11ReviseShotRequest\x12\x15\n" +
 	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12,\n" +
 	"\x04shot\x18\x02 \x01(\v2\x18.scidirector.v1.ShotSpecR\x04shot\x12#\n" +
@@ -1339,7 +1370,11 @@ const file_scidirector_v1_ai_service_proto_rawDesc = "" +
 	"\n" +
 	"output_dir\x18\x06 \x01(\tR\toutputDir\x12&\n" +
 	"\x0frange_start_sec\x18\a \x01(\x01R\rrangeStartSec\x12\"\n" +
-	"\rrange_end_sec\x18\b \x01(\x01R\vrangeEndSec\"\xe2\x02\n" +
+	"\rrange_end_sec\x18\b \x01(\x01R\vrangeEndSec\x12%\n" +
+	"\x0eprevious_error\x18\t \x01(\tR\rpreviousError\x12K\n" +
+	"\x11previous_feedback\x18\n" +
+	" \x01(\v2\x1e.scidirector.v1.CriticFeedbackR\x10previousFeedback\x12K\n" +
+	"\x11previous_artifact\x18\v \x01(\v2\x1e.scidirector.v1.RenderArtifactR\x10previousArtifact\"\xe2\x02\n" +
 	"\x12ReviseShotResponse\x12,\n" +
 	"\x04shot\x18\x01 \x01(\v2\x18.scidirector.v1.ShotSpecR\x04shot\x12:\n" +
 	"\bartifact\x18\x02 \x01(\v2\x1e.scidirector.v1.RenderArtifactR\bartifact\x12:\n" +
@@ -1408,30 +1443,32 @@ var file_scidirector_v1_ai_service_proto_depIdxs = []int32{
 	16, // 7: scidirector.v1.CritiqueShotRequest.artifact:type_name -> scidirector.v1.RenderArtifact
 	15, // 8: scidirector.v1.CritiqueShotResponse.feedback:type_name -> scidirector.v1.CriticFeedback
 	14, // 9: scidirector.v1.ReviseShotRequest.shot:type_name -> scidirector.v1.ShotSpec
-	14, // 10: scidirector.v1.ReviseShotResponse.shot:type_name -> scidirector.v1.ShotSpec
-	16, // 11: scidirector.v1.ReviseShotResponse.artifact:type_name -> scidirector.v1.RenderArtifact
-	15, // 12: scidirector.v1.ReviseShotResponse.feedback:type_name -> scidirector.v1.CriticFeedback
-	0,  // 13: scidirector.v1.AiDirectorService.RenderPresenter:input_type -> scidirector.v1.RenderPresenterRequest
-	17, // 14: scidirector.v1.AiDirectorService.Health:input_type -> scidirector.v1.HealthRequest
-	5,  // 15: scidirector.v1.AiDirectorService.RunPipeline:input_type -> scidirector.v1.RunPipelineRequest
-	6,  // 16: scidirector.v1.AiDirectorService.PlanScript:input_type -> scidirector.v1.PlanScriptRequest
-	8,  // 17: scidirector.v1.AiDirectorService.GenerateShot:input_type -> scidirector.v1.GenerateShotRequest
-	10, // 18: scidirector.v1.AiDirectorService.CritiqueShot:input_type -> scidirector.v1.CritiqueShotRequest
-	12, // 19: scidirector.v1.AiDirectorService.ReviseShot:input_type -> scidirector.v1.ReviseShotRequest
-	2,  // 20: scidirector.v1.AiDirectorService.GetCheckpointSnapshot:input_type -> scidirector.v1.CheckpointSnapshotRequest
-	1,  // 21: scidirector.v1.AiDirectorService.RenderPresenter:output_type -> scidirector.v1.RenderPresenterResponse
-	18, // 22: scidirector.v1.AiDirectorService.Health:output_type -> scidirector.v1.HealthResponse
-	19, // 23: scidirector.v1.AiDirectorService.RunPipeline:output_type -> scidirector.v1.PipelineEvent
-	7,  // 24: scidirector.v1.AiDirectorService.PlanScript:output_type -> scidirector.v1.PlanScriptResponse
-	9,  // 25: scidirector.v1.AiDirectorService.GenerateShot:output_type -> scidirector.v1.GenerateShotResponse
-	11, // 26: scidirector.v1.AiDirectorService.CritiqueShot:output_type -> scidirector.v1.CritiqueShotResponse
-	13, // 27: scidirector.v1.AiDirectorService.ReviseShot:output_type -> scidirector.v1.ReviseShotResponse
-	3,  // 28: scidirector.v1.AiDirectorService.GetCheckpointSnapshot:output_type -> scidirector.v1.CheckpointSnapshotResponse
-	21, // [21:29] is the sub-list for method output_type
-	13, // [13:21] is the sub-list for method input_type
-	13, // [13:13] is the sub-list for extension type_name
-	13, // [13:13] is the sub-list for extension extendee
-	0,  // [0:13] is the sub-list for field type_name
+	15, // 10: scidirector.v1.ReviseShotRequest.previous_feedback:type_name -> scidirector.v1.CriticFeedback
+	16, // 11: scidirector.v1.ReviseShotRequest.previous_artifact:type_name -> scidirector.v1.RenderArtifact
+	14, // 12: scidirector.v1.ReviseShotResponse.shot:type_name -> scidirector.v1.ShotSpec
+	16, // 13: scidirector.v1.ReviseShotResponse.artifact:type_name -> scidirector.v1.RenderArtifact
+	15, // 14: scidirector.v1.ReviseShotResponse.feedback:type_name -> scidirector.v1.CriticFeedback
+	0,  // 15: scidirector.v1.AiDirectorService.RenderPresenter:input_type -> scidirector.v1.RenderPresenterRequest
+	17, // 16: scidirector.v1.AiDirectorService.Health:input_type -> scidirector.v1.HealthRequest
+	5,  // 17: scidirector.v1.AiDirectorService.RunPipeline:input_type -> scidirector.v1.RunPipelineRequest
+	6,  // 18: scidirector.v1.AiDirectorService.PlanScript:input_type -> scidirector.v1.PlanScriptRequest
+	8,  // 19: scidirector.v1.AiDirectorService.GenerateShot:input_type -> scidirector.v1.GenerateShotRequest
+	10, // 20: scidirector.v1.AiDirectorService.CritiqueShot:input_type -> scidirector.v1.CritiqueShotRequest
+	12, // 21: scidirector.v1.AiDirectorService.ReviseShot:input_type -> scidirector.v1.ReviseShotRequest
+	2,  // 22: scidirector.v1.AiDirectorService.GetCheckpointSnapshot:input_type -> scidirector.v1.CheckpointSnapshotRequest
+	1,  // 23: scidirector.v1.AiDirectorService.RenderPresenter:output_type -> scidirector.v1.RenderPresenterResponse
+	18, // 24: scidirector.v1.AiDirectorService.Health:output_type -> scidirector.v1.HealthResponse
+	19, // 25: scidirector.v1.AiDirectorService.RunPipeline:output_type -> scidirector.v1.PipelineEvent
+	7,  // 26: scidirector.v1.AiDirectorService.PlanScript:output_type -> scidirector.v1.PlanScriptResponse
+	9,  // 27: scidirector.v1.AiDirectorService.GenerateShot:output_type -> scidirector.v1.GenerateShotResponse
+	11, // 28: scidirector.v1.AiDirectorService.CritiqueShot:output_type -> scidirector.v1.CritiqueShotResponse
+	13, // 29: scidirector.v1.AiDirectorService.ReviseShot:output_type -> scidirector.v1.ReviseShotResponse
+	3,  // 30: scidirector.v1.AiDirectorService.GetCheckpointSnapshot:output_type -> scidirector.v1.CheckpointSnapshotResponse
+	23, // [23:31] is the sub-list for method output_type
+	15, // [15:23] is the sub-list for method input_type
+	15, // [15:15] is the sub-list for extension type_name
+	15, // [15:15] is the sub-list for extension extendee
+	0,  // [0:15] is the sub-list for field type_name
 }
 
 func init() { file_scidirector_v1_ai_service_proto_init() }

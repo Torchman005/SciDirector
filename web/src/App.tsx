@@ -743,7 +743,7 @@ export function App() {
                 type="warning"
                 showIcon
                 message={`有 ${pending} 个镜头需要人工复核`}
-                description="镜头已在下方展开。请先检查视频、抽帧和未解决的问题，再决定放行或提出具体修改意见。"
+                description="镜头已在下方展开。可直接点击自动诊断修复，无需提供技术方案；若选择人工放行，请先核对视频和未解决的问题。"
               />
             )}
 

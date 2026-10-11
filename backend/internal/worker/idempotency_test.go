@@ -70,6 +70,7 @@ type fakeAIServer struct {
 	pb.UnimplementedAiDirectorServiceServer
 
 	reviseCalls atomic.Int32
+	lastRequest atomic.Pointer[pb.ReviseShotRequest]
 	// holdFor 模拟一次真实渲染的耗时，让「第一次还在跑、第二次就到了」这个窗口真实存在。
 	holdFor time.Duration
 	// failFirst 指定前 N 次调用返回 failCode，用于验证失败路径的占位释放。
@@ -82,6 +83,7 @@ type fakeAIServer struct {
 
 func (f *fakeAIServer) ReviseShot(ctx context.Context, req *pb.ReviseShotRequest) (*pb.ReviseShotResponse, error) {
 	n := f.reviseCalls.Add(1)
+	f.lastRequest.Store(req)
 	if f.entered != nil {
 		f.once.Do(func() { close(f.entered) })
 	}
@@ -296,7 +298,30 @@ func (h *reviseHarness) shot(t *testing.T) *domain.Shot {
 // B4 用例
 // ---------------------------------------------------------------------------
 
-func TestRevisionBudgetAllowsLastAttemptAndStopsTheNext(t *testing.T) {
+func TestRepairForwardsDiagnosticsWithoutRequiringHumanInstructions(t *testing.T) {
+	fake := &fakeAIServer{}
+	h := newReviseHarness(t, fake)
+	_, err := h.store.UpdateJob(context.Background(), h.jobID, func(j *domain.Job) error {
+		s := j.Shots[0]
+		s.Error = "ValueError: wait duration <= 0"
+		s.Feedbacks = []domain.Feedback{{Source: domain.FeedbackVLM, Issues: []string{"错误的函数曲线"}, Suggestions: []string{"核对公式"}},
+			{Source: domain.FeedbackHuman, Issues: []string{"自动修复"}}}
+		s.Artifact = &domain.Artifact{VideoPath: "previous.mp4"}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.deliver(context.Background(), 2); err != nil {
+		t.Fatal(err)
+	}
+	req := fake.lastRequest.Load()
+	if req == nil || req.PreviousError != "ValueError: wait duration <= 0" || req.GetPreviousArtifact().GetVideoPath() != "previous.mp4" || req.GetPreviousFeedback().GetIssues()[0] != "错误的函数曲线" {
+		t.Fatalf("missing automatic diagnosis context: %v", req)
+	}
+}
+
+func TestExplicitRevisionIsNotLockedOutByHistoricalAttempts(t *testing.T) {
 	for _, attempt := range []int{6, 7} {
 		t.Run(strconv.Itoa(attempt), func(t *testing.T) {
 			fake := &fakeAIServer{}
@@ -311,10 +336,7 @@ func TestRevisionBudgetAllowsLastAttemptAndStopsTheNext(t *testing.T) {
 			if err := h.deliver(context.Background(), attempt); err != nil {
 				t.Fatal(err)
 			}
-			want := int32(0)
-			if attempt == 6 {
-				want = 1
-			}
+			want := int32(1)
 			if fake.reviseCalls.Load() != want {
 				t.Fatalf("attempt %d: calls=%d", attempt, fake.reviseCalls.Load())
 			}

@@ -550,16 +550,16 @@ func TestRejectShotNotFound(t *testing.T) {
 	}
 }
 
-func TestRejectShotRejectsEmptyComment(t *testing.T) {
+func TestRejectShotAcceptsEmptyCommentForDiagnosis(t *testing.T) {
 	h := newHarness(t)
 	jobID := "test-reject-empty-" + time.Now().Format("150405.000000")
 	job := h.seedJob(t, jobID, domain.StatusApproved)
 
-	// 空白意见必须被拒：「不好看」这类无信息量的意见无法转成可执行的代码修改。
+	// 用户无需提供修复方案；自动诊断读取系统证据。
 	w := h.do(t, http.MethodPost, "/api/v1/jobs/"+jobID+"/shots/"+job.Shots[0].ShotID+"/reject",
 		map[string]string{"comment": ""})
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("空意见应返回 400，实际 %d：%s", w.Code, w.Body.String())
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("空意见应返回 202，实际 %d：%s", w.Code, w.Body.String())
 	}
 }
 func TestPatchShotNotFound(t *testing.T) {

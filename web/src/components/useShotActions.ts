@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { App } from 'antd'
 
 import { api, errorText } from '../api'
@@ -20,9 +20,12 @@ import type { Shot } from '../types'
 export function useShotActions(jobId: string, shot: Shot, onChanged: () => void) {
   const { message } = App.useApp()
   const [busy, setBusy] = useState(false)
+  const pending = useRef(false)
 
   /** 统一处理「忙碌态 + 成功提示 + 失败提示 + 回源」。返回是否成功。 */
   async function run(fn: () => Promise<string>): Promise<boolean> {
+    if (pending.current) return false
+    pending.current = true
     setBusy(true)
     try {
       const msg = await fn()
@@ -35,12 +38,14 @@ export function useShotActions(jobId: string, shot: Shot, onChanged: () => void)
       message.error(errorText(err))
       return false
     } finally {
+      pending.current = false
       setBusy(false)
     }
   }
 
   return {
     busy,
+    canRepair: ['AWAITING_HUMAN', 'APPROVED', 'FAILED', 'REJECTED'].includes(shot.status),
     canApprove: shot.status === 'AWAITING_HUMAN' && Boolean(shot.artifact?.video_path),
     approve: () =>
       run(async () => {
@@ -49,10 +54,10 @@ export function useShotActions(jobId: string, shot: Shot, onChanged: () => void)
           ? '已放行。全部镜头都已通过，成片开始合成。'
           : '已放行该镜头。'
       }),
-    reject: (comment: string) =>
+    reject: (comment = '') =>
       run(async () => {
         await api.reject(jobId, shot.shot_id, { comment: comment.trim() })
-        return '已打回，正在重写并重渲该镜头。'
+        return '已开始自动诊断、修复与复审，保留当前产物直到新版本生成。'
       }),
     patch: (narration: string, visualBrief: string, redo: boolean, comment: string, backgroundStyle?: string) =>
       run(async () => {

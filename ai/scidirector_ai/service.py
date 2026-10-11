@@ -27,6 +27,7 @@ from .agents.critic import CriticAgent
 from .agents.director import DirectorAgent
 from .config import Settings, engine_availability, get_settings
 from .diagnostics import error_evidence
+from .recovery import recovery_instruction
 from .graph.builder import PipelineRunner
 from .llm import LLMClient, LLMError
 from .logging import get_logger
@@ -66,6 +67,11 @@ class RenderFailed(RuntimeError):
     而"缺 Manim/字体/浏览器"这类问题重试多少次都一样，
     盲目重试只会浪费资源并污染告警。
     """
+
+
+    def __init__(self, message: str, *, retryable: bool = True) -> None:
+        super().__init__(message)
+        self.retryable = retryable
 
 
 @dataclass
@@ -384,6 +390,9 @@ class PipelineService:
         human_comment: str,
         attempt: int,
         style_guide: StyleGuide,
+        previous_error: str = "",
+        previous_feedback: CriticFeedback | None = None,
+        previous_artifact: RenderArtifact | None = None,
         output_dir: str = "",
         range_start_sec: float = 0.0,
         range_end_sec: float = 0.0,
@@ -413,19 +422,15 @@ class PipelineService:
             exact_result = self.coder.apply_exact_revision(
                 shot=shot, style_guide=style_guide, revision=exact_revision)
 
-        human_feedback = CriticFeedback(
-            passed=False,
-            score=0.0,
-            issues=[human_comment],
-            suggestions=[human_comment],
-            source=FeedbackSource.HUMAN,
-            attempt=attempt,
-        )
-
         current = shot
-        feedback_text = _feedback_to_text(human_feedback)
+        request_context = "用户期望：" + (human_comment.strip() or "根据系统诊断自动修复并复审")
+        if previous_error:
+            request_context += "\n系统记录的失败原因：\n" + error_evidence("", previous_error, 2400)
+        feedback_text = request_context + "\n" + _feedback_to_text(previous_feedback)
         last_valid = None
-        previous_review = None
+        previous_review = previous_feedback
+        evidence_before = previous_artifact
+        technical_failures = 0
         failure = "修订未产出可用视频"
         # Partial patches cannot be reviewed as complete scenes until Go splices
         # them. Full-shot edits get the same bounded repair opportunity as initial generation.
@@ -434,9 +439,14 @@ class PipelineService:
             round_attempt = attempt + revision_round
             logger.info("单镜修订轮次", extra={"shot_id": shot.shot_id, "round": revision_round+1, "limit": rounds})
             try:
+                rebuild = (not current.code or technical_failures > 0 or
+                           (rounds > 1 and revision_round == rounds - 1))
+                generation_shot = current.model_copy(update={"meta": {
+                    **current.meta, "repair_strategy": "rebuild" if rebuild else "targeted"}})
+                instructions = recovery_instruction(current, style_guide, rebuild=rebuild)
                 result = exact_result if revision_round == 0 and exact_result is not None else self.coder.generate(
-                    shot=current, style_guide=style_guide, attempt=round_attempt,
-                    feedback_text=feedback_text, previous_code=current.code,
+                    shot=generation_shot, style_guide=style_guide, attempt=round_attempt,
+                    feedback_text=instructions + "\n" + feedback_text, previous_code=current.code,
                 )
                 if not result.policy_ok:
                     raise RenderFailed(f"重写后的代码未通过安全/质量检查：{result.policy_summary}")
@@ -445,6 +455,8 @@ class PipelineService:
                 updated = current.model_copy(update={"code": result.code, "language": result.artifact.language})
                 if result.overlay_text:
                     updated = updated.model_copy(update={"meta": {**updated.meta, "overlay_text": result.overlay_text}})
+                # A failed render still has a concrete source to diagnose next time.
+                current = updated
                 artifact, honored = self._render_shot(
                     job_id=job_id, shot=updated, code=result.code, style_guide=style_guide,
                     attempt=round_attempt, output_dir=output_dir, draft_only=False,
@@ -452,13 +464,16 @@ class PipelineService:
                     speech_path=last_valid[1].audio_path if last_valid else "",
                 )
             except (RenderFailed, LLMError, ValueError) as exc:
+                technical_failures += 1
                 failure = str(exc)
                 feedback_text += "\n本轮失败，必须修复后重新输出：" + failure[:2000]
+                if isinstance(exc, RenderFailed) and not exc.retryable:
+                    break
                 continue
 
             rows = []
-            if last_valid and previous_review:
-                before = last_valid[1]
+            if evidence_before and previous_review:
+                before = evidence_before
                 before_samples = _artifact_samples(before, self.settings.critic_frame_samples)
                 after_samples = _artifact_samples(artifact, self.settings.critic_frame_samples)
                 rows = precheck_repairs(previous_review, before, artifact,
@@ -476,11 +491,13 @@ class PipelineService:
             if outcome.feedback.passed or outcome.degraded or not active_repairs(outcome.feedback):
                 return last_valid
             current, previous_review = updated, outcome.feedback
-            feedback_text = human_comment + "\n" + _feedback_to_text(previous_review)
+            evidence_before = artifact
+            feedback_text = request_context + "\n" + _feedback_to_text(previous_review)
 
         if last_valid:
             return last_valid
-        raise RenderFailed(f"单镜修订已尝试 {rounds} 轮，{failure}")
+        raise RenderFailed(f"自动诊断修复在第 {revision_round + 1}/{rounds} 轮停止：{failure}。"
+                           "已保留原产物；请根据具体诊断处理依赖或调整内容后重试，无需编写修复代码。")
 
     # ------------------------------------------------------------------
     # 内部：渲染
@@ -537,7 +554,8 @@ class PipelineService:
             renderer = build_renderer(engine, self.settings)
             result = renderer.render(request, self.runner)
         except RendererError as exc:
-            raise RenderFailed(error_evidence(f"渲染失败（{engine}）：{exc}", exc.detail)) from exc
+            raise RenderFailed(error_evidence(f"渲染失败（{engine}）：{exc}", exc.detail),
+                               retryable=exc.retryable) from exc
 
         frames: list[str] = []
         try:

@@ -153,10 +153,12 @@ class CoderAgent(Agent):
         if mode not in {"structured", "code"}:
             raise LLMError(f"未知 generation_mode：{mode}")
         try:
-            structured_previous = extract_scene(previous_code) if engine in _HTML_ENGINES else None
+            structured_previous = (extract_scene(previous_code) if engine in _HTML_ENGINES
+                                   and shot.meta.get("repair_strategy") != "rebuild" else None)
         except ValueError as exc:
             raise LLMError(f"上一版场景规格损坏，无法安全回读：{exc}") from exc
-        if engine in _HTML_ENGINES and mode == "structured" and (not previous_code or structured_previous is not None):
+        if engine in _HTML_ENGINES and mode == "structured" and (not previous_code or structured_previous is not None
+                                                               or shot.meta.get("repair_strategy") == "rebuild"):
             return self._generate_scene(shot, style_guide, attempt, feedback_text, structured_previous)
 
         # few-shot 条数可配，**默认 2 而不是原来的硬编码 3**。

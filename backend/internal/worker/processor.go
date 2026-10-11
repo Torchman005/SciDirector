@@ -533,27 +533,8 @@ func (p *Processor) HandleRenderShot(ctx context.Context, task RenderShotTask) e
 		}
 	}()
 
-	// 熔断判断：人工打回同样计入 attempt，超过上限就转人工而不是继续烧钱。
-	// 人工额度是自动重试的 2 倍：人愿意多给几次机会，但也要有底线。
-	// Attempt is already incremented by the request handler. Allow the last
-	// numbered attempt; the old >= check discarded it before doing any work.
-	if domain.MaxAttemptsExceeded(shot.Attempt-1, p.cfg.Pipeline.ShotMaxAttempts*2) {
-		lg.Warn("人工打回次数已达上限，转人工处理")
-		_, _ = p.store.UpdateJob(ctx, jobID, func(j *domain.Job) error {
-			if s := j.FindShot(shotID); s != nil {
-				s.Status = domain.StatusAwaitingHuman
-				s.Error = "人工打回次数已达上限，需要人工直接编辑或接受"
-			}
-			return nil
-		})
-		_, _ = p.emit(ctx, &domain.Event{
-			JobID: jobID, ShotID: shotID, Node: "hitl", Status: domain.StatusAwaitingHuman,
-			Attempt: shot.Attempt, Message: "打回次数已达上限，转人工处理",
-			Timestamp: time.Now().UTC(),
-		})
-		success = true
-		return nil
-	}
+	// Each explicit request has its own bounded Python repair budget. Attempt is an
+	// artifact version, never a lifetime lockout after an earlier failure.
 
 	// 把镜头推进到 GENERATING 并广播，让审核台立刻看到「正在重做」。
 	if _, err := p.store.UpdateJob(ctx, jobID, func(j *domain.Job) error {
@@ -594,6 +575,14 @@ func (p *Processor) HandleRenderShot(ctx context.Context, task RenderShotTask) e
 		StyleGuideJson: mustJSON(shotStyleGuide(job, shot)),
 		OutputDir:      outputDir,
 	}
+	req.PreviousError = shot.Error
+	req.PreviousArtifact = pbconv.ArtifactToPB(shot.Artifact)
+	for i := len(shot.Feedbacks) - 1; i >= 0; i-- {
+		if shot.Feedbacks[i].Source != domain.FeedbackHuman {
+			req.PreviousFeedback = pbconv.FeedbackToPB(&shot.Feedbacks[i])
+			break
+		}
+	}
 	if partial {
 		req.RangeStartSec = task.Payload.PatchStartSec
 		req.RangeEndSec = task.Payload.PatchEndSec
@@ -620,7 +609,7 @@ func (p *Processor) HandleRenderShot(ctx context.Context, task RenderShotTask) e
 			}
 			_, _ = p.emit(ctx, &domain.Event{
 				JobID: jobID, ShotID: shotID, Node: "hitl", Status: domain.StatusAwaitingHuman,
-				Attempt: task.Payload.Attempt, Message: "本次修复未完成，保留原片与反馈；请调整修复意见。", Error: err.Error(),
+				Attempt: task.Payload.Attempt, Message: "本次自动修复未完成，已保留原片与具体诊断；可处理依赖问题或再次发起修复。", Error: err.Error(),
 				Timestamp: time.Now().UTC(),
 			})
 			return fmt.Errorf("%w: %w", asynq.SkipRetry, err)

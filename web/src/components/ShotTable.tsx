@@ -91,7 +91,7 @@ export function ShotTable({ jobId, shots, disabled, onChanged }: Props) {
       render: (_, shot) =>
         shot.status === 'AWAITING_HUMAN' ? (
           // 唯一一个不需要读细节就能做的决定，所以给快捷入口。
-          <QuickApprove jobId={jobId} shot={shot} disabled={disabled} onChanged={onChanged} />
+          <QuickRepair jobId={jobId} shot={shot} disabled={disabled} onChanged={onChanged} />
         ) : (
           <Text type="secondary" style={{ fontSize: 12 }}>
             —
@@ -125,7 +125,7 @@ export function ShotTable({ jobId, shots, disabled, onChanged }: Props) {
 }
 
 /** 表格行内的快速放行按钮。 */
-function QuickApprove({
+function QuickRepair({
   jobId,
   shot,
   disabled,
@@ -136,17 +136,17 @@ function QuickApprove({
   disabled: boolean
   onChanged: () => void
 }) {
-  const { approve, busy, canApprove } = useShotActions(jobId, shot, onChanged)
+  const { reject, busy, canRepair } = useShotActions(jobId, shot, onChanged)
   return (
     <Space>
       <Button
         size="small"
         type="primary"
         loading={busy}
-        disabled={disabled || !canApprove}
-        onClick={() => void approve()}
+        disabled={disabled || !canRepair}
+        onClick={() => void reject()}
       >
-        {canApprove ? '放行' : '先生成视频'}
+        自动修复
       </Button>
     </Space>
   )

@@ -185,7 +185,7 @@ class CritiqueShotResponse(_message.Message):
     def __init__(self, feedback: _Optional[_Union[_common_pb2.CriticFeedback, _Mapping]] = ..., degraded: bool = ..., total_tokens: _Optional[int] = ..., elapsed_sec: _Optional[float] = ...) -> None: ...
 
 class ReviseShotRequest(_message.Message):
-    __slots__ = ("job_id", "shot", "human_comment", "attempt", "style_guide_json", "output_dir", "range_start_sec", "range_end_sec")
+    __slots__ = ("job_id", "shot", "human_comment", "attempt", "style_guide_json", "output_dir", "range_start_sec", "range_end_sec", "previous_error", "previous_feedback", "previous_artifact")
     JOB_ID_FIELD_NUMBER: _ClassVar[int]
     SHOT_FIELD_NUMBER: _ClassVar[int]
     HUMAN_COMMENT_FIELD_NUMBER: _ClassVar[int]
@@ -194,6 +194,9 @@ class ReviseShotRequest(_message.Message):
     OUTPUT_DIR_FIELD_NUMBER: _ClassVar[int]
     RANGE_START_SEC_FIELD_NUMBER: _ClassVar[int]
     RANGE_END_SEC_FIELD_NUMBER: _ClassVar[int]
+    PREVIOUS_ERROR_FIELD_NUMBER: _ClassVar[int]
+    PREVIOUS_FEEDBACK_FIELD_NUMBER: _ClassVar[int]
+    PREVIOUS_ARTIFACT_FIELD_NUMBER: _ClassVar[int]
     job_id: str
     shot: _common_pb2.ShotSpec
     human_comment: str
@@ -202,7 +205,10 @@ class ReviseShotRequest(_message.Message):
     output_dir: str
     range_start_sec: float
     range_end_sec: float
-    def __init__(self, job_id: _Optional[str] = ..., shot: _Optional[_Union[_common_pb2.ShotSpec, _Mapping]] = ..., human_comment: _Optional[str] = ..., attempt: _Optional[int] = ..., style_guide_json: _Optional[str] = ..., output_dir: _Optional[str] = ..., range_start_sec: _Optional[float] = ..., range_end_sec: _Optional[float] = ...) -> None: ...
+    previous_error: str
+    previous_feedback: _common_pb2.CriticFeedback
+    previous_artifact: _common_pb2.RenderArtifact
+    def __init__(self, job_id: _Optional[str] = ..., shot: _Optional[_Union[_common_pb2.ShotSpec, _Mapping]] = ..., human_comment: _Optional[str] = ..., attempt: _Optional[int] = ..., style_guide_json: _Optional[str] = ..., output_dir: _Optional[str] = ..., range_start_sec: _Optional[float] = ..., range_end_sec: _Optional[float] = ..., previous_error: _Optional[str] = ..., previous_feedback: _Optional[_Union[_common_pb2.CriticFeedback, _Mapping]] = ..., previous_artifact: _Optional[_Union[_common_pb2.RenderArtifact, _Mapping]] = ...) -> None: ...
 
 class ReviseShotResponse(_message.Message):
     __slots__ = ("shot", "artifact", "feedback", "success", "error", "total_tokens", "elapsed_sec", "partial_range_honored")

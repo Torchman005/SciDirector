@@ -281,7 +281,7 @@ export interface EventsResponse {
 }
 
 export interface RejectRequest {
-  comment: string
+  comment?: string
 }
 
 export interface RejectResponse {

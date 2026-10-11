@@ -113,6 +113,8 @@ func abortWith(c *gin.Context, status int, code, msg string, cause error) {
 // 集中映射的好处：不会出现「同一个错误在不同 handler 里返回不同状态码」。
 func mapError(c *gin.Context, err error) {
 	switch {
+	case errors.Is(err, errRepairBusy):
+		abortWith(c, http.StatusConflict, ErrCodeConflict, errRepairBusy.Error(), nil)
 	case errors.Is(err, domain.ErrTenantMismatch):
 		// 越权与不存在必须给出**完全相同**的响应，包括不携带 detail ——
 		// 否则「detail 里写着『任务不属于该租户』」直接确认了这个 job_id 存在，

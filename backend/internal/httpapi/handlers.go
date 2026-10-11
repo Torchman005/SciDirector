@@ -416,9 +416,10 @@ func (s *Server) HandleRejectShot(c *gin.Context) {
 	var req RejectRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		abortWith(c, http.StatusBadRequest, ErrCodeBadRequest,
-			"打回意见不能为空且需具备可执行性（2~2000 字）", err)
+			"修复请求格式错误；补充意见可留空，最多 2000 字", err)
 		return
 	}
+	req.Comment = repairComment(req.Comment)
 	jobID, shotID := c.Param("jobID"), c.Param("shotID")
 	ctx := c.Request.Context()
 
@@ -436,6 +437,9 @@ func (s *Server) HandleRejectShot(c *gin.Context) {
 		}
 		// 已通过的镜头也允许重做（人工后来发现问题的场景）：
 		// 状态机已显式允许 APPROVED -> RETRYING。
+		if !canRequestRepair(shot.Status) {
+			return errRepairBusy
+		}
 		next, err := domain.Transition(shot.Status, domain.StatusRetrying)
 		if err != nil {
 			return err

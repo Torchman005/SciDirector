@@ -1,5 +1,7 @@
 # SciDirector API 契约
 
+2026-10-12 恢复入口更新：`POST /api/v1/jobs/:jobID/shots/:shotID/reject` 接受 `{}` 或可选 `comment`（最多 2000 字）；WS `feedback` 同样允许空意见。服务端读取现有失败原因、最近机器审核和产物，用户无需给出技术修法。只有 AWAITING_HUMAN / FAILED / REJECTED / APPROVED 可发起；忙碌态返回 409。ReviseShotRequest 增加 `previous_error=9`、`previous_feedback=10`、`previous_artifact=11`。每次完整修订最多三轮，attempt 保持单调版本号；不再以历史次数永久禁止显式重试，不能通过此入口人工批准无片或跳过科学审核。
+
 > 本文档描述三层接口：**Go 网关的 REST**、**反馈闭环的 WebSocket**、**Go ↔ Python 的 gRPC**。
 >
 > 唯一真源是 `proto/scidirector/v1/*.proto` 与 `backend/internal/httpapi/dto.go`。
@@ -451,8 +453,8 @@ curl -X POST http://localhost:8080/api/v1/assets -F "file=@music.mp3"
 { "ok": true, "data": { "job_id": "…", "shot_id": "…-s002", "status": "RETRYING", "attempt": 2, "task_id": "…" } }
 ```
 
-> `comment` 必填且至少 2 字符。这是**质量闸门**：无法转换为代码修改的意见
-> （如「不好看」）会让重试必然失败，白白烧掉一次渲染 + 一次 VLM 调用，因此在入口就拦住。
+> `comment` 可空，最多 2000 字。`{}` 表示自动诊断修复；有意见时只需描述现象或期望。
+> 系统结合已有报错与审核清单决定修法，科学性与视频产物检查仍是通过条件。
 
 已定位对象的运维修订可使用 `comment` 协议：
 `SCID_SCENE_REVISION_V1:{"remove":["obsolete_link"],"upsert":[]}`。

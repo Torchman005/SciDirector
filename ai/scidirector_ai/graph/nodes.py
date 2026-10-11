@@ -326,6 +326,13 @@ class PipelineNodes:
         style = state.get("style_guide") or StyleGuide()
         attempt = shot_attempt(state, shot.shot_id) + 1
         feedback_text = _collect_feedback(state, shot.shot_id)
+        if attempt > 1:
+            from ..recovery import recovery_instruction
+            limit = int(state.get("max_attempts_per_shot", 3) or 3)
+            rebuild = bool(state.get("render_error")) or attempt >= limit
+            shot = shot.model_copy(update={"meta": {**shot.meta,
+                "repair_strategy": "rebuild" if rebuild else "targeted"}})
+            feedback_text = recovery_instruction(shot, style, rebuild=rebuild) + "\n" + feedback_text
 
         started = time.monotonic()
         try:

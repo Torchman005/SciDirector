@@ -66,6 +66,54 @@ def test_unchanged_code_has_bounded_retries_and_never_renders(tmp_path,monkeypat
     run,calls,renders,_=harness(tmp_path,monkeypatch,iter(['original']*3),iter([]))
     with pytest.raises(RenderFailed,match='未改变实际代码'):run()
     assert len(calls)==3 and not renders
+    assert calls[-1]['shot'].meta['repair_strategy'] == 'rebuild'
+
+
+def test_empty_comment_uses_system_error_and_review_and_preserves_failed_source(tmp_path, monkeypatch):
+    calls=[]
+    svc = PipelineService(Settings(_env_file=None,llm_provider='mock',tts_provider='none'))
+    def generate(**kw):
+        calls.append(kw)
+        return SimpleNamespace(policy_ok=True, code='broken' if len(calls)==1 else 'fixed',
+                               artifact=SimpleNamespace(language='python'), overlay_text='')
+    def render(**kw):
+        if kw['code']=='broken':
+            raise RenderFailed('ValueError: duration <= 0')
+        return RenderArtifact(video_path='fixed.mp4'),False
+    svc._coder=SimpleNamespace(generate=generate)
+    svc._critic=SimpleNamespace(review=lambda **kw:SimpleNamespace(feedback=feedback(True),degraded=False))
+    monkeypatch.setattr(svc,'_render_shot',render)
+    result=svc.revise_shot(job_id='test',shot=ShotSpec(tag=SceneTag.MATH,code='original'),
+        human_comment='',attempt=12,style_guide=StyleGuide(),previous_error='wait(0.0) failed',previous_feedback=feedback())
+    assert result[2].passed and len(calls)==2
+    assert 'wait(0.0)' in calls[0]['feedback_text'] and 'r2-01' in calls[0]['feedback_text']
+    assert calls[1]['previous_code']=='broken'
+    assert calls[1]['shot'].meta['repair_strategy']=='rebuild'
+    assert 'ValueError' in calls[1]['feedback_text']
+
+
+def test_nonretryable_environment_failure_stops_without_burning_three_rounds(tmp_path, monkeypatch):
+    svc=PipelineService(Settings(_env_file=None,llm_provider='mock',tts_provider='none'))
+    calls=[]
+    def generate(**kw):
+        calls.append(kw)
+        return SimpleNamespace(policy_ok=True,code='new',artifact=SimpleNamespace(language='python'),overlay_text='')
+    svc._coder=SimpleNamespace(generate=generate)
+    def render(**kw):raise RenderFailed('缺少浏览器',retryable=False)
+    monkeypatch.setattr(svc,'_render_shot',render)
+    with pytest.raises(RenderFailed, match='第 1/3 轮停止.*缺少浏览器'):
+        svc.revise_shot(job_id='test',shot=ShotSpec(tag=SceneTag.MATH),human_comment='',attempt=8,style_guide=StyleGuide())
+    assert len(calls)==1
+
+
+def test_rebuild_uses_full_schema_even_with_corrupt_previous_html():
+    llm=Stub([spec(text='新结构')])
+    coder=CoderAgent(llm,Settings(_env_file=None,llm_provider='mock'),quality_checker=Checker())
+    shot=ShotSpec(tag=SceneTag.MOTION,meta={'repair_strategy':'rebuild'})
+    result=coder.generate(shot=shot,style_guide=StyleGuide(),previous_code='<html>corrupt</html>')
+    assert result.policy_ok
+    from scidirector_ai.scene import extract_scene
+    assert extract_scene(result.code).elements[0].text=='新结构'
 
 
 def test_missing_frame_does_not_shift_evidence_time():

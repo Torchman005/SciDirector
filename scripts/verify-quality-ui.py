@@ -36,7 +36,7 @@ detail = dict(job=job,progress=.5,stat=dict(total=1,approved=0,awaiting_human=1,
 
 
 def main():
-    pending, generate_calls, errors = [], [], []
+    pending, generate_calls, errors, repair_calls = [], [], [], []
     state = {"upload":"hold", "generate":"fail", "media_fail":False}
     with sync_playwright() as pw:
         options = {"headless":True}
@@ -47,6 +47,13 @@ def main():
 
         def api(route):
             path = route.request.url.split("?")[0]
+            if path.endswith("/reject"):
+                repair_calls.append(route.request.post_data_json)
+                if len(repair_calls) == 1:
+                    route.fulfill(status=503,json={"message":"修复服务暂不可用，请重试。"}); return
+                if len(repair_calls) == 2:
+                    pending.append(route); return
+                route.fulfill(status=202,json={"ok":True,"data":{"status":"RETRYING"}}); return
             if path.endswith("/assets/portraits"):
                 route.fulfill(json={"ok":True,"data":{"asset_id":"b"*32,"filename":"poses.zip","kind":"portrait","lip_sync":False}}); return
             if "/assets/portraits/" in path:
@@ -134,8 +141,27 @@ def main():
         preview.evaluate("v => { v.currentTime = 2; }")
         page.wait_for_function("document.querySelector('video').currentTime >= 1.9")
         page.screenshot(path=str(OUT/"review-desktop.png"),full_page=True)
-        page.get_by_role("button",name="打回重做",exact=True).click()
+        page.get_by_role("button",name="补充意见并修复",exact=True).click()
         expect(page.get_by_role("dialog")).to_be_visible()
+        page.get_by_label("补充修复意见（可选）").fill("看不清楚")
+        page.get_by_role("button",name="开始修复",exact=True).click()
+        expect(page.get_by_text("修复服务暂不可用，请重试。",exact=True)).to_be_visible()
+        expect(page.get_by_label("补充修复意见（可选）")).to_have_value("看不清楚")
+        page.get_by_label("补充修复意见（可选）").fill("")
+        page.get_by_role("button",name="开始修复",exact=True).click()
+        page.wait_for_timeout(100)
+        expect(page.get_by_role("button",name=re.compile("开始修复"))).to_have_class(re.compile("ant-btn-loading"))
+        assert len(repair_calls)==2 and repair_calls[-1]=={"comment":""}
+        pending.pop().fulfill(status=202,json={"ok":True,"data":{"status":"RETRYING"}})
+        expect(page.get_by_role("dialog")).not_to_be_visible()
+        shot.pop("artifact")
+        page.reload()
+        expect(page.get_by_role("button",name="放行并继续",exact=True)).to_be_disabled()
+        page.get_by_role("button",name="自动诊断修复",exact=True).click()
+        page.wait_for_timeout(100)
+        assert len(repair_calls)==3 and repair_calls[-1]=={"comment":""}
+        shot["artifact"]=artifact
+        page.get_by_role("button",name="补充意见并修复",exact=True).click()
         page.keyboard.press("Escape")
         expect(page.get_by_role("dialog")).not_to_be_visible()
         state["media_fail"] = True
@@ -148,6 +174,7 @@ def main():
         "upload replacement failure retains model","submission failure retains form","successful creation and deep link",
         "current media and repair ledger","video seeking","390px reflow","modal keyboard","media failure recovery affordance",
         "portrait import and four previews","honest missing mouth feedback",
+        "empty-comment automatic repair", "missing video repair without approval", "repair failure preserves input", "repair loading state",
         "reduced motion","no browser exceptions"],"api":"isolated fixtures; Go tests verify real HTTP behavior"}
     (OUT/"result.json").write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding="utf-8")
     print(json.dumps(result,ensure_ascii=False))

@@ -141,10 +141,9 @@ type EventsResponse struct {
 
 // RejectRequest 是人工打回某个镜头的请求体。
 //
-// Comment 必填且有意义的最小长度限制：这是 HITL 闭环的质量闸门 ——
-// 「不好看」这种无信息量的意见无法转成可执行的代码修改，必须拦住。
+// Comment 可选；空意见由系统依据已有错误和审核记录诊断，不要求用户编写技术方案。
 type RejectRequest struct {
-	Comment string `json:"comment" binding:"required,min=2,max=2000"`
+	Comment string `json:"comment" binding:"max=2000"`
 }
 
 // RejectResponse 返回打回受理结果。

@@ -41,7 +41,7 @@ interface Props {
 type Editor = 'none' | 'reject' | 'patch'
 
 export function ShotDetail({ jobId, shot, disabled, onChanged }: Props) {
-  const { approve, reject, patch, busy, canApprove } = useShotActions(jobId, shot, onChanged)
+  const { approve, reject, patch, busy, canApprove, canRepair } = useShotActions(jobId, shot, onChanged)
   const [editor, setEditor] = useState<Editor>('none')
   const [comment, setComment] = useState('')
   const [narration, setNarration] = useState(shot.narration)
@@ -69,8 +69,8 @@ export function ShotDetail({ jobId, shot, disabled, onChanged }: Props) {
         <Alert
           type="warning"
           showIcon
-          message="自动修复已暂停，等待人工复核"
-          description="请先核对当前视频、证据帧和未关闭的问题。确认科学内容与可读性满足要求后再放行，或给出明确的修改目标重新制作。"
+          message="本轮自动处理未完成，可继续诊断修复"
+          description="无需知道如何改代码。自动修复会读取报错和审核记录，尝试修正或重建镜头并复审。只有确认现有视频符合要求时才人工放行。"
         />
       )}
 
@@ -152,15 +152,18 @@ export function ShotDetail({ jobId, shot, disabled, onChanged }: Props) {
       ]} />
 
       <Space wrap>
+        <Button type="primary" loading={busy} disabled={disabled || !canRepair} onClick={() => void reject()}>
+          自动诊断修复
+        </Button>
         {isAwaiting && (
-          <Button type="primary" loading={busy} disabled={disabled || !canApprove} onClick={() => void approve()}>
+          <Button loading={busy} disabled={disabled || !canApprove} onClick={() => void approve()}>
             放行并继续
           </Button>
         )}
-        <Button danger disabled={disabled} onClick={() => openEditor('reject')}>
-          打回重做
+        <Button disabled={disabled || busy || !canRepair} onClick={() => openEditor('reject')}>
+          补充意见并修复
         </Button>
-        <Button disabled={disabled} onClick={() => openEditor('patch')}>
+        <Button disabled={disabled || busy || !canRepair} onClick={() => openEditor('patch')}>
           编辑文案
         </Button>
       </Space>
@@ -174,30 +177,29 @@ export function ShotDetail({ jobId, shot, disabled, onChanged }: Props) {
 
       {/* --- 打回：把意见回灌给编码智能体 --- */}
       <Modal
-        title="打回重做"
+        title="补充意见并修复"
         open={editor === 'reject'}
         onCancel={() => setEditor('none')}
-        okText="提交并重渲"
+        okText="开始修复"
         cancelText="取消"
         confirmLoading={busy}
         onOk={async () => {
-          if (!comment.trim()) return
           // 成功后由 hook 弹提示、回源；这里只负责关窗。
           if (await reject(comment)) setEditor('none')
         }}
-        okButtonProps={{ disabled: comment.trim().length < 2 }}
+        okButtonProps={{ disabled: disabled || !canRepair }}
       >
         <Paragraph type="secondary" style={{ fontSize: 13 }}>
-          意见会作为修改要求回灌给编码智能体，它据此重写代码并重新渲染。
-          <Text strong>请说具体要改哪里</Text>
-          （例如「坐标轴没有刻度」「文字被裁掉了」），
-          笼统的「不好看」无法被转成任何可执行的改动。
+          只需描述看到的问题或期望，也可以留空。程序会结合完整报错和 AI 审核记录定位原因，
+          在最多 3 轮内修复、渲染和复审；反复失败时重建布局。原视频保留，审核标准不变。
         </Paragraph>
         <Input.TextArea
           rows={4}
           value={comment}
           onChange={(e) => setComment(e.target.value)}
-          placeholder="例如：三角形三条边都要标出长度，标注字号再大一些"
+          aria-label="补充修复意见（可选）"
+          maxLength={2000}
+          placeholder="例如：字被挡住了、图示不清楚；也可留空交给程序诊断"
         />
       </Modal>
 

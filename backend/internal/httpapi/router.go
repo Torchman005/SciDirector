@@ -235,8 +235,8 @@ func (s *Server) handleInbound(ctx context.Context, jobID, tenant string, msg ws
 		return &ws.Message{Type: "events", Seq: lastSeq, Data: events}
 
 	case "feedback":
-		if msg.ShotID == "" || msg.Comment == "" {
-			return &ws.Message{Type: "error", Data: "feedback 消息需要 shot_id 与 comment"}
+		if msg.ShotID == "" || len([]rune(msg.Comment)) > 2000 {
+			return &ws.Message{Type: "error", Data: "feedback 消息需要 shot_id；comment 可留空，最多 2000 字"}
 		}
 		if err := s.applyHumanFeedback(ctx, jobID, tenant, msg.ShotID, msg.Comment); err != nil {
 			lg.Warn("处理 WS 人工反馈失败", "shot_id", msg.ShotID, "error", err.Error())
@@ -255,10 +255,14 @@ func (s *Server) handleInbound(ctx context.Context, jobID, tenant string, msg ws
 // applyHumanFeedback 是 WS 路径下的人工打回实现。
 // 与 REST 版本共享同一套状态迁移规则，只是入口不同（低延迟交互 vs 表单提交）。
 func (s *Server) applyHumanFeedback(ctx context.Context, jobID, tenant, shotID, comment string) error {
+	comment = repairComment(comment)
 	job, err := s.deps.Store.UpdateJobForTenant(ctx, jobID, tenant, func(j *domain.Job) error {
 		shot := j.FindShot(shotID)
 		if shot == nil {
 			return errShotNotFound
+		}
+		if !canRequestRepair(shot.Status) {
+			return errRepairBusy
 		}
 		next, err := domain.Transition(shot.Status, domain.StatusRetrying)
 		if err != nil {

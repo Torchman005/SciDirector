@@ -234,6 +234,11 @@ message ReviseShotRequest {
   // range_end_sec <= range_start_sec 表示整镜重渲。
   double range_start_sec = 7;
   double range_end_sec = 8;
+  // System diagnostics are independent of the optional human preference.
+  // Always forward the latest actual error/review, even for an empty comment.
+  string previous_error = 9;
+  CriticFeedback previous_feedback = 10;
+  RenderArtifact previous_artifact = 11;
 }
 
 message ReviseShotResponse {
