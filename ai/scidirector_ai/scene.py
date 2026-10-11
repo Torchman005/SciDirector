@@ -24,6 +24,7 @@ class SceneModel(BaseModel):
 
 # Tolerate decimal roundoff only; visible geometry must remain on the canvas.
 GEOMETRY_EPSILON = 1e-4
+COLOR_PATTERN = r"^(text|primary|secondary|accent|success|warning|muted|#[0-9a-fA-F]{6})$"
 # The compiler reserves 0.5s for the final state (10% for very short shots).
 FINAL_HOLD_SEC = .5
 FINAL_HOLD_RATIO = .1
@@ -63,6 +64,7 @@ class Point(SceneModel):
 class Datum(SceneModel):
     label: str = Field(min_length=1, max_length=80)
     value: float = Field(ge=0, le=1e12)
+    color: str = Field(default="", pattern=r"^$|" + COLOR_PATTERN)
 
 
 class Element(SceneModel):
@@ -72,7 +74,11 @@ class Element(SceneModel):
     text: str = Field(default="", max_length=4000)
     font_size: int = Field(default=48, ge=12, le=200)
     align: Literal["left", "center", "right"] = "left"
-    color: str = Field(default="text", pattern=r"^(text|primary|muted|#[0-9a-fA-F]{6})$")
+    color: str = Field(default="text", pattern=COLOR_PATTERN)
+    material: Literal["auto", "solid", "gradient", "glass", "outline"] = "auto"
+    layer: int = Field(default=0, ge=-10, le=20)
+    corner_radius: float = Field(default=16, ge=0, le=80)
+    stroke_color: str = Field(default="", pattern=r"^$|" + COLOR_PATTERN)
     data: list[Datum] = Field(default_factory=list, max_length=8)
     unit: str = Field(default="", max_length=30)
     keyframes: list[Keyframe] = Field(default_factory=list, max_length=24)
@@ -195,6 +201,7 @@ def compile_scene(scene: SceneSpec, *, width: int, height: int, duration: float,
                "animatedUntil": animated_until,
                "duration": duration, "style": {"background": style.background_color,
                "primary": style.primary_color, "font": style.font_family, "theme": style.theme,
+               "animationStyle": style.animation_style,
                "backgroundCSS": background_css}}
     # JSON in a raw-text script must not be able to terminate its containing tag.
     data = json.dumps(payload, ensure_ascii=False, allow_nan=False).replace("<", "\\u003c").replace("&", "\\u0026")

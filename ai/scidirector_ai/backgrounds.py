@@ -75,7 +75,7 @@ _STYLES: dict[str, BackgroundStyle] = {
         label="渐变",
         prompt="从背景色向主色过渡的斜向渐变，营造纵深。",
         css=(
-            "background: linear-gradient(135deg, {bg} 0%, {bg} 55%, {primary}33 100%);"
+            "background-color:{bg};background-image: linear-gradient(135deg, {bg} 0%, {bg} 55%, {primary}33 100%);"
         ),
         manim=(
             "manim 没有原生渐变背景：用**同一色系的纯色背景**，"
@@ -100,7 +100,7 @@ _STYLES: dict[str, BackgroundStyle] = {
         label="暗角聚光",
         prompt="中心亮、四周压暗的聚光背景，把视线收拢到画面中部。",
         css=(
-            "background: radial-gradient(ellipse at center,"
+            "background-color:{bg};background-image: radial-gradient(ellipse at center,"
             " {primary}1a 0%, {bg} 55%, #000000 100%);"
         ),
         manim="用若干层透明度递减的同心圆叠出中心亮、四周暗的效果。",

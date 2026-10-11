@@ -11,6 +11,8 @@
 
 2026-10-11 审核修复约定：结构化场景统一压缩末尾停留时间轴；首关键帧前隐藏，文字可在保持有效字号时轻缩放。浏览器预检按关键帧及运动中点测量，独立文字重叠、前景遮挡、未声明复合组的同色图形重叠进入修复反馈。复审图片按内容及 BEFORE/AFTER 角色复用，保留逐任务当前证据校验。ReviseShot 的 INVALID_ARGUMENT / FAILED_PRECONDITION 结束队列重复投递，保存原片和错误并转待处理；瞬态故障仍可重试，人工新修订仍可提交。
 
+2026-10-11 场景美术契约：内部 SceneSpec 增加语义色 secondary/accent/success/warning、material（solid/gradient/glass/outline）、stroke_color、corner_radius、layer 与柱图逐项 color；auto 在 anime 风格使用渐变与清楚轮廓。这些仅改变视觉材质，不改变数据数值。新镜头不再生成历史 character 简笔角色，真人设由导入立绘/Live2D 图层承担；旧源码仍可播放。
+
 SciDirector（科学视频导演）**不生成像素，而是生成"可验证的渲染计划"**：
 用多智能体把科普脚本拆成分镜，把每个分镜路由到最合适的**确定性渲染引擎**
 （Manim 渲染数学、D3/ECharts 渲染数据、代码高亮动画渲染代码），

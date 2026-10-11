@@ -81,17 +81,18 @@ MEASURE_JS = r"""({minFont}) => {
   const shapes=Array.from(document.querySelectorAll('[data-scene-kind]'))
     .filter(e=>['rect','circle','card','character'].includes(e.dataset.sceneKind)&&visible(e));
   const sameGroup=(a,b)=>a.dataset.overlapGroup && a.dataset.overlapGroup===b.dataset.overlapGroup;
-  const fill=e=>e.dataset.sceneKind==='card'?getComputedStyle(e).backgroundColor:
-    e.querySelector('rect,circle')?.getAttribute('fill');
+  const fill=e=>e.dataset.material==='outline'?'none':e.dataset.sceneKind==='card'?getComputedStyle(e).backgroundColor:
+    (e.dataset.fillColor||e.querySelector('rect,circle')?.getAttribute('fill'));
+  const outlined=e=>{const s=e.querySelector('rect,circle')?.getAttribute('stroke');return s&&s!=='none'&&s!==fill(e)};
   for(let i=0;i<shapes.length;i++) for(let j=i+1;j<shapes.length;j++){
     const a=shapes[i],b=shapes[j],ar=a.getBoundingClientRect(),br=b.getBoundingClientRect();
     if(sameGroup(a,b)||['character'].includes(a.dataset.sceneKind)||b.dataset.sceneKind==='character') continue;
     const ac=fill(a),bc=fill(b);
-    if(ac && ac!=='none' && ac===bc && overlap(ar,br)>Math.min(area(ar),area(br))*.12)
+    if(ac && ac!=='none' && ac===bc && !outlined(a)&&!outlined(b) && overlap(ar,br)>Math.min(area(ar),area(br))*.12)
       issues.push(`#${a.id} 与 #${b.id} 同色图形重叠，边界无法区分；分离布局、增加不同填色/轮廓，确需叠合的复合图形标记相同 overlap_group`);
   }
   for(const text of texts) if(text.owner) for(const shape of shapes){
-    if(text.owner===shape) continue;
+    if(text.owner===shape || shape.dataset.material==='outline') continue;
     const a=Number(getComputedStyle(text.owner).zIndex)||0,b=Number(getComputedStyle(shape).zIndex)||0;
     const above=b>a || (b===a && !!(text.owner.compareDocumentPosition(shape)&Node.DOCUMENT_POSITION_FOLLOWING));
     if(!above) continue;

@@ -6,7 +6,7 @@
 最小字号 {{min_font_size}}px。字体大小是成片像素，不是归一化值。
 background 可为 solid/gradient/grid/vignette/noise/scanlines；用户选择了具体背景时系统优先遵守用户选择。
 
-组件：text（自动换行的文字）、card（文字卡片）、code（等宽纯文字，可打字）、bars（横向柱图）、rect/circle/line（几何图形）、polyline（关系/轨迹线）、character（固定二次元科学讲解员）。
+组件：text（自动换行的文字）、card（文字卡片）、code（等宽纯文字，可打字）、bars（横向柱图）、rect/circle/line（几何图形）、polyline（关系/轨迹线）。character 仅兼容历史简笔角色，新镜头不要使用；讲解员由用户导入的立绘/Live2D 在合成时加入。
 polyline 使用 points=[{x,y},…]，坐标相对自己的 box，至少两点；line/polyline 可 arrow=true、stroke_width=4、reveal 描线。
 character 无 text，建议 box 宽高像素比约 2:3；不要拉成横条。角色让出主图与底部字幕区域。
 角色关键帧可 expression=neutral/smile/curious/surprised/focused、gesture=idle/explain/point/think/wave；在到达该帧时切换。
@@ -17,7 +17,10 @@ font_size 不低于下限；超长文字拆成短句或多阶段。card/code 内
 text/card/code 使用 text，align 为 left/center/right；文本用字面内容，不能使用标签/Markdown，公式需要 LaTeX 时交给 Manim。
 bars 必须 data=[{label,value},…] 及 unit（无量纲也写“无量纲”），数值非负，同屏最多 8 行。
 数据、单位和结论只能来自脚本；缺少数值时用示意图，不能编造数据。柱图字体行高至少为 font_size 的 3 倍。
-color 只能 text/primary/muted 或 #RRGGBB；明暗色与用户风格一致。line 可用 arrow=true。
+color 可为 text/primary/secondary/accent/success/warning/muted 或 #RRGGBB；相邻对象按科学角色稳定分色，不能一镜全用 primary。bars 每个 datum 可独立 color，保持同一类别跨镜一致。
+material 为 auto/solid/gradient/glass/outline，auto 在二次元风格中使用有轮廓的渐变。容器用 glass/outline，活动对象用 gradient，纯色仅用在有意强调的平面符号。
+stroke_color 可指定轮廓色，stroke_width 为轮廓/连线粗细；corner_radius 为圆角像素（网格/芯片可为 4～8）。保持运动中前后对象的边界可辨。
+layer 为 -10～20，按背景容器 -2、对象 0、关系线 2、标签 5 分层。标签必须在形状前方，不依赖数组偶然顺序。
 复杂界面可组合卡片、文字和几何，流程使用卡片加箭头；不要把有多个对象的视觉意图简化为标题卡。
 
 keyframes 最多 24 个，time 为秒数 / {{duration_sec}}，严格递增。第一帧可以晚于 0，此前该元素隐藏。

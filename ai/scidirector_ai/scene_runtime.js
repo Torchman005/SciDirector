@@ -8,8 +8,14 @@
   const timelineEnd=scene.elements.some(e=>e.keyframes.some(k=>k.time>animatedUntil))?animatedUntil:1;
   const stage = document.getElementById('stage');
   const light = style.theme === 'light';
-  const palette = {primary:style.primary, text:light?'#101216':'#E6ECFF', muted:light?'#485368':'#A8B5CF'};
+  const palette = {primary:style.primary, text:light?'#101216':'#E6ECFF', muted:light?'#485368':'#A8B5CF',
+    secondary:light?'#087F8C':'#59DCE4',accent:light?'#7954BF':'#BB9CFF',
+    success:light?'#167753':'#7EE3AF',warning:light?'#B14A24':'#FFB487'};
   const color = value => palette[value] || value;
+  const mix=(a,b,t)=>{
+    const rgb=h=>{h=h.slice(1);if(h.length===3)h=h.split('').map(c=>c+c).join('');return [0,2,4].map(i=>parseInt(h.slice(i,i+2),16));};
+    const x=rgb(a),y=rgb(b);return '#'+x.map((v,i)=>Math.round(v+(y[i]-v)*t).toString(16).padStart(2,'0')).join('');
+  };
   document.body.style.backgroundColor = style.background;
   if(style.backgroundCSS) document.body.style.cssText=style.backgroundCSS;
   // Draft capture uses a smaller viewport but the same authored layout/fonts.
@@ -53,15 +59,24 @@
     const root=make('div',stage,'scene-element'); root.id=el.id;
     root.setAttribute('data-scene-kind',el.kind);
     root.setAttribute('data-overlap-group',el.overlap_group || '');
+    const material=el.material==='auto'?(style.animationStyle==='anime'?'gradient':'solid'):el.material;
+    root.setAttribute('data-material',material);
+    root.setAttribute('data-fill-color',color(el.color));
     const b=el.box;
     Object.assign(root.style,{left:b.x*W+'px',top:b.y*H+'px',width:b.width*W+'px',height:b.height*H+'px',
-      fontSize:el.font_size+'px',textAlign:el.align,color:color(el.color)});
+      fontSize:el.font_size+'px',textAlign:el.align,color:color(el.color),zIndex:String(el.layer)});
     const record={el,root,content:null,bars:[],stroke:null,strokeLength:0,arrow:null,character:null};
     if(['text','card','code'].includes(el.kind)) {
       root.className+=' scene-text'+(el.kind==='card'?' scene-card':el.kind==='code'?' scene-code':'');
       if(el.kind!=='text') {
-        root.style.borderColor=style.primary;
-        root.style.backgroundColor=light?'#F0F3FA':'#151E32';
+        const tint=color(el.color==='text'?'primary':el.color),base=light?'#F0F3FA':'#151E32';
+        root.style.borderColor=el.stroke_color?color(el.stroke_color):mix(tint,base,.5);
+        root.style.borderRadius=el.corner_radius+'px';
+        root.style.backgroundColor=material==='outline'?'transparent':base;
+        if(['gradient','glass'].includes(material)){
+          root.style.backgroundImage=`linear-gradient(135deg,${mix(base,tint,.16)},${base} 70%)`;
+          root.style.boxShadow=`inset 0 1px 0 ${mix(base,'#FFFFFF',.2)},0 10px 28px #00000020`;
+        }
       }
       record.content=make('span',root);record.content.textContent=el.text;
     } else if(el.kind==='bars') {
@@ -72,7 +87,9 @@
         make('span',label).textContent=d.label;
         make('span',label).textContent=String(d.value)+' '+el.unit;
         const bar=make('div',row,'scene-bar-fill');
-        bar.style.width=(100*d.value/max)+'%';bar.style.backgroundColor=color(el.color);
+        const tint=color(d.color||el.color);
+        bar.style.width=(100*d.value/max)+'%';bar.style.backgroundColor=tint;
+        if(material!=='solid')bar.style.backgroundImage=`linear-gradient(90deg,${mix(tint,'#000000',.25)},${tint})`;
         record.bars.push(bar);
       }
     } else if(el.kind==='character') {
@@ -80,10 +97,21 @@
     } else {
       const w=b.width*W,h=b.height*H;
       const svg=svgNode('svg',root,{viewBox:`0 0 ${w} ${h}`});
-      if(el.kind==='rect') svgNode('rect',svg,{x:2,y:2,width:Math.max(1,w-4),height:Math.max(1,h-4),rx:16,fill:color(el.color)});
-      if(el.kind==='circle') svgNode('circle',svg,{cx:w/2,cy:h/2,r:Math.max(1,Math.min(w,h)/2-2),fill:color(el.color)});
+      const tint=color(el.color),outlined=material==='outline';
+      let fill=outlined?'none':tint;
+      const stroke=el.stroke_color?color(el.stroke_color):material==='solid'?'none':mix(tint,light?'#000000':'#FFFFFF',.35);
+      if(['gradient','glass'].includes(material)&&['rect','circle'].includes(el.kind)){
+        const defs=svgNode('defs',svg,{}),id='scid-gradient-'+el.id;
+        const gradient=svgNode('linearGradient',defs,{id,x1:0,y1:0,x2:1,y2:1});
+        svgNode('stop',gradient,{offset:'0%','stop-color':mix(tint,material==='glass'?style.background:'#FFFFFF',material==='glass'?.68:.15)});
+        svgNode('stop',gradient,{offset:'100%','stop-color':mix(tint,material==='glass'?style.background:'#000000',material==='glass'?.92:.35)});
+        fill=`url(#${id})`;
+      }
+      const sw=stroke==='none'?0:el.stroke_width, inset=Math.max(2,sw/2);
+      if(el.kind==='rect') svgNode('rect',svg,{x:inset,y:inset,width:Math.max(1,w-inset*2),height:Math.max(1,h-inset*2),rx:el.corner_radius,fill,stroke,'stroke-width':sw});
+      if(el.kind==='circle') svgNode('circle',svg,{cx:w/2,cy:h/2,r:Math.max(1,Math.min(w,h)/2-inset),fill,stroke,'stroke-width':sw});
       if(['line','polyline'].includes(el.kind)) {
-        const attrs={stroke:color(el.color),'stroke-width':el.stroke_width,fill:'none',pathLength:1,'stroke-linecap':'round'};
+        const attrs={stroke:color(el.color),'stroke-width':el.stroke_width,fill:'none',pathLength:1,'stroke-linecap':'round','stroke-linejoin':'round'};
         if(el.kind==='line') Object.assign(attrs,{x1:4,y1:4,x2:Math.max(4,w-8),y2:Math.max(4,h-8)});
         else attrs.points=el.points.map(p=>`${p.x*w},${p.y*h}`).join(' ');
         record.stroke=svgNode(el.kind==='line'?'line':'polyline',svg,attrs);
