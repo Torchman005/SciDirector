@@ -13,7 +13,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -197,7 +199,8 @@ func (s *Store) updateJob(ctx context.Context, jobID, tenantID string, mutate fu
 	return &job, nil
 }
 
-// mergeUnknownFields 把旧 JSON 里、新 JSON 中**没有的**键原样保留下来。
+// mergeUnknownFields 只保留当前 Job 类型真正不认识的键。
+// 已知字段经 omitempty 消失意味着主动清空，不能从旧值复活。
 //
 // ## 为什么必须这么做（一个真实发生过的授权降级）
 //
@@ -213,7 +216,19 @@ func (s *Store) updateJob(ctx context.Context, jobID, tenantID string, mutate fu
 //
 // 保留未知字段让加字段变成真正的滚动兼容：新旧版本并存期间，
 // 各自只改自己认识的字段，谁都不会把对方的抹掉。
-// （代价是无法通过删字段来清理数据；要删就得显式处理，这比静默丢失好得多。）
+// tenant_id 额外保护：即使当前进程认识该字段，遗漏也不能改变任务归属。
+var knownJobJSONFields = func() map[string]bool {
+	fields := map[string]bool{}
+	typ := reflect.TypeOf(domain.Job{})
+	for i := 0; i < typ.NumField(); i++ {
+		name := strings.Split(typ.Field(i).Tag.Get("json"), ",")[0]
+		if name != "" && name != "-" {
+			fields[name] = true
+		}
+	}
+	return fields
+}()
+
 func mergeUnknownFields(oldRaw, newRaw []byte) ([]byte, error) {
 	var oldMap, newMap map[string]json.RawMessage
 	if err := json.Unmarshal(oldRaw, &oldMap); err != nil {
@@ -225,6 +240,9 @@ func mergeUnknownFields(oldRaw, newRaw []byte) ([]byte, error) {
 	}
 	changed := false
 	for k, v := range oldMap {
+		if knownJobJSONFields[k] && k != "tenant_id" {
+			continue
+		}
 		if _, ok := newMap[k]; !ok {
 			newMap[k] = v
 			changed = true

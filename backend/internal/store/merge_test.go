@@ -11,7 +11,27 @@ package store
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/itJinYu/SciDirector/backend/internal/domain"
 )
+
+func TestClearingKnownOptionalFieldsDoesNotResurrectOldError(t *testing.T) {
+	old := &domain.Job{JobID: "j1", Error: "旧缺片错误", FinalVideoPath: "old.mp4", TenantID: "acme"}
+	oldRaw, _ := json.Marshal(old)
+	old.Error, old.FinalVideoPath = "", ""
+	newRaw, _ := json.Marshal(old)
+	merged, err := mergeUnknownFields(oldRaw, newRaw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got domain.Job
+	if err = json.Unmarshal(merged, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Error != "" || got.FinalVideoPath != "" || got.TenantID != "acme" {
+		t.Fatalf("cleared fields restored: %+v", got)
+	}
+}
 
 func TestMergeUnknownFieldsPreservesFieldsTheStructDoesNotKnow(t *testing.T) {
 	// 模拟旧版本写下的值：含一个当前结构体里没有的字段，

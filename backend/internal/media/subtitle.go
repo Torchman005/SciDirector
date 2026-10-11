@@ -235,6 +235,22 @@ func splitLongSegment(seg string, maxChars int) []string {
 	if len(out) == 0 {
 		return []string{seg}
 	}
+	// Prefer an earlier natural pause over leaving a one/two-word tail flashing
+	// alone (e.g. "每次激活的" / "参数。"). Timing still comes from the same marks.
+	if n := len(out); n >= 2 && speechWeight(out[n-1]) < 4 {
+		joined := []rune(out[n-2] + out[n-1])
+		for i := len(joined) - 2; i >= 0; i-- {
+			if !strings.ContainsRune("，、：,:", joined[i]) {
+				continue
+			}
+			left, right := strings.TrimSpace(string(joined[:i+1])), strings.TrimSpace(string(joined[i+1:]))
+			lw, rw := speechWeight(left), speechWeight(right)
+			if lw >= 4 && rw >= 4 && lw <= float64(maxChars) && rw <= float64(maxChars) {
+				out[n-2], out[n-1] = left, right
+				break
+			}
+		}
+	}
 	return out
 }
 

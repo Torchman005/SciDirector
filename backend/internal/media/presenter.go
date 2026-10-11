@@ -14,7 +14,7 @@ func PresenterSafeArea() map[string]float64 {
 	return map[string]float64{"x": .78, "y": .55, "width": .22, "height": .45}
 }
 
-// PresenterGeometry reserves a right-hand lane and the lower subtitle strip.
+// PresenterGeometry preserves the frame and sizes only the bottom-right overlay.
 // Even rounding keeps H.264/YUV420 dimensions legal at any output resolution.
 func PresenterGeometry(width, height int) (contentWidth, contentHeight, avatarWidth, avatarHeight int) {
 	even := func(value float64) int {

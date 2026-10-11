@@ -10,6 +10,22 @@ import (
 // readFile 是 os.ReadFile 的薄包装，避免测试里到处引入 os。
 func readFile(path string) ([]byte, error) { return os.ReadFile(path) }
 
+func TestLongSubtitleUsesNaturalPauseInsteadOfFlashingOrphan(t *testing.T) {
+	text := "理解它的关键，是区分总参数和每次激活的参数。"
+	parts := splitLongSegment(text, 18)
+	if len(parts) != 2 || parts[0] != "理解它的关键，" || parts[1] != "是区分总参数和每次激活的参数。" {
+		t.Fatalf("unnatural caption split: %#v", parts)
+	}
+	var marks []NarrationMark
+	for i, r := range spokenRunes(text) {
+		marks = append(marks, NarrationMark{Text: string(r), StartSec: float64(i) * .2, DurationSec: .2})
+	}
+	cues := planCuesFromMarks(Window{Start: 0, End: 10}, text, marks, SubtitleOptions{MaxCharsPerCue: 18})
+	if len(cues) != 2 || math.Abs(cues[1].Start-1.2) > .001 || cues[0].End > cues[1].Start {
+		t.Fatalf("split lost speech boundaries: %+v", cues)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // 镜头可见窗口
 // ---------------------------------------------------------------------------
