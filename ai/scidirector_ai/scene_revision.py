@@ -7,6 +7,15 @@ from pydantic import Field, model_validator
 
 from .scene import Element, SceneModel, SceneSpec, extract_scene
 
+EXACT_REVISION_PREFIX = "SCID_SCENE_REVISION_V1:"
+
+
+def parse_exact_revision(comment: str) -> SceneRevision | None:
+    """Only the explicit operator protocol selects deterministic editing."""
+    if not comment.startswith(EXACT_REVISION_PREFIX):
+        return None
+    return SceneRevision.model_validate_json(comment[len(EXACT_REVISION_PREFIX):])
+
 
 class SceneRevision(SceneModel):
     upsert: list[Element] = Field(default_factory=list, max_length=48)

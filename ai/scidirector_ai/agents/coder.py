@@ -340,6 +340,23 @@ class CoderAgent(Agent):
                        "summary": result.policy_summary[:300], "attempt": attempt})
         return result
 
+    def apply_exact_revision(self, *, shot: ShotSpec, style_guide: StyleGuide,
+                             revision: SceneRevision) -> CodeGenerationResult:
+        """Apply a named-object edit through the same compiler and quality gates."""
+        previous = extract_scene(shot.code) if shot.engine and shot.engine.value in _HTML_ENGINES else None
+        if previous is None:
+            raise ValueError("精确场景修订只支持已有 SceneSpec 的 HTML 镜头")
+        scene = apply_revision(previous, revision)
+        code = compile_scene(scene, width=self.settings.render_width, height=self.settings.render_height,
+                             duration=shot.duration_sec, style=style_guide)
+        quality = self.quality_checker.check(code, shot, style_guide)
+        if quality.issues:
+            raise ValueError("精确修订未通过质量预检：" + "；".join(quality.issues))
+        return CodeGenerationResult(
+            artifact=CodeArtifact(code=code, language="html+js", explanation=scene.explanation),
+            quality=quality, llm_attempts=0, skipped_llm=True,
+        )
+
     def _programmatic_ambient(self, shot: ShotSpec, engine: str) -> CodeGenerationResult:
         """氛围镜头：无需模型，直接给渲染器空代码 + 一个标题。
 

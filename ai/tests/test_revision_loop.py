@@ -6,6 +6,8 @@ import pytest
 from scidirector_ai.config import Settings
 from scidirector_ai.schemas import CriticFeedback, RepairTask, RenderArtifact, SceneTag, ShotSpec, StyleGuide
 from scidirector_ai.service import PipelineService, RenderFailed, _artifact_samples
+from scidirector_ai.agents.coder import CoderAgent
+from test_scene import Checker, Stub, compile_it, spec
 
 
 def feedback(passed=False):
@@ -69,3 +71,30 @@ def test_unchanged_code_has_bounded_retries_and_never_renders(tmp_path,monkeypat
 def test_missing_frame_does_not_shift_evidence_time():
     samples=_artifact_samples(RenderArtifact(duration_sec=4,frame_samples=['frame_00.png','frame_03.png']),4)
     assert samples[0].ts==.2 and samples[1].ts==2.5
+
+
+def test_exact_edit_still_renders_and_reviews_and_invalid_edit_never_falls_back(monkeypatch):
+    settings=Settings(_env_file=None,llm_provider='mock',tts_provider='none')
+    service=PipelineService(settings)
+    llm=Stub([])
+    service._coder=CoderAgent(llm,settings,quality_checker=Checker())
+    rendered=[]; reviewed=[]
+    def render(**kw):
+        rendered.append(kw)
+        return RenderArtifact(video_path='edited.mp4'),False
+    def review(**kw):
+        reviewed.append(kw)
+        return SimpleNamespace(feedback=feedback(True),degraded=False)
+    monkeypatch.setattr(service,'_render_shot',render)
+    service._critic=SimpleNamespace(review=review)
+    shot=ShotSpec(tag=SceneTag.MOTION,code=compile_it(spec()))
+    from scidirector_ai.scene_revision import EXACT_REVISION_PREFIX, SceneRevision
+    patch=SceneRevision(upsert=[spec(text='精确修改').elements[0]])
+    def run(comment):
+        return service.revise_shot(job_id='test',shot=shot,human_comment=comment,
+            attempt=2,style_guide=StyleGuide())
+    assert run(EXACT_REVISION_PREFIX+patch.model_dump_json())[2].passed
+    assert len(rendered)==len(reviewed)==1 and not llm.calls
+    for invalid in ['{','{"remove":["unknown"]}','{}']:
+        with pytest.raises(ValueError):run(EXACT_REVISION_PREFIX+invalid)
+    assert len(rendered)==len(reviewed)==1 and not llm.calls

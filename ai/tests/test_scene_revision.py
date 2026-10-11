@@ -7,7 +7,7 @@ from scidirector_ai.agents.coder import CoderAgent
 from scidirector_ai.config import Settings
 from scidirector_ai.llm import Task
 from scidirector_ai.scene import SceneSpec, extract_scene
-from scidirector_ai.scene_revision import SceneRevision, apply_revision, review_manifest
+from scidirector_ai.scene_revision import SceneRevision, apply_revision, review_manifest, parse_exact_revision
 from scidirector_ai.schemas import SceneTag, ShotSpec, StyleGuide
 from test_scene import Checker, Stub, compile_it, spec
 
@@ -80,3 +80,29 @@ def test_incompatible_old_layout_is_rebuilt_without_wasting_a_patch():
         previous_code=compile_it(original),feedback_text='避让角色')
     assert result.policy_ok and result.llm_attempts==1
     assert llm.calls[0]['schema'] is SceneSpec
+
+
+def test_exact_edit_removes_old_object_without_text_model_and_preserves_preflight():
+    original = spec()
+    original.elements.append(spec(id='old_link',kind='rect',text='',
+        box=dict(x=.1,y=.6,width=.4,height=.1)).elements[0])
+    llm, checker = Stub([]), Checker()
+    coder = CoderAgent(llm, Settings(_env_file=None,llm_provider='mock'), quality_checker=checker)
+    shot = ShotSpec(tag=SceneTag.MOTION,code=compile_it(original))
+    patch = parse_exact_revision('SCID_SCENE_REVISION_V1:{"remove":["old_link"]}')
+    result = coder.apply_exact_revision(shot=shot,style_guide=StyleGuide(),revision=patch)
+    assert [e.id for e in extract_scene(result.code).elements] == ['headline']
+    assert not llm.calls and len(checker.calls)==1 and result.skipped_llm and result.llm_attempts==0
+    coder.quality_checker = Checker([['标签遮挡图标']])
+    with pytest.raises(ValueError,match='遮挡'):
+        coder.apply_exact_revision(shot=shot,style_guide=StyleGuide(),revision=patch)
+    with pytest.raises(ValueError,match='字号'):
+        coder.apply_exact_revision(shot=shot,style_guide=StyleGuide(),
+            revision=SceneRevision(upsert=[spec(font_size=20).elements[0]]))
+
+
+def test_exact_protocol_cannot_smuggle_code_or_fallback_on_invalid_json():
+    assert parse_exact_revision('请改善配色') is None
+    for raw in ['{', '{"code":"alert(1)"}', '{"remove":["x","x"]}']:
+        with pytest.raises(ValueError):
+            parse_exact_revision('SCID_SCENE_REVISION_V1:'+raw)

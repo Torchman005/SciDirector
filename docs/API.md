@@ -454,6 +454,14 @@ curl -X POST http://localhost:8080/api/v1/assets -F "file=@music.mp3"
 > `comment` 必填且至少 2 字符。这是**质量闸门**：无法转换为代码修改的意见
 > （如「不好看」）会让重试必然失败，白白烧掉一次渲染 + 一次 VLM 调用，因此在入口就拦住。
 
+已定位对象的运维修订可使用 `comment` 协议：
+`SCID_SCENE_REVISION_V1:{"remove":["obsolete_link"],"upsert":[]}`。
+JSON 严格遵循内部 `SceneRevision`（完整元素 upsert、id remove，合计 comment 最多 2000 字符）。
+仅适用已有 SceneSpec 的 HTML 完整镜头，不接受局部时间范围、任意 JS 或文件路径。
+首轮按对象直接编辑，仍经过几何校验、浏览器预检、实际渲染和 VLM；不代表批准。
+非法 JSON、不存在的删除对象、无变化或预检失败返回不可重试的修订错误，保留原片；
+复审发现的问题仍走有界自动修复。普通 comment 行为不变。
+
 #### `POST /api/v1/jobs/:jobID/shots/:shotID/approve`
 
 人工放行。用于镜头处于 `AWAITING_HUMAN`（自动重试已熔断）时**接受当前效果并继续** ——

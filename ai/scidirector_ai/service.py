@@ -32,6 +32,7 @@ from .logging import get_logger
 from .media import MediaToolError, FrameSample, extract_frames, frame_sample_times
 from .repair_evidence import precheck_repairs, skip_full_review
 from .review_tasks import active_repairs
+from .scene_revision import parse_exact_revision
 from .renderer import RendererError, RenderRequest, build_renderer, renderer_availability
 from .sandbox.runner import SandboxRunner
 from .tts.factory import build_tts_provider
@@ -388,9 +389,8 @@ class PipelineService:
     ) -> tuple[ShotSpec, RenderArtifact, CriticFeedback, bool]:
         """把人工意见转成可执行指令，重写代码、重新渲染并自动复审。
 
-        人工意见与 VLM 意见走**完全相同的通道**（都变成一段回灌文本），
-        因此这里只需把 ``human_comment`` 当作 feedback 传下去 ——
-        编码侧无需知道意见来自人还是模型。
+        普通意见回灌给模型；显式结构化修订首轮直接应用，仍通过
+        同一套几何校验、浏览器预检、渲染和 VLM 复审。
 
         返回 (分镜, 产物, 复审反馈, 是否真的只渲染了请求的区间)。
         """
@@ -401,6 +401,16 @@ class PipelineService:
                 "attempt": attempt, "comment": human_comment[:120],
             },
         )
+
+        # Parse and preflight BEFORE the automatic repair loop. Invalid operator
+        # edits fail closed rather than silently falling back to model generation.
+        exact_revision = parse_exact_revision(human_comment)
+        exact_result = None
+        if exact_revision is not None:
+            if range_end_sec > range_start_sec:
+                raise ValueError("精确场景修订需要完整镜头复审，不支持局部时间区间")
+            exact_result = self.coder.apply_exact_revision(
+                shot=shot, style_guide=style_guide, revision=exact_revision)
 
         human_feedback = CriticFeedback(
             passed=False,
@@ -423,7 +433,7 @@ class PipelineService:
             round_attempt = attempt + revision_round
             logger.info("单镜修订轮次", extra={"shot_id": shot.shot_id, "round": revision_round+1, "limit": rounds})
             try:
-                result = self.coder.generate(
+                result = exact_result if revision_round == 0 and exact_result is not None else self.coder.generate(
                     shot=current, style_guide=style_guide, attempt=round_attempt,
                     feedback_text=feedback_text, previous_code=current.code,
                 )
