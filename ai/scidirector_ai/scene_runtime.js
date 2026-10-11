@@ -4,6 +4,8 @@
   const config = JSON.parse(document.getElementById('scid-scene-v1').textContent);
   const {scene, width:W, height:H, duration:D, style} = config;
   const animatedUntil=config.animatedUntil || 1;
+  // A shared timeline preserves synchronization between connected objects.
+  const timelineEnd=scene.elements.some(e=>e.keyframes.some(k=>k.time>animatedUntil))?animatedUntil:1;
   const stage = document.getElementById('stage');
   const light = style.theme === 'light';
   const palette = {primary:style.primary, text:light?'#101216':'#E6ECFF', muted:light?'#485368':'#A8B5CF'};
@@ -28,6 +30,7 @@
   const sample = (frames,t) => {
     if(!frames.length) return {...defaults};
     let a=frames[0];
+    if(t<a.time) return {...defaults,...a,opacity:0};
     if(t<=a.time) return {...defaults,...a};
     for(let i=1;i<frames.length;i++) {
       const b=frames[i];
@@ -48,6 +51,8 @@
   };
   const nodes=scene.elements.map(el => {
     const root=make('div',stage,'scene-element'); root.id=el.id;
+    root.setAttribute('data-scene-kind',el.kind);
+    root.setAttribute('data-overlap-group',el.overlap_group || '');
     const b=el.box;
     Object.assign(root.style,{left:b.x*W+'px',top:b.y*H+'px',width:b.width*W+'px',height:b.height*H+'px',
       fontSize:el.font_size+'px',textAlign:el.align,color:color(el.color)});
@@ -93,8 +98,7 @@
   window.__seek = seconds => {
     const t=Math.max(0,Math.min(D,Number.isFinite(seconds)?seconds:0))/D;
     for(const {el,root,content,bars,stroke,strokeLength,arrow,character} of nodes) {
-      const last=el.keyframes.length ? el.keyframes[el.keyframes.length-1].time : 0;
-      const local=last>animatedUntil ? Math.min(1,t/animatedUntil) : t;
+      const local=Math.min(1,t/timelineEnd);
       const s=sample(el.keyframes, local);
       root.style.opacity=String(s.opacity);
       root.style.transform=`translate(${s.dx*W}px,${s.dy*H}px) rotate(${s.rotation}deg) scale(${s.scale})`;

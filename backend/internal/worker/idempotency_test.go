@@ -412,3 +412,19 @@ func TestB4UnimplementedReleasesKeyAndSkipsRetry(t *testing.T) {
 		t.Errorf("占位未释放：Python 补上实现后同一次打回仍跑不起来（共 %d 次）", got)
 	}
 }
+
+func TestRejectedRevisionSkipsQueueRetry(t *testing.T) {
+	for _, code := range []codes.Code{codes.FailedPrecondition, codes.InvalidArgument} {
+		t.Run(code.String(), func(t *testing.T) {
+			fake := &fakeAIServer{failFirst: 1, failCode: code}
+			h := newReviseHarness(t, fake)
+			ctx := context.Background()
+			if err := h.deliver(ctx, 2); !errors.Is(err, asynq.SkipRetry) || !errors.Is(err, ai.ErrRejected) {
+				t.Fatalf("deterministic rejection must stop queue retries: %v", err)
+			}
+			if err := h.deliver(ctx, 3); err != nil {
+				t.Fatalf("a new user revision must remain possible: %v", err)
+			}
+		})
+	}
+}

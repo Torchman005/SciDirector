@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import re
 import json
+import hashlib
 from pathlib import Path
 from typing import Any, Literal
 from dataclasses import dataclass, field
@@ -232,6 +233,28 @@ class CriticAgent(Agent):
         images = list(frames)
         image_labels = [f"图像 {i}：当前版本完整帧 {i}/{len(frames)}，用于本轮整体评分。" for i in range(1, len(frames) + 1)]
         current_indices = set(range(1, len(frames) + 1))
+        def image_identity(path: str) -> str:
+            try:
+                return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+            except OSError:
+                return path
+
+        # Multiple repairs often refer to the same instant. Upload each image
+        # once, but retain its BEFORE/AFTER role and every task's stable index.
+        image_indices = {(True, image_identity(path)): i for i, path in enumerate(frames, 1)}
+
+        def add_evidence(path: str, description: str, *, current: bool) -> int:
+            key = (current, image_identity(path))
+            index = image_indices.get(key)
+            if index is None:
+                images.append(path)
+                index = len(images)
+                image_indices[key] = index
+                image_labels.append(f"图像 {index}：{description}")
+            else:
+                image_labels[index - 1] += " 同时用于：" + description
+            return index
+
         paired_ids: set[str] = set()
         task_current_indices: dict[str, set[int]] = {}
         repair_context = []
@@ -241,15 +264,14 @@ class CriticAgent(Agent):
             for pair in row.get("pairs", [])[:3]:
                 if not all(Path(pair[k]).is_file() for k in ("before", "after")):
                     continue
-                images.extend([pair["before"], pair["after"]])
-                image_labels.extend([
-                    f"图像 {len(images)-1}：历史版本 BEFORE，问题 {task.task_id}，{pair['ts']} 秒。仅作修改前对照；其中的旧错误不得计入当前评分，也不是当前第 {len(images)-1} 帧。",
-                    f"图像 {len(images)}：当前版本 AFTER，问题 {task.task_id}，{pair['ts']} 秒。请以此图核对原验收条件，在 repair_results.image_indices 引用本编号。",
-                ])
-                current_indices.add(len(images))
-                task_current_indices.setdefault(task.task_id, set()).add(len(images))
-                pairs.append({"ts": pair["ts"], "before_image": len(images) - 1,
-                              "after_image": len(images)})
+                before_index = add_evidence(pair["before"],
+                    f"历史版本 BEFORE，问题 {task.task_id}，{pair['ts']} 秒。仅作修改前对照；其中的旧错误不得计入当前评分。", current=False)
+                after_index = add_evidence(pair["after"],
+                    f"当前版本 AFTER，问题 {task.task_id}，{pair['ts']} 秒。请以此图核对原验收条件，在 repair_results.image_indices 引用本编号。", current=True)
+                current_indices.add(after_index)
+                task_current_indices.setdefault(task.task_id, set()).add(after_index)
+                pairs.append({"ts": pair["ts"], "before_image": before_index,
+                              "after_image": after_index})
             if pairs:
                 paired_ids.add(task.task_id)
             repair_context.append({"task": task.model_dump(), "precheck": row.get("status", "unverified"),

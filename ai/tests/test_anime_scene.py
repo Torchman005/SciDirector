@@ -32,16 +32,19 @@ def test_demo_has_correct_reflection_geometry_and_no_random_animation() -> None:
     assert "Math.random" not in code and "setInterval" not in code
 
 
-def test_scale_cannot_clip_canvas_and_text_cannot_scale() -> None:
+def test_scale_cannot_clip_canvas_or_make_text_unreadable() -> None:
     scene = demo()
     scene.elements[-1].keyframes[1].scale = 1.5
     scene.elements[-1].box.x = .82
     with pytest.raises(ValueError,match="超出画布"):
         compile_scene(scene,width=1280,height=720,duration=8,style=StyleGuide())
     payload=demo().elements[0].model_dump()
+    payload["font_size"]=32
     payload["keyframes"]=[{"time":0,"scale":.5}]
-    with pytest.raises(ValueError):
-        SceneSpec(elements=[payload])
+    with pytest.raises(ValueError,match="实际字号"):
+        compile_scene(SceneSpec(elements=[payload]),width=1280,height=720,duration=8,style=StyleGuide())
+    payload["keyframes"]=[{"time":.2,"scale":.96}]
+    compile_scene(SceneSpec(elements=[payload]),width=1280,height=720,duration=8,style=StyleGuide())
 
 
 @pytest.mark.skipif(not os.environ.get("SCID_CHROME"),reason="需要 Chromium")

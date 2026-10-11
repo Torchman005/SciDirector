@@ -35,7 +35,6 @@ def compile_it(scene: SceneSpec) -> str:
     {"box": {"x": .8, "y": .2, "width": .4, "height": .2}},
     {"text": ""}, {"kind": "script"}, {"color": "url(https://example.com)"},
     {"html": "<script>alert(1)</script>"},
-    {"keyframes": [{"time": .2}]},
     {"keyframes": [{"time": 0}, {"time": .8}, {"time": .8}]},
     {"keyframes": [{"time": 0, "dx": float("nan")}]},
     {"keyframes": [{"time": 0, "rotation": 45}]},

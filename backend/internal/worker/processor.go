@@ -596,11 +596,22 @@ func (p *Processor) HandleRenderShot(ctx context.Context, task RenderShotTask) e
 	resp, err := p.ai.ReviseShot(ctx, req)
 	if err != nil {
 		lg.Error("镜头重做调用失败", "error", err.Error())
-		// 与主链路一致：未实现的能力不重试，直接归档。
-		// 注意此时幂等占位尚未释放（success 仍为 false），defer 会把它清掉，
-		// 保证人工之后真的补上实现时，重做请求仍能被处理。
-		if errors.Is(err, ai.ErrNotImplemented) {
-			lg.Warn("镜头重做能力尚未实现，跳过重试直接归档", "error", err.Error())
+		if errors.Is(err, ai.ErrRejected) || errors.Is(err, ai.ErrNotImplemented) {
+			if _, saveErr := p.store.UpdateJob(ctx, jobID, func(j *domain.Job) error {
+				if s := j.FindShot(shotID); s != nil {
+					s.Status = domain.StatusAwaitingHuman
+					s.Error = err.Error()
+					s.UpdatedAt = time.Now().UTC()
+				}
+				return nil
+			}); saveErr != nil {
+				return saveErr
+			}
+			_, _ = p.emit(ctx, &domain.Event{
+				JobID: jobID, ShotID: shotID, Node: "hitl", Status: domain.StatusAwaitingHuman,
+				Attempt: task.Payload.Attempt, Message: "本次修复未完成，保留原片与反馈；请调整修复意见。", Error: err.Error(),
+				Timestamp: time.Now().UTC(),
+			})
 			return fmt.Errorf("%w: %w", asynq.SkipRetry, err)
 		}
 		return err

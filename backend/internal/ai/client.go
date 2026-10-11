@@ -40,6 +40,10 @@ var ErrUnavailable = errors.New("ai: Python 大脑不可达")
 // worker 据此返回 asynq.SkipRetry，让任务直接归档。
 var ErrNotImplemented = errors.New("ai: Python 端尚未实现该能力")
 
+// ErrRejected means the request exhausted generation validation or is invalid;
+// replaying the same queue payload is not an infrastructure recovery strategy.
+var ErrRejected = errors.New("ai: 请求未通过生成或前置条件校验")
+
 // Client 是 AI 服务客户端。
 type Client struct {
 	conn *grpc.ClientConn
@@ -259,6 +263,8 @@ func wrapRPCError(op string, err error) error {
 			ErrNotImplemented, op, st.Code(), st.Message())
 	case codes.Canceled:
 		return context.Canceled
+	case codes.InvalidArgument, codes.FailedPrecondition:
+		return fmt.Errorf("%w: %s 调用失败（%s）: %s", ErrRejected, op, st.Code(), st.Message())
 	default:
 		return fmt.Errorf("ai: %s 调用失败（%s）: %s", op, st.Code(), st.Message())
 	}

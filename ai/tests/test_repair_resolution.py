@@ -90,3 +90,20 @@ def test_omitted_repair_results_get_one_clarification_without_rerender(tmp_path:
           "pairs":[{"ts":1,"before":str(before),"after":str(after)}]}])
     assert outcome.passed and len(calls)==2
     assert outcome.feedback.repair_tasks[0].status=="resolved"
+
+
+def test_shared_evidence_is_uploaded_once_without_merging_before_after(tmp_path: Path):
+    before,after=tmp_path/"before.png",tmp_path/"after.png"
+    # Even identical pixels must retain the distinct historical/current roles.
+    before.write_bytes(b"same pixels"); after.write_bytes(b"same pixels")
+    old=CriticFeedback(passed=False,suggestions=["repair"],repair_tasks=[task(task_id="a"),task(task_id="b")])
+    def vision(system,user,schema,**kw):
+        assert kw["images"]==[str(after),str(before)]
+        assert all(id in kw["image_labels"][0] for id in ["问题 a","问题 b"])
+        return _RawCritique(passed=True,logic_score=.95,readability_score=.95,pacing_score=.95,aesthetics_score=.95,
+            repair_results=[_RepairResult(task_id=id,status="resolved",evidence="current labels separated",image_indices=[1]) for id in ["a","b"]])
+    outcome=CriticAgent(SimpleNamespace(vision_json=vision),Settings()).review(
+        shot=ShotSpec(shot_id="s",tag=SceneTag.MATH,duration_sec=5),
+        artifact=RenderArtifact(duration_sec=5,frame_samples=[str(after)]),style_guide=StyleGuide(),attempt=2,
+        previous_review=old,repair_prechecks=[{"task_id":id,"status":"changed","pairs":[{"ts":1,"before":str(before),"after":str(after)}]} for id in ["a","b"]])
+    assert outcome.passed

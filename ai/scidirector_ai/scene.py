@@ -79,6 +79,16 @@ class Element(SceneModel):
     arrow: bool = False
     points: list[Point] = Field(default_factory=list, max_length=64)
     stroke_width: float = Field(default=4, ge=1, le=20)
+    overlap_group: str = Field(default="", pattern=r"^[A-Za-z0-9_-]{0,48}$")
+
+    @model_validator(mode="before")
+    @classmethod
+    def explicit_line_path(cls, value: object) -> object:
+        # Both represent the same path primitive; do not spend an LLM retry on
+        # a line that already supplies valid explicit points.
+        if isinstance(value, dict) and value.get("kind") == "line" and value.get("points"):
+            return {**value, "kind": "polyline"}
+        return value
 
     @model_validator(mode="after")
     def content_and_time(self) -> Element:
@@ -94,13 +104,13 @@ class Element(SceneModel):
             raise ValueError(f"#{self.id} 只有 line 支持 arrow")
         if self.keyframes:
             times = [k.time for k in self.keyframes]
-            if times[0] != 0 or any(b <= a for a, b in zip(times, times[1:])):
-                raise ValueError(f"#{self.id} keyframes 必须从 0 开始且严格递增")
+            if any(b <= a for a, b in zip(times, times[1:])):
+                raise ValueError(f"#{self.id} keyframes 必须严格递增")
         if self.kind == "polyline" and len(self.points) < 2:
             raise ValueError(f"#{self.id} polyline 至少需要两个 points")
         if self.kind != "polyline" and self.points:
             raise ValueError(f"#{self.id} points 仅用于 polyline")
-        if self.kind not in {"rect", "circle", "line", "polyline", "character"} and any(k.rotation or k.scale != 1 for k in self.keyframes):
+        if self.kind not in {"rect", "circle", "line", "polyline", "character"} and any(k.rotation for k in self.keyframes):
             raise ValueError(f"#{self.id} 文字/图表不可旋转；请用几何元素表达旋转")
         if self.kind not in {"code", "bars", "line", "polyline"} and any(k.reveal != 1 for k in self.keyframes):
             raise ValueError(f"#{self.id} reveal 仅支持 code/bars/line/polyline；其他元素请用 opacity")
@@ -132,6 +142,8 @@ def validate_layout(scene: SceneSpec, *, width: int, height: int, duration: floa
             raise ValueError(f"#{el.id} 字号 {el.font_size}px 小于下限 {style.min_font_size}px")
         b = el.box
         for k in el.keyframes or [Keyframe(time=0)]:
+            if text and k.opacity > .9 and el.font_size * k.scale < style.min_font_size * .9:
+                raise ValueError(f"#{el.id} 缩放后的实际字号 {el.font_size * k.scale:g}px 过小；提高字号或 scale")
             x, y = b.x + k.dx - b.width * (k.scale - 1) / 2, b.y + k.dy - b.height * (k.scale - 1) / 2
             # An entrance can begin outside the viewport while fully transparent.
             # Safe margins are a design recommendation, actual clipping is a defect.

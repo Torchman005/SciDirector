@@ -20,16 +20,19 @@ bars 必须 data=[{label,value},…] 及 unit（无量纲也写“无量纲”�
 color 只能 text/primary/muted 或 #RRGGBB；明暗色与用户风格一致。line 可用 arrow=true。
 复杂界面可组合卡片、文字和几何，流程使用卡片加箭头；不要把有多个对象的视觉意图简化为标题卡。
 
-keyframes 最多 24 个，time 为秒数 / {{duration_sec}}，从 0 开始严格递增。
+keyframes 最多 24 个，time 为秒数 / {{duration_sec}}，严格递增。第一帧可以晚于 0，此前该元素隐藏。
 每个关键帧是完整状态：opacity 默认 1、dx/dy 默认 0（归一化位移）、rotation 默认 0（度）、reveal 默认 1。
 输出必须紧凑：省略默认值字段（dx/dy/rotation=0、opacity/reveal=1、easing=smooth、空 data/unit/text、arrow=false）。
 省略字段由系统恢复默认，不继承前一帧；只有非默认状态必须在该帧写出。静止元素省略 keyframes。
 通常每元素 2～6 个关键帧足够，只有运动方向或阶段改变时增加；不要复制相同状态堆满 24 帧。
 保留必要内容和全部对象，explanation 简述阶段、布局、来源和修复即可，不复述整份 JSON。
-reveal 影响 code 打字、bars 生长、line/polyline 描线；其他组件不要用它。文字和图表不能旋转或缩放。
+reveal 影响 code 打字、bars 生长、line/polyline 描线；其他组件不要用它。文字和图表不能旋转；可轻微缩放，但实际 font_size × scale 必须保持可读。
 几何与角色可使用 scale（0.5～1.5，默认1），必须预留放大及旋转后的包围范围。
 easing 为 linear/smooth/step/ease_in/ease_out/spring，描述到达当前关键帧的插值方式；step 在该时间点切换，spring 是不越界的阻尼落定。
 不提供 keyframes 表示静止，最后一个关键帧之后定格。关键帧可在 1 结束，编译器会自动预留 min(0.5秒,总时长10%) 的完成态停留。
+所有元素共用同一时间轴，包括末尾停留压缩；配合运动的对象使用相同关键帧时间。line 带 points 会规范化为 polyline。
+同屏对象必须边界可辨，不要用相同填色的实心块互相覆盖。标签置于主图上层且互不重叠；角色保留独立区域。
+确有科学含义的复合图形可以使用相同 overlap_group 标记有意叠合，不能用它掩盖文字遮挡。
 首帧可短暂淡入建立场景，避免长时间空白；末帧必须可见。阶段与旁白节拍对应，阅读可停留，不用无意义抖动制造变化。
 修改时保留正确元素的 id、内容和阶段，只调整被定位的问题。
 explanation 必须说明阶段、布局和数据来源；修复任务逐项写编号、对象、时间段和可见变化。

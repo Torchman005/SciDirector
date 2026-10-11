@@ -44,8 +44,9 @@ func TestWrapRPCErrorClassifiesRetryability(t *testing.T) {
 			name:          "InvalidArgument 不可重试",
 			code:          codes.InvalidArgument,
 			wantRetryable: false,
-			wantSentinel:  nil,
+			wantSentinel:  ErrRejected,
 		},
+		{name: "FailedPrecondition 不可重复消耗生成预算", code: codes.FailedPrecondition, wantSentinel: ErrRejected},
 		{
 			name:          "Internal 不可重试（由上层按任务策略处理）",
 			code:          codes.Internal,
