@@ -1,4 +1,5 @@
 from copy import deepcopy
+import json
 
 import pytest
 
@@ -9,6 +10,16 @@ from scidirector_ai.scene import SceneSpec, extract_scene
 from scidirector_ai.scene_revision import SceneRevision, apply_revision, review_manifest
 from scidirector_ai.schemas import SceneTag, ShotSpec, StyleGuide
 from test_scene import Checker, Stub, compile_it, spec
+
+
+def test_review_inventory_exposes_exact_words_and_scaled_font_before_geometry():
+    scene = spec(text="力的方向与运动方向相反",font_size=48,
+                 keyframes=[{"time":0,"opacity":0,"scale":.5},{"time":.2,"scale":.96},{"time":.8}])
+    scene.elements.append(SceneSpec(elements=[dict(id="shape",kind="rect",box=dict(x=.2,y=.6,width=.2,height=.2))]).elements[0])
+    manifest=review_manifest(compile_it(scene))
+    data=json.loads(manifest.split("\n")[-1])
+    assert data["literal_text"]==[dict(id="#headline",text="力的方向与运动方向相反",font_size_px=48,visible_keyframe_fonts_px=[46.08,48.0])]
+    assert all("font_size" not in e for e in data["elements"])
 
 
 def test_patch_preserves_unrelated_content_order_and_source() -> None:

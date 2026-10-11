@@ -8,6 +8,7 @@
 - 前端 tsc、18 项状态测试、生产构建通过；Chromium 导入/失败恢复/四状态预览/390px/键盘/视频检查通过。构建仍有既存的大包提示。
 - DESIGN.md lint 为 0 errors / 0 warnings。Premium 静态审计仍报告此前的 18 个 JSX 解析误报（见下文）；实际 DOM 和交互检查通过。
 - `.data/live-attention-review` 实际文本/视觉审核一轮修订：0.6925 → 0.8825，通过；改动 compute/name_O/output_label/tile_O，两项 major 有当前证据并关闭。初审仍有不准确的目测字号推断，不能以单例宣称批量通过率；历史任务 Redis 记录不可用，未计算生产通过率。
+- 据此调整审核证据后，`.data/live-attention-grounded` 再测：初审明确定位“必须反复写回”与旁白“避免写回”的科学矛盾，并使用真实 32px 字号；0.6475 → 0.8985，一轮修订通过，logic/pacing 两项 major 均依据当前图像关闭，只保留非阻断的 advisory。修订仅涉及 name_O/output_O/output_label。相关 88 项回归通过；未降低门槛或移除科学检查。
 - 本轮没有调用生图；立绘测试使用几何 PNG 夹具，仅验证程序，不作为角色画稿交付。
 
 ## 已执行

@@ -15,6 +15,8 @@
 
 2026-10-11 立绘契约：POST /api/v1/assets/portraits 导入四状态 PNG 包（portrait.json v1），GET /api/v1/assets/portraits/:id/:state 按租户返回预览。资源仍用 presenter.asset_id 引用，API 解析 model_path；RenderPresenter 同一 RPC 接受服务端解析的 model.model3.json 或 model.portrait.json，不增加客户端文件路径权限。四种口型图全部提供才报告 lip_sync=true；默认随语音切换待机/讲解，显式归一化 cues 控制思考/惊讶。PNG 同尺寸，纯 seek、离线加载、透明合成仍是强约束。立绘不依赖 Cubism，仍需要 TTS、浏览器、FFmpeg。Go 合成事件如实记录 presenter_lip_sync。
 
+2026-10-11 审核证据：结构化场景先提供 literal_text（原文、元素 id、源码字号、可见关键帧缩放字号），再提供去重的几何规格；图形不附无关字体默认值。Critic 先比对科学陈述与旁白，必须区分字形高度与 CSS 字号；禁止据缩略图臆测字号触发反复放大。评分和科学正确性门槛保持不变。
+
 SciDirector（科学视频导演）**不生成像素，而是生成"可验证的渲染计划"**：
 用多智能体把科普脚本拆成分镜，把每个分镜路由到最合适的**确定性渲染引擎**
 （Manim 渲染数学、D3/ECharts 渲染数据、代码高亮动画渲染代码），
