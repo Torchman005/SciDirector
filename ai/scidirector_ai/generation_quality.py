@@ -120,6 +120,8 @@ class BrowserPreflight:
                         "--duration", str(shot.duration_sec), "--min-font", str(style.min_font_size)]
                 if chrome := os.environ.get("SCID_CHROME"):
                     argv += ["--executable", chrome]
+                if style.presenter_safe_area:
+                    argv += ["--presenter-area", style.presenter_safe_area.model_dump_json()]
                 result = self.runner.run(argv, cwd=root,
                                          limits=ResourceLimits(timeout_sec=PREFLIGHT_TIMEOUT_SEC))
                 if not result.ok or not output.is_file():

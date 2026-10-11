@@ -59,6 +59,7 @@
     const root=make('div',stage,'scene-element'); root.id=el.id;
     root.setAttribute('data-scene-kind',el.kind);
     root.setAttribute('data-overlap-group',el.overlap_group || '');
+    root.setAttribute('data-decorative',String(Boolean(el.decorative)));
     const material=el.material==='auto'?(style.animationStyle==='anime'?'gradient':'solid'):el.material;
     root.setAttribute('data-material',material);
     root.setAttribute('data-fill-color',color(el.color));

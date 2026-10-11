@@ -48,6 +48,20 @@ const pythonPayloadSample = `{
 }`
 
 // TestParsePythonPayload 验证 Go 能正确解析 Python 产出的分镜表。
+func TestShotStyleCarriesActualPresenterRegion(t *testing.T) {
+	job := &domain.Job{StyleGuide: map[string]any{"preset": "minimal", "presenter_safe_area": "untrusted"}}
+	if _, ok := shotStyleGuide(job, nil)["presenter_safe_area"]; ok {
+		t.Fatal("inactive presenter reserved space")
+	}
+	job.Effects.Presenter = &domain.PresenterEffects{AssetID: "model"}
+	for _, shot := range []*domain.Shot{nil, {BackgroundStyle: "grid"}} {
+		area, ok := shotStyleGuide(job, shot)["presenter_safe_area"].(map[string]float64)
+		if !ok || area["x"] != .78 || area["y"] != .55 {
+			t.Fatal(area)
+		}
+	}
+}
+
 func TestParsePythonPayload(t *testing.T) {
 	var wrap struct {
 		Shots   []json.RawMessage `json:"shots"`

@@ -10,7 +10,7 @@ import (
 func TestPresenterGeometryPreservesDiagramAndSubtitleLane(t *testing.T) {
 	for _, size := range [][2]int{{1920, 1080}, {1080, 1920}, {1280, 720}, {321, 181}} {
 		cw, ch, aw, ah := PresenterGeometry(size[0], size[1])
-		if cw+aw > size[0] || ch > size[1] || ah > size[1] || cw%2 != 0 || ch%2 != 0 || aw%2 != 0 || ah%2 != 0 {
+		if cw != size[0]/2*2 || ch != size[1]/2*2 || aw > size[0]/4 || ah > size[1]/2 || cw%2 != 0 || ch%2 != 0 || aw%2 != 0 || ah%2 != 0 {
 			t.Fatalf("bad geometry %v", size)
 		}
 	}

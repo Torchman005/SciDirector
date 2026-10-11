@@ -20,7 +20,7 @@ MAX_ISSUES = 12
 MAX_SAMPLE_TIMES = 24
 
 # Measure actual DOM/SVG text, including clipping ancestors. Unknown Canvas text is reported as a gap.
-MEASURE_JS = r"""({minFont}) => {
+MEASURE_JS = r"""({minFont,presenterArea}) => {
   const issues=[], warnings=[], texts=[];
   const selector = el => el.id ? '#'+el.id : el.tagName.toLowerCase()+
     (typeof el.className==='string' && el.className ? '.'+el.className.trim().split(/\s+/).join('.') : '');
@@ -70,6 +70,13 @@ MEASURE_JS = r"""({minFont}) => {
   const area=r=>Math.max(0,r.right-r.left)*Math.max(0,r.bottom-r.top);
   const overlap=(a,b)=>Math.max(0,Math.min(a.right,b.right)-Math.max(a.left,b.left))*
     Math.max(0,Math.min(a.bottom,b.bottom)-Math.max(a.top,b.top));
+  if(presenterArea){
+    const a=presenterArea, safe={left:a.x*innerWidth,right:(a.x+a.width)*innerWidth,top:a.y*innerHeight,bottom:(a.y+a.height)*innerHeight};
+    for(const t of texts) if(t.rects.some(r=>overlap(r,safe)>1)) issues.push(`${t.id} 文字进入右下讲解员叠层区域；局部调整布局，保持主画面满幅`);
+    for(const el of document.querySelectorAll('[data-scene-kind]'))
+      if(el.dataset.decorative!=='true' && visible(el) && overlap(el.getBoundingClientRect(),safe)>4)
+        issues.push(`#${el.id} 动画进入右下讲解员叠层区域；修正运动路径或局部布局`);
+  }
   for(let i=0;i<texts.length;i++) for(let j=i+1;j<texts.length;j++){
     const a=texts[i],b=texts[j];
     if(a.owner && a.owner===b.owner) continue;
@@ -138,7 +145,7 @@ def _different(before: bytes, after: bytes) -> bool:
 
 
 def inspect(html: Path, width: int, height: int, duration: float, min_font: int,
-            executable: str = "") -> dict[str, Any]:
+            executable: str = "", presenter_area: dict | None = None) -> dict[str, Any]:
     from playwright.sync_api import sync_playwright
 
     issues: list[str] = []
@@ -169,7 +176,7 @@ def inspect(html: Path, width: int, height: int, duration: float, min_font: int,
                 before: bytes | None = None
                 for t in times:
                     seek(t)
-                    measured = page.evaluate(MEASURE_JS, {"minFont": min_font})
+                    measured = page.evaluate(MEASURE_JS, {"minFont": min_font, "presenterArea": presenter_area or (payload or {}).get("style", {}).get("presenterSafeArea")})
                     # Entry transitions may move opaque text in from outside the viewport.
                     destination = warnings if t < min(.25, duration * .1) else issues
                     destination.extend(f"{t:.2f}s：{issue}" for issue in measured["issues"])
@@ -199,9 +206,10 @@ def main() -> int:
     parser.add_argument("--duration", type=float, required=True)
     parser.add_argument("--min-font", type=int, required=True)
     parser.add_argument("--executable", default="")
+    parser.add_argument("--presenter-area", default="null")
     args = parser.parse_args()
     try:
-        report = inspect(Path(args.html), args.width, args.height, args.duration, args.min_font, args.executable)
+        report = inspect(Path(args.html), args.width, args.height, args.duration, args.min_font, args.executable, json.loads(args.presenter_area))
         Path(args.output).write_text(json.dumps(report, ensure_ascii=False), encoding="utf-8")
         return 0
     except Exception as exc:

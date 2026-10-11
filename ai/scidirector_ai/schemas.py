@@ -297,6 +297,19 @@ STYLE_PRESETS: dict[str, dict[str, str]] = {
 DEFAULT_PRESET = "default"
 
 
+class SafeArea(BaseModel):
+    x: float = Field(ge=0, le=1)
+    y: float = Field(ge=0, le=1)
+    width: float = Field(gt=0, le=1)
+    height: float = Field(gt=0, le=1)
+
+    @model_validator(mode="after")
+    def in_frame(self):
+        if self.x+self.width > 1.000001 or self.y+self.height > 1.000001:
+            raise ValueError("讲解员避让区域超出画布")
+        return self
+
+
 class StyleGuide(BaseModel):
     """风格约束。跨镜头一致性靠它维持（避免每个镜头风格漂移）。"""
 
@@ -323,6 +336,7 @@ class StyleGuide(BaseModel):
     )
     extra: dict[str, Any] = Field(default_factory=dict)
     animation_style: Literal["precise", "anime"] = "precise"
+    presenter_safe_area: SafeArea | None = None
 
     @model_validator(mode="after")
     def _apply_preset(self) -> StyleGuide:

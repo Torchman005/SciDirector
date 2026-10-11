@@ -121,7 +121,7 @@ func (p *Processor) HandleGenerateJob(ctx context.Context, task GenerateTask) er
 	req := &pb.RunPipelineRequest{
 		JobId:              jobID,
 		RawScript:          job.RawScript,
-		StyleGuideJson:     mustJSON(job.StyleGuide),
+		StyleGuideJson:     mustJSON(shotStyleGuide(job, nil)),
 		TargetDurationSec:  job.TargetDurationSec,
 		MaxAttemptsPerShot: int32(p.cfg.Pipeline.ShotMaxAttempts),
 		Locale:             job.Locale,
@@ -804,6 +804,11 @@ func shotStyleGuide(job *domain.Job, shot *domain.Shot) map[string]any {
 	out := make(map[string]any, len(job.StyleGuide)+1)
 	for k, v := range job.StyleGuide {
 		out[k] = v
+	}
+	// This region follows the actual compositor, not client-supplied geometry.
+	delete(out, "presenter_safe_area")
+	if job.Effects.Presenter != nil {
+		out["presenter_safe_area"] = media.PresenterSafeArea()
 	}
 	if shot != nil && strings.TrimSpace(shot.BackgroundStyle) != "" {
 		out["background_style"] = shot.BackgroundStyle

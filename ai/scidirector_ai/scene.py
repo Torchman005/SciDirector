@@ -86,6 +86,7 @@ class Element(SceneModel):
     points: list[Point] = Field(default_factory=list, max_length=64)
     stroke_width: float = Field(default=4, ge=1, le=20)
     overlap_group: str = Field(default="", pattern=r"^[A-Za-z0-9_-]{0,48}$")
+    decorative: bool = False
 
     @model_validator(mode="before")
     @classmethod
@@ -98,6 +99,8 @@ class Element(SceneModel):
 
     @model_validator(mode="after")
     def content_and_time(self) -> Element:
+        if self.decorative and self.kind not in {"rect", "circle", "line", "polyline"}:
+            raise ValueError("只有无语义的背景几何可以标记 decorative")
         if self.kind in {"text", "card", "code"} and not self.text.strip():
             raise ValueError(f"#{self.id} 缺少文字内容")
         if self.kind == "bars" and (not self.data or not self.unit.strip()):
@@ -151,6 +154,9 @@ def validate_layout(scene: SceneSpec, *, width: int, height: int, duration: floa
             if text and k.opacity > .9 and el.font_size * k.scale < style.min_font_size * .9:
                 raise ValueError(f"#{el.id} 缩放后的实际字号 {el.font_size * k.scale:g}px 过小；提高字号或 scale")
             x, y = b.x + k.dx - b.width * (k.scale - 1) / 2, b.y + k.dy - b.height * (k.scale - 1) / 2
+            a = style.presenter_safe_area
+            if a and not el.decorative and k.opacity > .1 and x < a.x+a.width and x+b.width*k.scale > a.x and y < a.y+a.height and y+b.height*k.scale > a.y:
+                raise ValueError(f"#{el.id} 在 time={k.time:g} 进入右下讲解员区域；移动实际内容，只局部避让，不要缩小整幅画面")
             # An entrance can begin outside the viewport while fully transparent.
             # Safe margins are a design recommendation, actual clipping is a defect.
             if k.opacity > .1 and (min(x, y) < -GEOMETRY_EPSILON or x + b.width * k.scale > 1 + GEOMETRY_EPSILON or y + b.height * k.scale > 1 + GEOMETRY_EPSILON):
@@ -202,6 +208,7 @@ def compile_scene(scene: SceneSpec, *, width: int, height: int, duration: float,
                "duration": duration, "style": {"background": style.background_color,
                "primary": style.primary_color, "font": style.font_family, "theme": style.theme,
                "animationStyle": style.animation_style,
+               "presenterSafeArea": style.presenter_safe_area.model_dump() if style.presenter_safe_area else None,
                "backgroundCSS": background_css}}
     # JSON in a raw-text script must not be able to terminate its containing tag.
     data = json.dumps(payload, ensure_ascii=False, allow_nan=False).replace("<", "\\u003c").replace("&", "\\u0026")

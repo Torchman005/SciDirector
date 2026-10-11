@@ -80,6 +80,8 @@ def style_guide_to_text(guide: StyleGuide) -> str:
     # 背景样式单独展开成一块：它既要给出风格描述，也要给出**可直接用的 CSS**
     # 与 manim 的做法 —— 只说"用网格背景"，模型画出来的网格千奇百怪。
     lines.append(background_prompt_block(guide))
+    if area := guide.presenter_safe_area:
+        lines.append(f"讲解员叠在右下角，仅避让归一化区域 x={area.x:g}～{area.x+area.width:g}, y={area.y:g}～{area.y+area.height:g}。主画面保持满幅，不设侧栏、不缩小整图；文字、数据、关键关系线不得穿过该区域。上方可使用全宽，下方把关键对象放左侧。")
     if guide.animation_style == "anime":
         lines.append(load_prompt("anime_direction"))
     if guide.glossary:

@@ -124,6 +124,11 @@ message CheckpointShotState {
 // -----------------------------------------------------------------------------
 // RunPipeline
 // -----------------------------------------------------------------------------
+// style_guide_json contract shared by all generation/review RPCs:
+// presenter_safe_area?: {x:number,y:number,width:number,height:number}, normalized
+// to [0,1]. Go derives it from enabled presenter effects; the full-size animation
+// must keep important content outside this LOCAL bottom-right overlay rectangle.
+// It is not a separate lane and must not scale/crop the base video.
 message RunPipelineRequest {
   string job_id = 1;
   string raw_script = 2;            // 用户原始脚本
