@@ -8,6 +8,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -641,7 +642,9 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 	// audioTrack 为空表示既没有配音也没有配乐，此时 MuxFinal 按
 	// 「视频自带音轨」处理 —— 调用契约不变。
 	finalPath := filepath.Join(workDir, "final.mp4")
-	if err := p.media.MuxFinal(ctx, videoPath, audioTrack, softSubtitle, finalPath); err != nil {
+	candidatePath := filepath.Join(workDir, fmt.Sprintf("final-ready-%d.mp4", time.Now().UnixNano()))
+	defer os.Remove(candidatePath)
+	if err := p.media.MuxFinal(ctx, videoPath, audioTrack, softSubtitle, candidatePath); err != nil {
 		return fmt.Errorf("worker: 生成成片失败: %w", err)
 	}
 
@@ -661,12 +664,23 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 		lg.Warn("成片缺少部分镜头", "missing", missing, "final_status", string(finalStatus))
 	}
 
+	superseded := errors.New("合成期间分镜已更新")
 	final, err := p.store.UpdateJob(ctx, jobID, func(j *domain.Job) error {
+		if !sameCompositionInputs(job, j) {
+			return superseded
+		}
+		if err := os.Rename(candidatePath, finalPath); err != nil {
+			return err
+		}
 		j.FinalVideoPath = finalPath
 		j.Status = finalStatus
 		j.Error = warnMsg
 		return nil
 	})
+	if errors.Is(err, superseded) {
+		_, _ = p.emit(ctx, &domain.Event{JobID: jobID, Node: "compose", Message: "合成期间分镜已更新，已丢弃过期成片；等待最新镜头完成", Timestamp: time.Now().UTC()})
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -727,6 +741,10 @@ func (p *Processor) finalizeArtifacts(
 	jobID, finalPath, subtitlePath, workDir string,
 	lg *slog.Logger,
 ) {
+	current, err := p.store.GetJob(ctx, jobID)
+	if err != nil || current.Status != domain.JobCompleted {
+		return // Never clean files belonging to a concurrent rerender.
+	}
 	archived := true
 
 	if p.archive.Enabled() {
@@ -774,6 +792,7 @@ func (p *Processor) finalizeArtifacts(
 		KeepAll:        p.cfg.Archive.KeepAll,
 		KeepNormalized: p.cfg.Archive.KeepNormalized,
 	})
+	plan = protectCurrentArtifacts(plan, current)
 	if len(plan) == 0 {
 		return
 	}
@@ -792,6 +811,38 @@ func (p *Processor) finalizeArtifacts(
 	for path, ferr := range failed {
 		lg.Warn("删除中间产物失败", "path", path, "error", ferr.Error())
 	}
+}
+
+func sameCompositionInputs(before, after *domain.Job) bool {
+	if len(before.Shots) != len(after.Shots) || !reflect.DeepEqual(before.Effects, after.Effects) {
+		return false
+	}
+	for _, a := range before.Shots {
+		b := after.FindShot(a.ShotID)
+		if b == nil || b.Status != domain.StatusApproved || a.Index != b.Index || a.Narration != b.Narration ||
+			a.DurationSec != b.DurationSec || !reflect.DeepEqual(a.Artifact, b.Artifact) {
+			return false
+		}
+	}
+	return true
+}
+
+func protectCurrentArtifacts(plan []string, job *domain.Job) []string {
+	protected := map[string]bool{}
+	for _, shot := range job.Shots {
+		if a := shot.Artifact; a != nil {
+			for _, path := range append([]string{a.VideoPath, a.AudioPath, a.AudioPath + ".marks.json"}, a.FrameSamples...) {
+				protected[filepath.Clean(path)] = true
+			}
+		}
+	}
+	result := make([]string, 0, len(plan))
+	for _, path := range plan {
+		if !protected[filepath.Clean(path)] {
+			result = append(result, path)
+		}
+	}
+	return result
 }
 
 // subtitleOptions 把配置映射成字幕参数。

@@ -35,6 +35,7 @@ import (
 
 	"github.com/itJinYu/SciDirector/backend/internal/archive"
 	"github.com/itJinYu/SciDirector/backend/internal/config"
+	"github.com/itJinYu/SciDirector/backend/internal/domain"
 	"github.com/itJinYu/SciDirector/backend/internal/store"
 )
 
@@ -106,11 +107,33 @@ func newArchiveHarness(t *testing.T, arch archive.Archiver, mutate func(*config.
 	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return &archiveHarness{
+	h := &archiveHarness{
 		proc:  NewProcessor(cfg, st, nil, nil, nil, arch, logger),
 		store: st,
 		work:  work,
 		jobID: "job-arch-" + strconv.FormatInt(time.Now().UnixNano(), 36),
+	}
+	if err := st.SaveJob(ctx, &domain.Job{JobID: h.jobID, Status: domain.JobCompleted}); err != nil {
+		t.Fatal(err)
+	}
+	return h
+}
+
+func TestFinalizeArtifactsDoesNotCleanDuringRerender(t *testing.T) {
+	arch := &recordingArchiver{kind: "s3", enabled: true}
+	h := newArchiveHarness(t, arch, nil)
+	finalPath, subtitlePath := h.seedWorkDir(t)
+	ctx := context.Background()
+	if _, err := h.store.UpdateJob(ctx, h.jobID, func(j *domain.Job) error {
+		j.Status = domain.JobRendering
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	h.proc.finalizeArtifacts(ctx, h.jobID, finalPath, subtitlePath,
+		filepath.Join(h.work, h.jobID), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if len(arch.puts) != 0 || !exists(filepath.Join(h.work, h.jobID, "frames", "frame_00.png")) {
+		t.Fatal("rerender in progress must neither archive stale output nor clean current frames")
 	}
 }
 

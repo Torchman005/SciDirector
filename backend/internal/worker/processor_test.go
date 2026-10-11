@@ -26,6 +26,30 @@ func TestInterruptedPipelineLeavesUnreviewedShotsPending(t *testing.T) {
 	}
 }
 
+func TestCompositionSnapshotRejectsRerenderAndKeepsCurrentReviewFiles(t *testing.T) {
+	before := &domain.Job{Shots: []*domain.Shot{{ShotID: "s", Status: domain.StatusApproved, Narration: "original",
+		Artifact: &domain.Artifact{ArtifactID: "v1", VideoPath: "clip.mp4", AudioPath: "voice.mp3", FrameSamples: []string{"current.png"}}}}}
+	raw, _ := json.Marshal(before)
+	var after domain.Job
+	_ = json.Unmarshal(raw, &after)
+	if !sameCompositionInputs(before, &after) {
+		t.Fatal("unchanged snapshot rejected")
+	}
+	after.Shots[0].Status = domain.StatusGenerating
+	if sameCompositionInputs(before, &after) {
+		t.Fatal("in-flight rerender was published as complete")
+	}
+	after.Shots[0].Status = domain.StatusApproved
+	after.Shots[0].Artifact.ArtifactID = "v2"
+	if sameCompositionInputs(before, &after) {
+		t.Fatal("stale video accepted after replacement")
+	}
+	plan := protectCurrentArtifacts([]string{"old.png", "current.png", "voice.mp3.marks.json", "clip.mp4"}, before)
+	if len(plan) != 1 || plan[0] != "old.png" {
+		t.Fatalf("review evidence deleted: %v", plan)
+	}
+}
+
 // pythonPayloadSample 是 **Python 侧真实产出**的 payload_json 样例
 // （由 scidirector_ai.pbconv.shots_payload_json 生成，未做任何手工修改）。
 //
