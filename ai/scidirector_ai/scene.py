@@ -67,9 +67,14 @@ class Datum(SceneModel):
     color: str = Field(default="", pattern=r"^$|" + COLOR_PATTERN)
 
 
+class GridCell(SceneModel):
+    label: str = Field(default="", max_length=24)
+    color: str = Field(default="", pattern=r"^$|" + COLOR_PATTERN)
+
+
 class Element(SceneModel):
     id: str = Field(pattern=r"^[A-Za-z][A-Za-z0-9_-]{0,47}$")
-    kind: Literal["text", "card", "code", "bars", "rect", "circle", "line", "polyline", "character"]
+    kind: Literal["text", "card", "code", "bars", "rect", "circle", "line", "polyline", "character", "icon", "grid"]
     box: Box
     text: str = Field(default="", max_length=4000)
     font_size: int = Field(default=48, ge=12, le=200)
@@ -87,18 +92,42 @@ class Element(SceneModel):
     stroke_width: float = Field(default=4, ge=1, le=20)
     overlap_group: str = Field(default="", pattern=r"^[A-Za-z0-9_-]{0,48}$")
     decorative: bool = False
+    glyph: Literal["chip", "memory", "router", "factory", "gate", "lens"] = "chip"
+    cells: list[GridCell] = Field(default_factory=list, max_length=64)
+    columns: int = Field(default=4, ge=1, le=8)
+    flow: bool = False
 
     @model_validator(mode="before")
     @classmethod
     def explicit_line_path(cls, value: object) -> object:
         # Both represent the same path primitive; do not spend an LLM retry on
         # a line that already supplies valid explicit points.
+        if isinstance(value, dict) and value.get("kind") in {"line", "polyline"} and isinstance(value.get("box"), dict):
+            b = value["box"]
+            if b.get("width") == 0 and b.get("height") == 0:
+                raise ValueError("关系线必须有非零长度")
+            if b.get("width") == 0 or b.get("height") == 0:
+                value = dict(value)
+                b = dict(b)
+                points = [dict(p) for p in value.get("points", [])] or [dict(x=0,y=0),dict(x=1,y=1)]
+                for dimension, axis in (("width","x"),("height","y")):
+                    if b.get(dimension) == 0:
+                        b[dimension] = .006
+                        b[axis] = max(0, min(.994, b[axis]-.003))
+                        for p in points: p[axis] = .5
+                value.update(box=b, kind="polyline", points=points)
         if isinstance(value, dict) and value.get("kind") == "line" and value.get("points"):
             return {**value, "kind": "polyline"}
         return value
 
     @model_validator(mode="after")
     def content_and_time(self) -> Element:
+        if self.kind == "grid" and not self.cells:
+            raise ValueError(f"#{self.id} grid 必须提供 cells 标签；示意网格不编造数值")
+        if self.kind != "grid" and self.cells:
+            raise ValueError(f"#{self.id} cells 仅用于 grid")
+        if self.flow and self.kind not in {"line", "polyline"}:
+            raise ValueError(f"#{self.id} flow 仅用于有明确方向的关系线")
         if self.decorative and self.kind not in {"rect", "circle", "line", "polyline"}:
             raise ValueError("只有无语义的背景几何可以标记 decorative")
         if self.kind in {"text", "card", "code"} and not self.text.strip():
@@ -107,7 +136,7 @@ class Element(SceneModel):
             raise ValueError(f"#{self.id} 柱状图必须提供真实数据及单位")
         if self.kind != "bars" and (self.data or self.unit):
             raise ValueError(f"#{self.id} 只有 bars 可以包含 data/unit")
-        if self.kind in {"rect", "circle", "line", "polyline", "character"} and self.text:
+        if self.kind in {"rect", "circle", "line", "polyline", "character", "icon", "grid"} and self.text:
             raise ValueError(f"#{self.id} 图形文字请使用独立 text 元素")
         if self.kind not in {"line", "polyline"} and self.arrow:
             raise ValueError(f"#{self.id} 只有 line 支持 arrow")
@@ -119,9 +148,9 @@ class Element(SceneModel):
             raise ValueError(f"#{self.id} polyline 至少需要两个 points")
         if self.kind != "polyline" and self.points:
             raise ValueError(f"#{self.id} points 仅用于 polyline")
-        if self.kind not in {"rect", "circle", "line", "polyline", "character"} and any(k.rotation for k in self.keyframes):
+        if self.kind not in {"rect", "circle", "line", "polyline", "character", "icon"} and any(k.rotation for k in self.keyframes):
             raise ValueError(f"#{self.id} 文字/图表不可旋转；请用几何元素表达旋转")
-        if self.kind not in {"code", "bars", "line", "polyline"} and any(k.reveal != 1 for k in self.keyframes):
+        if self.kind not in {"code", "bars", "line", "polyline", "grid"} and any(k.reveal != 1 for k in self.keyframes):
             raise ValueError(f"#{self.id} reveal 仅支持 code/bars/line/polyline；其他元素请用 opacity")
         if self.kind != "character" and any(k.expression != "neutral" or k.gesture != "idle" for k in self.keyframes):
             raise ValueError(f"#{self.id} expression/gesture 仅用于 character")
@@ -146,7 +175,7 @@ def validate_layout(scene: SceneSpec, *, width: int, height: int, duration: floa
                     style: StyleGuide) -> None:
     """Reject geometric/time defects before launching Chromium; text fit is measured there."""
     for el in scene.elements:
-        text = el.kind in {"text", "card", "code", "bars"}
+        text = el.kind in {"text", "card", "code", "bars", "grid"}
         if text and el.font_size < style.min_font_size:
             raise ValueError(f"#{el.id} 字号 {el.font_size}px 小于下限 {style.min_font_size}px")
         b = el.box
@@ -174,10 +203,15 @@ def validate_layout(scene: SceneSpec, *, width: int, height: int, duration: floa
                 raise ValueError(f"#{el.id} 文字区域过小；增大 box，不要降低字号")
         if el.kind == "bars" and b.height * height / len(el.data) < el.font_size * 3:
             raise ValueError(f"#{el.id} 柱状图行高不足；扩大区域或减少同屏数据")
+        if el.kind == "grid":
+            cols = min(el.columns, len(el.cells))
+            rows = math.ceil(len(el.cells)/cols)
+            if b.height*height/rows < el.font_size*1.8 or b.width*width/cols < el.font_size*2.4:
+                raise ValueError(f"#{el.id} 网格格子过小；减少列/行或扩大 box")
     # The first frame may intentionally establish a scene. The final state must
     # contain visible content; otherwise the renderer would produce a blank tail.
     if not any(not el.keyframes or (el.keyframes[-1].opacity > .1
-                                    and (el.kind not in {"code", "bars"}
+                                    and (el.kind not in {"code", "bars", "grid"}
                                          or el.keyframes[-1].reveal > 0))
                for el in scene.elements):
         raise ValueError("末帧必须有可见内容")
@@ -186,6 +220,7 @@ def validate_layout(scene: SceneSpec, *, width: int, height: int, duration: floa
 @lru_cache(maxsize=1)
 def scene_runtime() -> str:
     return (Path(__file__).with_name("character_runtime.js").read_text(encoding="utf-8") + "\n"
+            + Path(__file__).with_name("science_icons_runtime.js").read_text(encoding="utf-8") + "\n"
             + Path(__file__).with_name("scene_runtime.js").read_text(encoding="utf-8"))
 
 

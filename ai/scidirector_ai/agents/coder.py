@@ -26,7 +26,7 @@ from ..rag import FewShot, FewShotRetriever, build_retriever
 from ..renderer import LLM_ENGINES, check_html_contract
 from ..sandbox.policy import PolicyReport, PolicyViolation, check_source
 from ..schemas import RenderEngine, ShotSpec, StyleGuide
-from ..scene import SceneSpec, compile_scene, extract_scene
+from ..scene import SceneSpec, compile_scene, extract_scene, validate_layout
 from ..scene_revision import SceneRevision, apply_revision, changed_elements
 from .base import Agent, load_prompt, render_prompt, style_guide_to_text
 
@@ -263,6 +263,15 @@ class CoderAgent(Agent):
         base_system = system
         schema = SceneRevision if previous is not None else SceneSpec
         if previous is not None:
+            try:
+                validate_layout(previous, width=self.settings.render_width, height=self.settings.render_height,
+                                duration=shot.duration_sec, style=style)
+            except ValueError as exc:
+                # An old layout incompatible with new constraints is not a sound
+                # patch baseline. Reconstruct it in the same bounded budget.
+                schema = SceneSpec
+                feedback += f"\n原布局不满足当前约束（{exc}），请输出完整 elements 重建，不能只修一个对象留下其余旧布局。"
+        if schema is SceneRevision:
             system += "\n\n" + render_prompt("coder_scene_revision")
         system += "\n\nJSON Schema（必须符合）：\n" + json.dumps(schema.model_json_schema(), ensure_ascii=False)
         user = render_prompt("coder_scene_user", index=shot.index, tag=shot.tag.value,

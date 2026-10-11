@@ -674,6 +674,9 @@ func (p *Processor) HandleRenderShot(ctx context.Context, task RenderShotTask) e
 			s.Language = resp.GetShot().GetLanguage()
 		}
 		if art := pbconv.ArtifactFromPB(resp.GetArtifact()); art != nil {
+			if resp.GetPartialRangeHonored() && shot.Artifact != nil {
+				art.AudioPath = shot.Artifact.AudioPath
+			}
 			if artifactPathOverride != "" {
 				// 拼接产物才是完整的镜头；直接覆盖路径，其余元数据沿用服务端回填的。
 				art.VideoPath = artifactPathOverride

@@ -8,6 +8,10 @@ background 可为 solid/gradient/grid/vignette/noise/scanlines；用户选择了
 
 组件：text（自动换行的文字）、card（文字卡片）、code（等宽纯文字，可打字）、bars（横向柱图）、rect/circle/line（几何图形）、polyline（关系/轨迹线）。character 仅兼容历史简笔角色，新镜头不要使用；讲解员由用户导入的立绘/Live2D 在合成时加入。
 polyline 使用 points=[{x,y},…]，坐标相对自己的 box，至少两点；line/polyline 可 arrow=true、stroke_width=4、reveal 描线。
+关系线可以 flow=true，在明确的输入→处理→输出方向上显示流动信号；粒子仅表示传输示意，不能冒充数量/概率/粒子实验。
+icon 为内置科学插图，glyph=chip/memory/router/factory/gate/lens，分别表示芯片、存储器、路由、工厂、门控、观察；使用独立标签说明真实含义。图标按短边等比绘制，方形 box 最合适，无 text。
+grid 为结构化词元/张量示意网格，cells=[{label:"Q",color:"secondary"},…]，columns=1～8；reveal 逐格出现。单格宽至少 2.4×font_size，高至少 1.8×font_size。无真实数值时用对象标签或空格，不要伪造矩阵值。
+为内容选择构图：数据搬运用 memory+grid+flow+chip，稀疏选择用 router+分支+少数亮起的专家，特征变换用 factory+不同形状网格；不要每镜都画成两个玻璃卡片。先画能解释机制的主图，再安排标题/注释。
 character 无 text，建议 box 宽高像素比约 2:3；不要拉成横条。角色让出主图与底部字幕区域。
 角色关键帧可 expression=neutral/smile/curious/surprised/focused、gesture=idle/explain/point/think/wave；在到达该帧时切换。
 每个元素有唯一稳定 id、kind、box={x,y,width,height}，box 坐标为画布归一化比例。

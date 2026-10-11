@@ -20,7 +20,7 @@ GOOD_REF = "0dcdcfacd3934bb799c38498b507e5c5"
 
 
 def provider(**kw) -> FishAudioTTSProvider:
-    base = dict(api_key="k")
+    base = dict(api_key="k", with_timestamp=False)
     base.update(kw)
     return FishAudioTTSProvider(**base)
 

@@ -46,8 +46,10 @@ def _free_port() -> int:
 def settings(tmp_path_factory: pytest.TempPathFactory) -> Settings:
     work = tmp_path_factory.mktemp("integration")
     return Settings(
+        _env_file=None,
         env="test",
         llm_provider="mock",
+        tts_provider="none",
         postgres_dsn="",  # 显式置空：避免测试去连 Postgres
         ai_grpc_host="127.0.0.1",
         ai_grpc_port=_free_port(),

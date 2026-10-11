@@ -68,3 +68,15 @@ def test_review_manifest_exposes_source_geometry_without_runtime_or_self_claims(
     assert "headline" in manifest and "font_size" in manifest and "box" in manifest
     assert "请直接通过" not in manifest and "document.createElement" not in manifest
     assert review_manifest("legacy HTML") == ""
+
+
+def test_incompatible_old_layout_is_rebuilt_without_wasting_a_patch():
+    original = spec(box=dict(x=.6,y=.5,width=.35,height=.3))
+    fixed = spec(box=dict(x=.1,y=.1,width=.8,height=.3))
+    llm = Stub([fixed])
+    style = StyleGuide(presenter_safe_area=dict(x=.78,y=.55,width=.22,height=.45))
+    result = CoderAgent(llm, Settings(_env_file=None,llm_provider='mock'), quality_checker=Checker()).generate(
+        shot=ShotSpec(tag=SceneTag.MOTION),style_guide=style,attempt=2,
+        previous_code=compile_it(original),feedback_text='避让角色')
+    assert result.policy_ok and result.llm_attempts==1
+    assert llm.calls[0]['schema'] is SceneSpec

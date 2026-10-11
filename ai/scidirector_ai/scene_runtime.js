@@ -66,7 +66,7 @@
     const b=el.box;
     Object.assign(root.style,{left:b.x*W+'px',top:b.y*H+'px',width:b.width*W+'px',height:b.height*H+'px',
       fontSize:el.font_size+'px',textAlign:el.align,color:color(el.color),zIndex:String(el.layer)});
-    const record={el,root,content:null,bars:[],stroke:null,strokeLength:0,arrow:null,character:null};
+    const record={el,root,content:null,bars:[],cells:[],packets:[],stroke:null,strokeLength:0,arrow:null,character:null};
     if(['text','card','code'].includes(el.kind)) {
       root.className+=' scene-text'+(el.kind==='card'?' scene-card':el.kind==='code'?' scene-code':'');
       if(el.kind!=='text') {
@@ -80,6 +80,15 @@
         }
       }
       record.content=make('span',root);record.content.textContent=el.text;
+    } else if(el.kind==='grid') {
+      const columns=Math.min(el.columns,el.cells.length);
+      Object.assign(root.style,{display:'grid',gridTemplateColumns:`repeat(${columns},1fr)`,gridTemplateRows:`repeat(${Math.ceil(el.cells.length/columns)},1fr)`,gap:'10px'});
+      for(const item of el.cells){
+        const cell=make('div',root,'scene-grid-cell'),tint=color(item.color||el.color),base=light?'#F0F3FA':'#151E32';
+        Object.assign(cell.style,{display:'flex',alignItems:'center',justifyContent:'center',border:`2px solid ${mix(tint,base,.2)}`,borderRadius:'8px',
+          color:palette.text,background:`linear-gradient(145deg,${mix(base,tint,.36)},${mix(base,tint,.12)})`,boxShadow:`inset 0 2px 0 ${tint}30,0 4px 0 ${base}`,overflow:'hidden'});
+        cell.textContent=item.label;record.cells.push(cell);
+      }
     } else if(el.kind==='bars') {
       const max=Math.max(...el.data.map(d=>d.value)) || 1;
       for(const d of el.data) {
@@ -99,6 +108,7 @@
       const w=b.width*W,h=b.height*H;
       const svg=svgNode('svg',root,{viewBox:`0 0 ${w} ${h}`});
       const tint=color(el.color),outlined=material==='outline';
+      if(el.kind==='icon')createScienceIcon(svg,svgNode,el.glyph,w,h,tint,light?'#F0F3FA':'#151E32');
       let fill=outlined?'none':tint;
       const stroke=el.stroke_color?color(el.stroke_color):material==='solid'?'none':mix(tint,light?'#000000':'#FFFFFF',.35);
       if(['gradient','glass'].includes(material)&&['rect','circle'].includes(el.kind)){
@@ -117,6 +127,9 @@
         else attrs.points=el.points.map(p=>`${p.x*w},${p.y*h}`).join(' ');
         record.stroke=svgNode(el.kind==='line'?'line':'polyline',svg,attrs);
         record.strokeLength=record.stroke.getTotalLength();
+        if(el.flow){
+          for(let i=0;i<3;i++)record.packets.push(svgNode('circle',svg,{r:Math.max(3,el.stroke_width*1.15),fill:tint,stroke:light?'#FFFFFF':'#E6ECFF','stroke-width':1}));
+        }
         if(el.arrow) {
           record.arrow=svgNode('path',svg,{d:'M-10,-4.5 L0,0 L-10,4.5 Z',fill:color(el.color),'data-arrow':el.id});
         }
@@ -126,7 +139,7 @@
   });
   window.__seek = seconds => {
     const t=Math.max(0,Math.min(D,Number.isFinite(seconds)?seconds:0))/D;
-    for(const {el,root,content,bars,stroke,strokeLength,arrow,character} of nodes) {
+    for(const {el,root,content,bars,cells,packets,stroke,strokeLength,arrow,character} of nodes) {
       const local=Math.min(1,t/timelineEnd);
       const s=sample(el.keyframes, local);
       root.style.opacity=String(s.opacity);
@@ -142,6 +155,12 @@
       if(stroke) {
         stroke.style.visibility=s.reveal>0?'visible':'hidden';
         stroke.setAttribute('stroke-dasharray','1');stroke.setAttribute('stroke-dashoffset',String(1-s.reveal));
+        for(let i=0;i<packets.length;i++){
+          const fraction=(Math.min(t,timelineEnd)*D*.55+i/packets.length)%1;
+          const point=stroke.getPointAtLength(strokeLength*fraction);
+          packets[i].setAttribute('cx',point.x);packets[i].setAttribute('cy',point.y);
+          packets[i].style.visibility=fraction<s.reveal?'visible':'hidden';
+        }
         if(arrow) {
           arrow.style.visibility=s.reveal>0?'visible':'hidden';
           const length=strokeLength*s.reveal, tip=stroke.getPointAtLength(length);
@@ -152,6 +171,10 @@
       }
       if(el.kind==='code') content.textContent=Array.from(el.text).slice(0,Math.floor(Array.from(el.text).length*s.reveal)).join('');
       for(const bar of bars) bar.style.transform=`scaleX(${s.reveal})`;
+      for(let i=0;i<cells.length;i++){
+        const progress=Math.max(0,Math.min(1,s.reveal*cells.length-i));
+        cells[i].style.opacity=String(progress);cells[i].style.transform=`translateY(${(1-progress)*12}px)`;
+      }
     }
   };
   window.__seek(0);window.__ready=true;

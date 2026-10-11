@@ -53,11 +53,12 @@ def review_manifest(code: str) -> str:
         return ""
     # Exact displayed words come before geometry; rectangles have no font size.
     # Glyph ink height is not the CSS font size supplied by the trusted runtime.
-    text_elements = [e for e in scene.elements if e.kind in {"text", "card", "code", "bars"}]
+    text_elements = [e for e in scene.elements if e.kind in {"text", "card", "code", "bars", "grid"}]
     payload = {"literal_text": [{"id": "#"+e.id, "text": e.text,
                 "font_size_px": e.font_size,
                 "visible_keyframe_fonts_px": sorted({round(e.font_size*k.scale, 2) for k in e.keyframes if k.opacity>.9}) or [e.font_size],
-                **({"data": [d.model_dump(exclude_defaults=True) for d in e.data], "unit": e.unit} if e.kind=="bars" else {})}
+                **({"data": [d.model_dump(exclude_defaults=True) for d in e.data], "unit": e.unit} if e.kind=="bars" else {}),
+                **({"cells": [c.model_dump(exclude_defaults=True) for c in e.cells]} if e.kind=="grid" else {})}
                 for e in text_elements],
                "elements": [e.model_dump(exclude_defaults=True, exclude={"text", "font_size", "data", "unit"}) for e in scene.elements]}
     return ("\n## 当前场景的可核对规格\n"

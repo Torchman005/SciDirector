@@ -32,6 +32,8 @@ from .logging import get_logger
 from .media import MediaToolError, extract_frames
 from .renderer import RendererError, RenderRequest, build_renderer, renderer_availability
 from .sandbox.runner import SandboxRunner
+from .tts.factory import build_tts_provider
+from .tts.base import synthesize_with_retry, write_marks_sidecar
 from .schemas import (
     CriticFeedback,
     FeedbackSource,
@@ -510,10 +512,23 @@ class PipelineService:
                 extra={"shot_id": shot.shot_id, "error": str(exc)[:200]},
             )
 
+        audio_path = ""
+        if not draft_only and not result.partial_range_honored and shot.narration.strip():
+            provider = build_tts_provider(self.settings)
+            if provider is not None:
+                try:
+                    speech = synthesize_with_retry(provider, shot.narration, out_path=work_dir.resolve()/"narration.mp3",
+                        attempts=self.settings.tts_max_attempts, backoff_sec=self.settings.tts_retry_backoff_sec)
+                    write_marks_sidecar(speech.audio_path, speech)
+                    audio_path = str(speech.audio_path)
+                except Exception as exc:
+                    raise RenderFailed(f"重做配音失败，保留原片，请重试：{str(exc)[:300]}") from exc
+
         return RenderArtifact(
             artifact_id=f"{job_id}-{shot.shot_id}-{attempt}-{uuid.uuid4().hex[:6]}",
             shot_id=shot.shot_id,
             video_path=result.video_path,
+            audio_path=audio_path,
             duration_sec=result.duration_sec,
             width=result.width,
             height=result.height,
