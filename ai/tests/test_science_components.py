@@ -26,6 +26,20 @@ def test_grid_rejects_fake_content_and_unreadable_density():
         compile_scene(dense,width=1280,height=720,duration=8,style=StyleGuide())
 
 
+def test_icon_cannot_hide_a_card_label_even_if_the_label_is_above_it(tmp_path):
+    from scidirector_ai.browser_preflight import inspect
+    chrome=os.environ.get('SCID_CHROME')
+    if not chrome: pytest.skip('Set SCID_CHROME for real browser acceptance')
+    scene=SceneSpec(elements=[
+        dict(id='panel',kind='card',text='SwiGLU 门控',font_size=40,layer=5,
+             box=dict(x=.1,y=.1,width=.4,height=.3)),
+        dict(id='gate',kind='icon',glyph='gate',color='secondary',layer=1,
+             box=dict(x=.14,y=.17,width=.15,height=.16))])
+    html=tmp_path/'overlap.html'
+    html.write_text(compile_scene(scene,width=1280,height=720,duration=4,style=StyleGuide()),encoding='utf-8')
+    assert any('遮挡' in issue for issue in inspect(html,1280,720,4,32,chrome)['issues'])
+
+
 def test_science_components_have_repeatable_pixels_and_pass_preflight(tmp_path):
     from scidirector_ai.browser_preflight import inspect
     script=Path(__file__).parents[2]/'scripts/render-process-demo.py'

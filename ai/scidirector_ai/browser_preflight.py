@@ -86,7 +86,7 @@ MEASURE_JS = r"""({minFont,presenterArea}) => {
     }
   }
   const shapes=Array.from(document.querySelectorAll('[data-scene-kind]'))
-    .filter(e=>['rect','circle','card','character'].includes(e.dataset.sceneKind)&&visible(e));
+    .filter(e=>['rect','circle','card','character','icon','grid'].includes(e.dataset.sceneKind)&&visible(e));
   const sameGroup=(a,b)=>a.dataset.overlapGroup && a.dataset.overlapGroup===b.dataset.overlapGroup;
   const fill=e=>e.dataset.material==='outline'?'none':e.dataset.sceneKind==='card'?getComputedStyle(e).backgroundColor:
     (e.dataset.fillColor||e.querySelector('rect,circle')?.getAttribute('fill'));
@@ -102,10 +102,10 @@ MEASURE_JS = r"""({minFont,presenterArea}) => {
     if(text.owner===shape || shape.dataset.material==='outline') continue;
     const a=Number(getComputedStyle(text.owner).zIndex)||0,b=Number(getComputedStyle(shape).zIndex)||0;
     const above=b>a || (b===a && !!(text.owner.compareDocumentPosition(shape)&Node.DOCUMENT_POSITION_FOLLOWING));
-    if(!above) continue;
+    if(!above && !['icon','grid'].includes(shape.dataset.sceneKind)) continue;
     const box=shape.getBoundingClientRect();
     if(text.rects.some(r=>overlap(r,box)>area(r)*.25))
-      issues.push(`${text.id} 文字被前景 #${shape.id} 遮挡；把文字放到图形上层或移动角色/图形`);
+      issues.push(`${text.id} 文字与 #${shape.id} 遮挡；图标/网格的外部标签应放到独立区域，其他图形可调整前后层级`);
   }
   if(document.querySelector('canvas')) warnings.push('Canvas 文字/图形布局未进行 DOM 测量，仍需视觉审核');
   return {issues:issues.slice(0,12),warnings:warnings.slice(0,6)};
