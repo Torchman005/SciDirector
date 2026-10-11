@@ -34,6 +34,8 @@ from ..media import frame_change_summary
 from ..logging import get_logger
 from ..review_tasks import active_repairs, merge_repairs
 from ..scene_revision import review_manifest
+from ..science_evidence import manim_review_manifest
+from ..science_audit import audit_science, science_request, science_tasks, resolve_science
 from ..schemas import (
     CriticFeedback,
     FeedbackSource,
@@ -139,6 +141,7 @@ class CriticAgent(Agent):
     def __init__(self, llm: LLMClient | None = None, settings: Settings | None = None) -> None:
         super().__init__(llm)
         self.settings = settings or get_settings()
+        self._science_cache: dict[str, Any] = {}
 
     # ------------------------------------------------------------------
     # 主入口
@@ -168,6 +171,39 @@ class CriticAgent(Agent):
                 attempt=attempt,
                 reason="渲染产物没有可用的抽帧，无法进行视觉审查",
             )
+
+        # A VLM may accept a smooth curve with a mathematically false label.
+        # Check source definitions independently before spending a visual call.
+        request = science_request(shot, previous_review)
+        if request:
+            try:
+                key = hashlib.sha256(request.encode()).hexdigest()
+                audit = self._science_cache.get(key)
+                if audit is None:
+                    audit = audit_science(self.llm, request)
+                    if len(self._science_cache) >= 128:
+                        self._science_cache.clear()
+                    self._science_cache[key] = audit
+                tasks = science_tasks(audit, attempt=attempt, duration=artifact.duration_sec)
+                previous_review = resolve_science(previous_review, audit)
+                if tasks:
+                    # Preserve unclosed layout/content obligations when the new
+                    # mathematical failure makes a visual call unnecessary.
+                    old_targets = {t.target: t for t in (previous_review.repair_tasks if previous_review else [])
+                                   if t.task_id.startswith('science-')}
+                    tasks = [t.model_copy(update={'acceptance': old_targets[t.target].acceptance})
+                             if t.target in old_targets else t for t in tasks]
+                    scientific_feedback = CriticFeedback(passed=False, score=0.2,
+                        logic_score=0.2, issues=[t.evidence for t in tasks],
+                        suggestions=[t.instruction for t in tasks], repair_tasks=tasks,
+                        source=FeedbackSource.SYSTEM, model='science:'+self.settings.text_target().model,
+                        attempt=attempt)
+                    scientific_feedback = merge_repairs(previous_review, scientific_feedback, [], set())
+                    return CritiqueOutcome(feedback=scientific_feedback, frames_reviewed=0,
+                                           program_passed=False, model_passed=False)
+            except (LLMError, ValueError) as exc:
+                return self._degrade(shot=shot, attempt=attempt,
+                    reason=f"科学源码核对未完成：{exc}", frames=0)
 
         # 容差下限：低于下限但仍在它的 90% 以内时，判"偏小但可读"而不是"不可读"。
         #
@@ -230,6 +266,8 @@ class CriticAgent(Agent):
         )
 
         user_prompt += review_manifest(shot.code)
+        if shot.engine and shot.engine.value == "manim":
+            user_prompt += manim_review_manifest(shot.code)
         images = list(frames)
         image_labels = [f"图像 {i}：当前版本完整帧 {i}/{len(frames)}，用于本轮整体评分。" for i in range(1, len(frames) + 1)]
         current_indices = set(range(1, len(frames) + 1))
@@ -342,6 +380,7 @@ class CriticAgent(Agent):
         verified_ids = {
             r.task_id for r in parsed.repair_results
             if r.task_id in paired_ids and r.evidence.strip() and r.image_indices
+            and not r.task_id.startswith('science-')  # source proof, never visual guesswork, closes these tasks
             and all(i in current_indices for i in r.image_indices)
             and bool(set(r.image_indices) & task_current_indices.get(r.task_id, set()))
         }

@@ -93,6 +93,7 @@ class Task:
     SCENE = "scene"        # HTML：分镜 -> 受约束的内部场景规格
     SCENE_REPAIR = "scene_repair"  # 按稳定元素 id 修订场景
     CRITIQUE = "critique"  # 审查：抽帧 -> 评审意见
+    SCIENCE = "science"   # 独立核对绘图表达式与科学定义
     FREE = "free"          # 自由文本
 
 
@@ -616,6 +617,9 @@ def _mock_response(messages: list[Message], *, json_mode: bool, task: str) -> st
     if not json_mode:
         return "（mock 模式）这是一段占位说明文本。"
 
+    if task == Task.SCIENCE:
+        return json.dumps({"findings": [{"verdict": "correct", "target": "mock",
+                          "evidence": "mock 模式占位核对，不代表真实科学验收"}], "resolutions": []})
     if task == Task.CRITIQUE:
         # 默认判为通过。需要演练「打回重做」流程时，
         # 通过环境变量 SCID_MOCK_CRITIC_PASSED=false 切换即可，
