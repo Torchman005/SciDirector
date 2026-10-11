@@ -27,6 +27,8 @@ def test_explicit_line_normalizes_and_sampling_includes_motion_midpoint():
     ([element("a","text"),element("b","text")],"文字重叠"),
     ([element("label","text"),element("cover")],"遮挡"),
     ([element("shape"),element("label","text")],""),
+    ([element("shape",x=.2),element("label","text",layer=5,align="center")],"遮挡"),
+    ([element("shape",x=.2,overlap_group="labelled"),element("label","text",layer=5,align="center",overlap_group="labelled")],""),
     ([element("a",overlap_group="compound"),element("b",x=.2,overlap_group="compound")],""),
 ])
 def test_layout_issues_trigger_repair_without_rejecting_labels(tmp_path: Path,elements,needle):

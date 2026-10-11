@@ -99,13 +99,17 @@ MEASURE_JS = r"""({minFont,presenterArea}) => {
       issues.push(`#${a.id} 与 #${b.id} 同色图形重叠，边界无法区分；分离布局、增加不同填色/轮廓，确需叠合的复合图形标记相同 overlap_group`);
   }
   for(const text of texts) if(text.owner) for(const shape of shapes){
-    if(text.owner===shape || shape.dataset.material==='outline') continue;
+    if(text.owner===shape || sameGroup(text.owner,shape) || shape.dataset.material==='outline') continue;
     const a=Number(getComputedStyle(text.owner).zIndex)||0,b=Number(getComputedStyle(shape).zIndex)||0;
     const above=b>a || (b===a && !!(text.owner.compareDocumentPosition(shape)&Node.DOCUMENT_POSITION_FOLLOWING));
-    if(!above && !['icon','grid'].includes(shape.dataset.sceneKind)) continue;
     const box=shape.getBoundingClientRect();
+    const labelBox=text.owner.getBoundingClientRect();
+    const contained=labelBox.left>=box.left-1&&labelBox.right<=box.right+1&&labelBox.top>=box.top-1&&labelBox.bottom<=box.bottom+1;
+    // Text intentionally inside its background is valid. A foreground callout
+    // crossing another object's edge is still occlusion, regardless of z-index.
+    if(!above && contained && !['icon','grid'].includes(shape.dataset.sceneKind)) continue;
     if(text.rects.some(r=>overlap(r,box)>area(r)*.25))
-      issues.push(`${text.id} 文字与 #${shape.id} 遮挡；图标/网格的外部标签应放到独立区域，其他图形可调整前后层级`);
+      issues.push(`${text.id} 文字与 #${shape.id} 遮挡；外部标签应放到独立区域，文字不能跨越其他图形边界；对应容器内的标签可调整前后层级`);
   }
   if(document.querySelector('canvas')) warnings.push('Canvas 文字/图形布局未进行 DOM 测量，仍需视觉审核');
   return {issues:issues.slice(0,12),warnings:warnings.slice(0,6)};
