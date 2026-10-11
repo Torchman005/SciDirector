@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 from ..config import Settings, get_settings
 from ..llm import LLMClient, LLMError, LLMParseError, Task, extract_json
 from ..logging import get_logger
-from ..generation_quality import BrowserPreflight, QualityChecker, QualityResult, check_manim_structure, production_brief
+from ..generation_quality import BrowserPreflight, QualityChecker, QualityResult, check_manim_structure, production_brief, normalize_manim_waits
 from ..rag import FewShot, FewShotRetriever, build_retriever
 from ..renderer import LLM_ENGINES, check_html_contract
 from ..sandbox.policy import PolicyReport, PolicyViolation, check_source
@@ -450,6 +450,7 @@ class CoderAgent(Agent):
             return check_html_contract(artifact.code)
         report = check_source(artifact.code)
         if report.ok:
+            artifact.code = normalize_manim_waits(artifact.code)
             report.violations.extend(check_manim_structure(artifact.code).violations)
         return report
 

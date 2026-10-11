@@ -484,7 +484,8 @@ class PipelineNodes:
         except RendererError as exc:
             elapsed = time.monotonic() - started
             hint = HINT_RETRY if exc.retryable else HINT_HUMAN
-            detail = (exc.detail or "")[:800]
+            from ..diagnostics import error_evidence
+            detail = error_evidence(str(exc), exc.detail, 1400)
             logger.warning(
                 "render 失败",
                 extra={
@@ -504,7 +505,7 @@ class PipelineNodes:
                 status = "AWAITING_HUMAN"
                 message = f"渲染失败且无法重试（{engine}）：{exc} → 转人工处理"
             return {
-                "render_error": f"{exc}\n{detail}".strip(),
+                "render_error": detail,
                 "route_hint": hint,
                 "events": [
                     make_event(

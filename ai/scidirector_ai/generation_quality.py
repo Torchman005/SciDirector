@@ -44,6 +44,37 @@ def production_brief(shot: ShotSpec, style: StyleGuide, settings: Settings) -> s
     return "\n".join(lines)
 
 
+def normalize_manim_waits(code: str) -> str:
+    """Elide only literal, standalone zero waits; never evaluate generated code.
+
+    Keep a pass statement so sole statements inside if/loop blocks stay valid.
+    Calls with additional arguments may have side effects and are left untouched.
+    """
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return code
+    changed = False
+
+    class ZeroWait(ast.NodeTransformer):
+        def visit_Expr(self, node: ast.Expr) -> ast.AST:
+            nonlocal changed
+            call = node.value
+            if (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
+                    and isinstance(call.func.value, ast.Name) and call.func.value.id == "self"
+                    and call.func.attr == "wait"):
+                value = (call.args[0] if len(call.args) == 1 and not call.keywords else
+                         call.keywords[0].value if not call.args and len(call.keywords) == 1
+                         and call.keywords[0].arg == "duration" else None)
+                if isinstance(value, ast.Constant) and type(value.value) in (int, float) and value.value == 0:
+                    changed = True
+                    return ast.copy_location(ast.Pass(), node)
+            return node
+
+    tree = ZeroWait().visit(tree)
+    return ast.unparse(tree) + "\n" if changed else code
+
+
 def check_manim_structure(code: str) -> PolicyReport:
     report = PolicyReport()
     try:
@@ -62,6 +93,22 @@ def check_manim_structure(code: str) -> PolicyReport:
                  for node in ast.walk(construct)):
         report.violations.append(PolicyViolation(reason="场景未显示任何对象", lineno=construct.lineno,
             advice="construct 必须调用 self.add 或 self.play 显示实际图示，不能只声明对象或等待。"))
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        values = [kw.value for kw in node.keywords if kw.arg == "run_time"]
+        if (isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "self" and node.func.attr == "wait"):
+            values += node.args[:1] + [kw.value for kw in node.keywords if kw.arg == "duration"]
+        for value in values:
+            try:
+                duration = ast.literal_eval(value)
+            except (ValueError, TypeError, SyntaxError):
+                continue
+            if type(duration) in (int, float) and duration <= 0:
+                report.violations.append(PolicyViolation(lineno=node.lineno,
+                    reason="Manim 动画/等待时长必须大于 0",
+                    advice="删除无意义的零时长等待；play/run_time 使用正数，不要以零或负数补足片长。"))
     return report
 
 

@@ -26,6 +26,7 @@ from .agents.coder import CoderAgent
 from .agents.critic import CriticAgent
 from .agents.director import DirectorAgent
 from .config import Settings, engine_availability, get_settings
+from .diagnostics import error_evidence
 from .graph.builder import PipelineRunner
 from .llm import LLMClient, LLMError
 from .logging import get_logger
@@ -536,7 +537,7 @@ class PipelineService:
             renderer = build_renderer(engine, self.settings)
             result = renderer.render(request, self.runner)
         except RendererError as exc:
-            raise RenderFailed(f"渲染失败（{engine}）：{exc}") from exc
+            raise RenderFailed(error_evidence(f"渲染失败（{engine}）：{exc}", exc.detail)) from exc
 
         frames: list[str] = []
         try:

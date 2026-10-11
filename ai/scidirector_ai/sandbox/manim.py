@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..config import Settings, get_settings
+from ..diagnostics import error_evidence
 from ..logging import get_logger
 from ..sandbox.policy import PolicyReport, check_source
 from ..sandbox.runner import ExecResult, ResourceLimits, SandboxRunner
@@ -513,8 +514,8 @@ class ManimSandbox:
                 # 用户据此就能知道"是哪一行 LaTeX 错了"，而不必去翻沙盒输出。
                 message += f"（{first}）"
         else:
-            detail = result.tail(2000)
-            message = "Manim 渲染失败：" + result.summary()
+            detail = error_evidence("", (result.stdout or "") + "\n" + (result.stderr or ""))
+            message = error_evidence("Manim 渲染失败：" + result.summary(), detail, 650)
 
         raise ManimSandboxError(message, retryable=not missing_dep, detail=detail)
 
