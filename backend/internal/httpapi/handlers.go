@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -506,6 +507,7 @@ func (s *Server) HandleRejectShot(c *gin.Context) {
 func (s *Server) HandleApproveShot(c *gin.Context) {
 	jobID, shotID := c.Param("jobID"), c.Param("shotID")
 	ctx := c.Request.Context()
+	noVideo := errors.New("该镜头尚无可用视频，不能放行；请先重新生成")
 
 	// 归属校验在**锁内**完成（见 store.UpdateJobForTenant）：
 	// 「先查再改」之间存在 TOCTOU 窗口，且那也留下了「忘了查」的可能。
@@ -518,7 +520,15 @@ func (s *Server) HandleApproveShot(c *gin.Context) {
 		if err != nil {
 			return err
 		}
+		if shot.Artifact == nil || strings.TrimSpace(shot.Artifact.VideoPath) == "" {
+			return noVideo
+		}
+		info, statErr := os.Stat(shot.Artifact.VideoPath)
+		if statErr != nil || !info.Mode().IsRegular() || info.Size() == 0 {
+			return noVideo
+		}
 		shot.Status = next
+		shot.Error = ""
 		shot.UpdatedAt = time.Now().UTC()
 		// 若所有镜头都已通过，任务可以直接进入合成阶段（由 worker 兜底推进）。
 		if st := j.Stat(); st.Approved == st.Total && st.Total > 0 {
@@ -527,6 +537,10 @@ func (s *Server) HandleApproveShot(c *gin.Context) {
 		return nil
 	})
 	if err != nil {
+		if errors.Is(err, noVideo) {
+			abortWith(c, http.StatusConflict, ErrCodeConflict, noVideo.Error(), nil)
+			return
+		}
 		if errors.Is(err, errShotNotFound) {
 			abortWith(c, http.StatusNotFound, ErrCodeNotFound, "分镜不存在", err)
 			return

@@ -16,11 +16,14 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"testing"
 	"time"
 
+	"github.com/hibiken/asynq"
+	"github.com/itJinYu/SciDirector/backend/internal/queue"
 	goredis "github.com/redis/go-redis/v9"
 
 	"github.com/itJinYu/SciDirector/backend/internal/archive"
@@ -184,6 +187,7 @@ func TestApplyPipelineEventSurvivesBadPayloadAndStillTransitions(t *testing.T) {
 		Node:        "final",
 		Status:      pb.ShotStatus_SHOT_STATUS_APPROVED,
 		PayloadJson: `{"cost": {`,
+		Artifact:    &pb.RenderArtifact{VideoPath: "/existing/video.mp4"},
 		TsUnixMs:    time.Now().UnixMilli(),
 	}
 	if err := proc.applyPipelineEvent(ctx, jobID, ev); err != nil {
@@ -203,5 +207,30 @@ func TestApplyPipelineEventSurvivesBadPayloadAndStillTransitions(t *testing.T) {
 	}
 	if job.LLMUsage != nil {
 		t.Fatalf("解析失败时不该写入用量: %+v", job.LLMUsage)
+	}
+}
+
+func TestApprovedEventWithoutArtifactRequiresRecovery(t *testing.T) {
+	proc, st, ctx := newCostHarness(t)
+	id := seedCostJob(t, ctx, st)
+	if err := proc.applyPipelineEvent(ctx, id, &pb.PipelineEvent{JobId: id, ShotId: "s2", Status: pb.ShotStatus_SHOT_STATUS_APPROVED}); err != nil {
+		t.Fatal(err)
+	}
+	job, _ := st.GetJob(ctx, id)
+	if job.FindShot("s2").Status != domain.StatusAwaitingHuman {
+		t.Fatal("missing artifact was approved")
+	}
+}
+
+func TestComposeRefusesMissingShotAndRepairsLegacyApproval(t *testing.T) {
+	proc, st, ctx := newCostHarness(t)
+	id := seedCostJob(t, ctx, st)
+	err := proc.HandleComposeJob(ctx, ComposeTask{Payload: &queue.ComposeJobPayload{JobID: id}})
+	if !errors.Is(err, asynq.SkipRetry) {
+		t.Fatalf("must fail before media work: %v", err)
+	}
+	job, _ := st.GetJob(ctx, id)
+	if job.Status != domain.JobPartial || job.FindShot("s1").Status != domain.StatusAwaitingHuman {
+		t.Fatal("legacy approval not repaired")
 	}
 }

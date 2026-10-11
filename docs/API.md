@@ -782,3 +782,5 @@ Python 侧的 HTTP 是**运维与调试通道**，Go 层通过 gRPC 与它交互
                "engine": "stock", "duration_sec": 4.5,
                "narration": "…", "visual_brief": "…", "keywords": ["开场"] } ] }
 ```
+
+人工放行补充：视频路径缺失、文件不存在或文件为空时返回 HTTP 409 CONFLICT，镜头保留待处理；必须先重新生成。合成不再跳过缺失镜头。

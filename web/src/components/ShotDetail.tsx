@@ -41,7 +41,7 @@ interface Props {
 type Editor = 'none' | 'reject' | 'patch'
 
 export function ShotDetail({ jobId, shot, disabled, onChanged }: Props) {
-  const { approve, reject, patch, busy } = useShotActions(jobId, shot, onChanged)
+  const { approve, reject, patch, busy, canApprove } = useShotActions(jobId, shot, onChanged)
   const [editor, setEditor] = useState<Editor>('none')
   const [comment, setComment] = useState('')
   const [narration, setNarration] = useState(shot.narration)
@@ -153,7 +153,7 @@ export function ShotDetail({ jobId, shot, disabled, onChanged }: Props) {
 
       <Space wrap>
         {isAwaiting && (
-          <Button type="primary" loading={busy} disabled={disabled} onClick={() => void approve()}>
+          <Button type="primary" loading={busy} disabled={disabled || !canApprove} onClick={() => void approve()}>
             放行并继续
           </Button>
         )}

@@ -304,6 +304,14 @@ func (p *Processor) applyPipelineEvent(ctx context.Context, jobID string, ev *pb
 		if e := ev.GetError(); e != "" {
 			shot.Error = e
 		}
+		if shot.Status == domain.StatusApproved {
+			if shot.Artifact == nil || shot.Artifact.VideoPath == "" {
+				shot.Status, shot.Error = domain.StatusAwaitingHuman, "审核通过事件缺少视频产物，请重新生成"
+				domainEvent.Status, domainEvent.Error = shot.Status, shot.Error
+			} else {
+				shot.Error = ""
+			}
+		}
 		shot.UpdatedAt = time.Now().UTC()
 
 		// 任务整体状态跟随镜头进度推进。
@@ -686,6 +694,13 @@ func (p *Processor) HandleRenderShot(ctx context.Context, task RenderShotTask) e
 		} else {
 			s.Status = domain.StatusFailed
 			s.Error = resp.GetError()
+		}
+		if s.Status == domain.StatusApproved {
+			if s.Artifact == nil || s.Artifact.VideoPath == "" {
+				s.Status, s.Error = domain.StatusAwaitingHuman, "重做没有返回视频产物，请重新生成"
+			} else {
+				s.Error = ""
+			}
 		}
 		s.UpdatedAt = time.Now().UTC()
 

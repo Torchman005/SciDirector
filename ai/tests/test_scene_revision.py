@@ -49,7 +49,7 @@ def test_patch_rejects_fake_progress_unknown_deletion_and_conflicts() -> None:
 def test_noop_uses_generation_budget_then_applies_real_fix_before_render() -> None:
     original = spec()
     fixed = original.elements[0].model_copy(update={"font_size": 60})
-    llm = Stub([SceneRevision(explanation="改好了"), SceneRevision(upsert=[fixed])])
+    llm = Stub([SceneRevision(explanation="改好了"), SceneSpec(elements=[fixed])])
     checker = Checker()
     result = CoderAgent(llm, Settings(env="test", llm_provider="mock"), quality_checker=checker).generate(
         shot=ShotSpec(tag=SceneTag.MOTION), style_guide=StyleGuide(), attempt=2,
@@ -57,7 +57,8 @@ def test_noop_uses_generation_budget_then_applies_real_fix_before_render() -> No
     assert result.policy_ok and result.llm_attempts == 2
     assert len(checker.calls) == 1
     assert extract_scene(result.code).elements[0].font_size == 60
-    assert all(call["schema"] is SceneRevision and call["task"] == Task.SCENE_REPAIR for call in llm.calls)
+    assert llm.calls[0]["schema"] is SceneRevision and llm.calls[0]["task"] == Task.SCENE_REPAIR
+    assert llm.calls[1]["schema"] is SceneSpec and llm.calls[1]["task"] == Task.SCENE
     assert "没有改变任何画面元素" in llm.calls[1]["user"]
 
 

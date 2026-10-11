@@ -268,6 +268,7 @@ func TestApproveLastShotEnqueuesCompose(t *testing.T) {
 	job := h.seedJob(t, jobID, domain.StatusApproved, domain.StatusApproved, domain.StatusAwaitingHuman)
 
 	target := job.Shots[2].ShotID
+	h.seedVideo(t, jobID, target)
 	w := h.do(t, http.MethodPost, "/api/v1/jobs/"+jobID+"/shots/"+target+"/approve", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("放行应成功，实际 HTTP %d：%s", w.Code, w.Body.String())
@@ -299,6 +300,7 @@ func TestApproveDoesNotEnqueueComposeWhenOthersPending(t *testing.T) {
 
 	// 放行第二个；第一个仍待人工。
 	target := job.Shots[1].ShotID
+	h.seedVideo(t, jobID, target)
 	w := h.do(t, http.MethodPost, "/api/v1/jobs/"+jobID+"/shots/"+target+"/approve", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("放行应成功，实际 HTTP %d：%s", w.Code, w.Body.String())

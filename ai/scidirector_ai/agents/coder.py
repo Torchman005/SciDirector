@@ -260,6 +260,7 @@ class CoderAgent(Agent):
                                     duration_sec=shot.duration_sec, background_color=style.background_color,
                                     primary_color=style.primary_color)
         # Include the actual schema: chat_json is JSON mode, not an SDK schema API.
+        base_system = system
         schema = SceneRevision if previous is not None else SceneSpec
         if previous is not None:
             system += "\n\n" + render_prompt("coder_scene_revision")
@@ -275,7 +276,7 @@ class CoderAgent(Agent):
             scene: SceneSpec | None = None
             try:
                 parsed = self.llm.chat_json(system, user, schema,
-                                           task=Task.SCENE_REPAIR if previous is not None else Task.SCENE,
+                                           task=Task.SCENE_REPAIR if schema is SceneRevision else Task.SCENE,
                                            max_tokens=self.settings.coder_scene_max_tokens, max_parse_attempts=1)
                 scene = (apply_revision(previous, parsed) if isinstance(parsed, SceneRevision) and previous is not None
                          else SceneSpec.model_validate(parsed.model_dump()))
@@ -315,6 +316,11 @@ class CoderAgent(Agent):
             except ValueError as exc:
                 result.policy_summary = str(exc)
                 invalid = scene.model_dump_json(exclude_defaults=True) if scene else ""
+                if previous is not None and schema is SceneRevision and scene is None and count <= MAX_POLICY_REPAIRS:
+                    # Reconstruction stays within the SAME two-response budget.
+                    schema = SceneSpec
+                    system = base_system + "\n\nJSON Schema（必须符合）：\n" + json.dumps(SceneSpec.model_json_schema(), ensure_ascii=False)
+                    user += "\n局部修订无效。现在输出完整 SceneSpec（elements），按原旁白和具体反馈重建场景；保留正确科学内容，必须真正改变问题。不要再输出 upsert/remove 补丁。"
             if count <= MAX_POLICY_REPAIRS:
                 # Shared budget: schema, layout and browser failures get at most one
                 # new response in total; never fall back silently to free HTML.

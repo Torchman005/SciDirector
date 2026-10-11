@@ -41,6 +41,7 @@ export function useShotActions(jobId: string, shot: Shot, onChanged: () => void)
 
   return {
     busy,
+    canApprove: shot.status === 'AWAITING_HUMAN' && Boolean(shot.artifact?.video_path),
     approve: () =>
       run(async () => {
         const resp = await api.approve(jobId, shot.shot_id)

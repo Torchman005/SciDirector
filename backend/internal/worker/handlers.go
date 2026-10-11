@@ -156,6 +156,7 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 	var missing []string
 	for _, s := range job.Shots {
 		if s.Status != domain.StatusApproved {
+			missing = append(missing, fmt.Sprintf("#%d", s.Index))
 			continue
 		}
 		if s.Artifact == nil || s.Artifact.VideoPath == "" {
@@ -170,6 +171,23 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 			audioPath:  s.Artifact.AudioPath,
 			plannedSec: s.DurationSec,
 		})
+	}
+	if len(missing) > 0 {
+		msg := "镜头尚未就绪，不能合成缺片视频：" + strings.Join(missing, "、")
+		_, err := p.store.UpdateJob(ctx, jobID, func(j *domain.Job) error {
+			j.Status, j.Error = domain.JobPartial, msg
+			for _, s := range j.Shots {
+				if s.Status == domain.StatusApproved && (s.Artifact == nil || s.Artifact.VideoPath == "") {
+					s.Status, s.Error = domain.StatusAwaitingHuman, "视频尚未生成，请重新生成该镜头"
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+		_, _ = p.emit(ctx, &domain.Event{JobID: jobID, Node: "compose", Message: msg, Error: msg, Timestamp: time.Now().UTC()})
+		return fmt.Errorf("%w: %s", asynq.SkipRetry, msg)
 	}
 	if len(items) == 0 {
 		return fmt.Errorf("worker: 任务 %s 没有可合成的镜头产物", jobID)

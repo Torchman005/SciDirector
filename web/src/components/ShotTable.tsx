@@ -136,17 +136,17 @@ function QuickApprove({
   disabled: boolean
   onChanged: () => void
 }) {
-  const { approve, busy } = useShotActions(jobId, shot, onChanged)
+  const { approve, busy, canApprove } = useShotActions(jobId, shot, onChanged)
   return (
     <Space>
       <Button
         size="small"
         type="primary"
         loading={busy}
-        disabled={disabled}
+        disabled={disabled || !canApprove}
         onClick={() => void approve()}
       >
-        放行
+        {canApprove ? '放行' : '先生成视频'}
       </Button>
     </Space>
   )
