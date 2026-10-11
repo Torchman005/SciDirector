@@ -78,6 +78,7 @@ class RenderRequest:
     background_color: str = "#0B1020"
     #: 额外注入给子进程的环境变量（仅受信任的调用方，例如测试）。
     env_extra: dict[str, str] = field(default_factory=dict)
+    presenter_safe_area: dict[str, float] | None = None
 
     #: ---- 局部重渲染 ----
     #: 只渲染 [range_start_sec, range_end_sec) 这一段，用于「只改了一处细节」。
@@ -204,6 +205,7 @@ class ManimRenderer:
                     fps=request.fps,
                     draft=request.draft,
                     env_extra=request.env_extra,
+                    presenter_safe_area=request.presenter_safe_area,
                 )
             )
         except ManimSandboxError as exc:

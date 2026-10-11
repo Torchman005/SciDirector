@@ -212,6 +212,7 @@ class ManimRenderRequest:
     #: **仅限受信任的调用方**（例如测试注入假的 manim 模块）；
     #: 绝不能把 LLM 生成的任何内容传进来。
     env_extra: dict[str, str] = field(default_factory=dict)
+    presenter_safe_area: dict[str, float] | None = None
 
 
 @dataclass
@@ -332,9 +333,11 @@ class ManimSandbox:
         work.mkdir(parents=True, exist_ok=True)
 
         script = work / "scene.py"
-        script.write_text(request.code, encoding="utf-8")
-
         scene_class = extract_scene_class(request.code)
+        probe_source = Path(__file__).with_name("manim_probe_runtime.py").read_text(encoding="utf-8")
+        script.write_text(request.code + "\n\n" + probe_source +
+                          f"\n_scid_install_layout_probe({scene_class}, {request.presenter_safe_area!r})\n",
+                          encoding="utf-8")
         quality = request.quality or ("l" if request.draft else self.settings.sandbox_manim_quality)
         media_dir = work / "media"
 

@@ -1,7 +1,16 @@
 """Bounded recovery instructions derived from machine evidence, not user expertise."""
 from __future__ import annotations
 
-from .schemas import ShotSpec, StyleGuide
+from .schemas import CriticFeedback, ShotSpec, StyleGuide
+
+
+def preserved_science(feedback: CriticFeedback | None) -> str:
+    tasks = [t for t in (feedback.repair_tasks if feedback else [])
+             if t.task_id.startswith('science-') and t.status == 'resolved']
+    if not tasks:
+        return ""
+    return "\n已验证正确、重建时必须保留的科学条件：\n" + "\n".join(
+        f"- {t.acceptance}；已有正确表达：{t.resolution_evidence}" for t in tasks)
 
 
 def recovery_instruction(shot: ShotSpec, style: StyleGuide, *, rebuild: bool) -> str:
@@ -24,6 +33,9 @@ def recovery_instruction(shot: ShotSpec, style: StyleGuide, *, rebuild: bool) ->
                      f"y={area.y:g}～{area.y+area.height:g}。"
                      "与它相交的文字/图形移至该矩形上方或左方，连接端点随对象移动；"
                      "保留文字字号，不缩整幅画面，不留整列角色栏。")
+        if rebuild:
+            lines.append("长公式或参数说明可在上半屏先完整讲解，再淡出进入曲线/机制对比；"
+                         "必须改变信息的分组或展示阶段，不要在原来的拥挤位置反复挪动几个像素。")
     if shot.engine and shot.engine.value == "manim":
         lines.append("Manim 的 wait/play/run_time 必须为正数；无剩余时长就省略末尾 wait。"
                      "如复杂曲线/API 持续报错，用基础图元与显式数学运算重建等价机制，禁止虚构曲线。")

@@ -28,6 +28,7 @@ from ..sandbox.policy import PolicyReport, PolicyViolation, check_source
 from ..schemas import RenderEngine, ShotSpec, StyleGuide
 from ..scene import SceneSpec, compile_scene, extract_scene, validate_layout
 from ..scene_revision import SceneRevision, apply_revision, changed_elements
+from ..science_evidence import manim_review_manifest
 from .base import Agent, load_prompt, render_prompt, style_guide_to_text
 
 logger = get_logger(__name__)
@@ -172,6 +173,13 @@ class CoderAgent(Agent):
         # "示例锚定"的亏）。所以默认留在 2，需要更省再往下降。
         k = self.settings.rag_few_shot_k
         examples = [ex for ex in self.retriever.retrieve(shot, k=k) if ex.engine == engine]
+        if shot.meta.get("repair_strategy") == "rebuild":
+            # A rebuild must not simultaneously instruct the model to preserve
+            # the previous spatial arrangement. Keep mathematical facts as data.
+            if engine == "manim" and previous_code:
+                feedback_text += manim_review_manifest(previous_code)
+            previous_code = ""
+            feedback_text += "\n完整重建：重新安排所有对象的位置和阶段，禁止照抄旧坐标。保留核对正确的科学含义，修正错误定义。"
         user_prompt = self._build_user_prompt(
             shot=shot,
             style_guide=style_guide,

@@ -327,12 +327,13 @@ class PipelineNodes:
         attempt = shot_attempt(state, shot.shot_id) + 1
         feedback_text = _collect_feedback(state, shot.shot_id)
         if attempt > 1:
-            from ..recovery import recovery_instruction
+            from ..recovery import recovery_instruction, preserved_science
             limit = int(state.get("max_attempts_per_shot", 3) or 3)
             rebuild = bool(state.get("render_error")) or attempt >= limit
             shot = shot.model_copy(update={"meta": {**shot.meta,
                 "repair_strategy": "rebuild" if rebuild else "targeted"}})
-            feedback_text = recovery_instruction(shot, style, rebuild=rebuild) + "\n" + feedback_text
+            feedback_text = recovery_instruction(shot, style, rebuild=rebuild) + preserved_science(
+                (state.get("feedback") or {}).get(shot.shot_id)) + "\n" + feedback_text
 
         started = time.monotonic()
         try:
@@ -482,6 +483,7 @@ class PipelineNodes:
             overlay_text=shot.meta.get("overlay_text", ""),
             primary_color=style.primary_color,
             background_color=style.background_color,
+            presenter_safe_area=style.presenter_safe_area.model_dump() if style.presenter_safe_area else None,
         )
 
         started = time.monotonic()

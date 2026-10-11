@@ -66,6 +66,10 @@ def test_only_explicit_source_proof_closes_science_tasks_and_empty_audit_is_inva
     correct=ScienceFinding(verdict='correct',target='f',evidence='formula now matches definition')
     assert resolve_science(previous,ScienceAudit(findings=[correct])).repair_tasks[0].status=='open'
     proof=ScienceResolution(task_id=task.task_id,resolved=True,evidence='actual corrected expression')
-    assert resolve_science(previous,ScienceAudit(findings=[correct],resolutions=[proof])).repair_tasks[0].status=='resolved'
+    resolved=resolve_science(previous,ScienceAudit(findings=[correct],resolutions=[proof]))
+    assert resolved.repair_tasks[0].status=='resolved'
+    from scidirector_ai.recovery import preserved_science
+    assert 'correct definition' in preserved_science(resolved)
+    assert 'actual corrected expression' in preserved_science(resolved)
     assert resolve_science(previous,ScienceAudit(findings=[wrong],resolutions=[proof])).repair_tasks[0].status=='open'
     with pytest.raises(ValueError):ScienceAudit(findings=[])

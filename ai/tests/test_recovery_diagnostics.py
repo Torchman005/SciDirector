@@ -42,3 +42,14 @@ def test_rich_traceback_final_cause_survives_every_bounded_layer(tmp_path):
     assert "duration <= 0" in error.value.detail[:300]
     assert "duration <= 0" in error_evidence(str(error.value), error.value.detail, 800)
     assert len(error_evidence("failed", output, 800)) <= 800
+
+
+def test_manim_rebuild_cannot_reinject_bad_spatial_baseline():
+    agent=make_agent([VALID_MANIM])
+    shot=make_shot().model_copy(update={'meta':{'repair_strategy':'rebuild'}})
+    old=VALID_MANIM+'\n        label=Text("meaningful fact").move_to([99,99,0])'
+    result=agent.generate(shot=shot,style_guide=StyleGuide(),previous_code=old)
+    prompt=agent.llm.calls[0]['user']
+    assert result.policy_ok and 'meaningful fact' in prompt
+    assert '99,99' not in prompt and 'move_to([99' not in prompt
+    assert '上一版代码（以此为基础修改）' not in prompt

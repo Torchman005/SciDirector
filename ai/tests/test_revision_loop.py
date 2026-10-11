@@ -83,13 +83,20 @@ def test_empty_comment_uses_system_error_and_review_and_preserves_failed_source(
     svc._coder=SimpleNamespace(generate=generate)
     svc._critic=SimpleNamespace(review=lambda **kw:SimpleNamespace(feedback=feedback(True),degraded=False))
     monkeypatch.setattr(svc,'_render_shot',render)
-    result=svc.revise_shot(job_id='test',shot=ShotSpec(tag=SceneTag.MATH,code='original'),
-        human_comment='',attempt=12,style_guide=StyleGuide(),previous_error='wait(0.0) failed',previous_feedback=feedback())
+    review=feedback()
+    review.repair_tasks.append(RepairTask(task_id='science-1-01',category='logic',severity='blocking',
+        start_sec=0,end_sec=5,target='curve',evidence='错误函数',instruction='明确切片条件',acceptance='显示固定参数',
+        status='resolved',resolution_evidence='W=V=1,b=c=0'))
+    result=svc.revise_shot(job_id='test',shot=ShotSpec(tag=SceneTag.MATH,code='original',
+        visual_brief='错误的单变量曲线草案',beats=['错误的旧节拍']),
+        human_comment='',attempt=12,style_guide=StyleGuide(),previous_error='wait(0.0) failed',previous_feedback=review)
     assert result[2].passed and len(calls)==2
     assert 'wait(0.0)' in calls[0]['feedback_text'] and 'r2-01' in calls[0]['feedback_text']
     assert calls[1]['previous_code']=='broken'
     assert calls[1]['shot'].meta['repair_strategy']=='rebuild'
     assert 'ValueError' in calls[1]['feedback_text']
+    assert '显示固定参数' in calls[1]['feedback_text'] and 'W=V=1,b=c=0' in calls[1]['feedback_text']
+    assert calls[1]['shot'].visual_brief!='错误的单变量曲线草案' and not calls[1]['shot'].beats
 
 
 def test_nonretryable_environment_failure_stops_without_burning_three_rounds(tmp_path, monkeypatch):

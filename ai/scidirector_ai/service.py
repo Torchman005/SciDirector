@@ -27,7 +27,7 @@ from .agents.critic import CriticAgent
 from .agents.director import DirectorAgent
 from .config import Settings, engine_availability, get_settings
 from .diagnostics import error_evidence
-from .recovery import recovery_instruction
+from .recovery import recovery_instruction, preserved_science
 from .graph.builder import PipelineRunner
 from .llm import LLMClient, LLMError
 from .logging import get_logger
@@ -424,6 +424,7 @@ class PipelineService:
 
         current = shot
         request_context = "用户期望：" + (human_comment.strip() or "根据系统诊断自动修复并复审")
+        request_context += preserved_science(previous_feedback)
         if previous_error:
             request_context += "\n系统记录的失败原因：\n" + error_evidence("", previous_error, 2400)
         feedback_text = request_context + "\n" + _feedback_to_text(previous_feedback)
@@ -443,6 +444,16 @@ class PipelineService:
                            (rounds > 1 and revision_round == rounds - 1))
                 generation_shot = current.model_copy(update={"meta": {
                     **current.meta, "repair_strategy": "rebuild" if rebuild else "targeted"}})
+                science_context = [t for review in (previous_feedback, previous_review) if review
+                                   for t in review.repair_tasks if t.task_id.startswith('science-')]
+                if rebuild and science_context:
+                    # A known-invalid director sketch must not keep winning over
+                    # corrected scientific requirements in every regeneration.
+                    generation_shot = generation_shot.model_copy(update={
+                        "visual_brief": "依据旁白与反馈中的科学定义、限定条件重新设计图示；"
+                                        "按验收目标选择正确机制图或有明确假设的曲线，重新安排布局。",
+                        "beats": [],
+                    })
                 instructions = recovery_instruction(current, style_guide, rebuild=rebuild)
                 result = exact_result if revision_round == 0 and exact_result is not None else self.coder.generate(
                     shot=generation_shot, style_guide=style_guide, attempt=round_attempt,
@@ -492,7 +503,7 @@ class PipelineService:
                 return last_valid
             current, previous_review = updated, outcome.feedback
             evidence_before = artifact
-            feedback_text = request_context + "\n" + _feedback_to_text(previous_review)
+            feedback_text = request_context + preserved_science(previous_review) + "\n" + _feedback_to_text(previous_review)
 
         if last_valid:
             return last_valid
@@ -546,6 +557,7 @@ class PipelineService:
             overlay_text=shot.meta.get("overlay_text", ""),
             primary_color=style_guide.primary_color,
             background_color=style_guide.background_color,
+            presenter_safe_area=style_guide.presenter_safe_area.model_dump() if style_guide.presenter_safe_area else None,
             range_start_sec=range_start_sec,
             range_end_sec=range_end_sec,
         )
