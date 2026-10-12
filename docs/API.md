@@ -48,6 +48,14 @@
 
 ## 二、REST（Go 网关，默认 `:8080`）
 
+### 分镜视觉素材
+
+- `POST /api/v1/assets/visuals`：multipart `file`、`role`（`character` / `prop` / `background`）和可选 `description`。只接受 PNG/JPEG，最大 2 MB、4096 × 4096、1200 万像素；PNG 保留透明度。素材按账号隔离，服务端签发 `asset_id`。
+- `GET /api/v1/assets/visuals`：列出当前账号已导入的图片素材；每个账号最多 48 张。
+- `GET /api/v1/assets/visuals/:id`：预览图片；只允许访问当前账号素材。
+
+生成请求的 `style_guide.scene_assets` 只接受 `{ "asset_id": "..." }` 引用项，最多 6 张且合计不超过 8 MB。服务端核实租户归属后补全图片元数据和渲染路径。SceneSpec 的 `image` 元素可以引用已选 ID，并参与安全布局、重复 seek 和离线 HTML 渲染；不能指定 URL 或文件系统路径。本 API 不提供删除功能。
+
 ### Live2D 模型素材
 
 `POST /api/v1/assets/live2d` 接收 multipart `file`（模型 ZIP，最大 100 MB），返回 `{ok:true,data:{asset_id,filename,mouth_parameters}}`。校验及部署要求见 [LIVE2D.md](LIVE2D.md)。

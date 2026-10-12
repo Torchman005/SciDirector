@@ -32,6 +32,9 @@ func validateStyleGuide(sg map[string]any) error {
 	if sg == nil {
 		return nil
 	}
+	if _, exists := sg["scene_asset_sources"]; exists {
+		return fmt.Errorf("scene_asset_sources 为服务端内部字段")
+	}
 	if raw, exists := sg["animation_style"]; exists && raw != nil {
 		if value, ok := raw.(string); !ok || (value != "precise" && value != "anime") {
 			return fmt.Errorf("animation_style 必须为 precise 或 anime")

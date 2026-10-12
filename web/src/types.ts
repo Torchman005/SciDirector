@@ -189,6 +189,20 @@ export interface StyleGuide {
   primary_color?: string
   background_color?: string
   min_font_size?: number
+  /** 只提交当前租户素材库签发的 ID；服务端重新解析元数据和路径。 */
+  scene_assets?: { asset_id: string }[]
+}
+
+export interface VisualAsset {
+  asset_id: string
+  filename: string
+  mime_type: 'image/png' | 'image/jpeg'
+  role: 'character' | 'prop' | 'background'
+  description?: string
+  width: number
+  height: number
+  size_bytes: number
+  preview_url?: string
 }
 
 export interface Effects {

@@ -6,6 +6,7 @@ No model supplied HTML, CSS, expressions or asset URLs are executed.
 from __future__ import annotations
 
 import json
+import base64
 import math
 import re
 from functools import lru_cache
@@ -74,7 +75,7 @@ class GridCell(SceneModel):
 
 class Element(SceneModel):
     id: str = Field(pattern=r"^[A-Za-z][A-Za-z0-9_-]{0,47}$")
-    kind: Literal["text", "card", "code", "bars", "rect", "circle", "line", "polyline", "character", "icon", "grid"]
+    kind: Literal["text", "card", "code", "bars", "rect", "circle", "line", "polyline", "character", "icon", "grid", "image"]
     box: Box
     text: str = Field(default="", max_length=4000)
     font_size: int = Field(default=48, ge=12, le=200)
@@ -96,6 +97,8 @@ class Element(SceneModel):
     cells: list[GridCell] = Field(default_factory=list, max_length=64)
     columns: int = Field(default=4, ge=1, le=8)
     flow: bool = False
+    asset_id: str = Field(default="", pattern=r"^$|^[0-9a-f]{32}$")
+    image_fit: Literal["contain", "cover"] = "contain"
 
     @model_validator(mode="before")
     @classmethod
@@ -122,6 +125,10 @@ class Element(SceneModel):
 
     @model_validator(mode="after")
     def content_and_time(self) -> Element:
+        if self.kind == "image" and not self.asset_id:
+            raise ValueError(f"#{self.id} 图片必须引用已选择的 asset_id")
+        if self.kind != "image" and self.asset_id:
+            raise ValueError(f"#{self.id} asset_id 仅用于 image")
         if self.kind == "grid" and not self.cells:
             raise ValueError(f"#{self.id} grid 必须提供 cells 标签；示意网格不编造数值")
         if self.kind != "grid" and self.cells:
@@ -136,7 +143,7 @@ class Element(SceneModel):
             raise ValueError(f"#{self.id} 柱状图必须提供真实数据及单位")
         if self.kind != "bars" and (self.data or self.unit):
             raise ValueError(f"#{self.id} 只有 bars 可以包含 data/unit")
-        if self.kind in {"rect", "circle", "line", "polyline", "character", "icon", "grid"} and self.text:
+        if self.kind in {"rect", "circle", "line", "polyline", "character", "icon", "grid", "image"} and self.text:
             raise ValueError(f"#{self.id} 图形文字请使用独立 text 元素")
         if self.kind not in {"line", "polyline"} and self.arrow:
             raise ValueError(f"#{self.id} 只有 line 支持 arrow")
@@ -148,7 +155,7 @@ class Element(SceneModel):
             raise ValueError(f"#{self.id} polyline 至少需要两个 points")
         if self.kind != "polyline" and self.points:
             raise ValueError(f"#{self.id} points 仅用于 polyline")
-        if self.kind not in {"rect", "circle", "line", "polyline", "character", "icon"} and any(k.rotation for k in self.keyframes):
+        if self.kind not in {"rect", "circle", "line", "polyline", "character", "icon", "image"} and any(k.rotation for k in self.keyframes):
             raise ValueError(f"#{self.id} 文字/图表不可旋转；请用几何元素表达旋转")
         if self.kind not in {"code", "bars", "line", "polyline", "grid"} and any(k.reveal != 1 for k in self.keyframes):
             raise ValueError(f"#{self.id} reveal 仅支持 code/bars/line/polyline；其他元素请用 opacity")
@@ -175,6 +182,8 @@ def validate_layout(scene: SceneSpec, *, width: int, height: int, duration: floa
                     style: StyleGuide) -> None:
     """Reject geometric/time defects before launching Chromium; text fit is measured there."""
     for el in scene.elements:
+        if el.kind == "image" and el.asset_id not in {asset.asset_id for asset in style.scene_assets}:
+            raise ValueError(f"#{el.id} 引用了未选中的图片素材；只能使用本任务 scene_assets 的 asset_id")
         text = el.kind in {"text", "card", "code", "bars", "grid"}
         if text and el.font_size < style.min_font_size:
             raise ValueError(f"#{el.id} 字号 {el.font_size}px 小于下限 {style.min_font_size}px")
@@ -184,7 +193,9 @@ def validate_layout(scene: SceneSpec, *, width: int, height: int, duration: floa
                 raise ValueError(f"#{el.id} 缩放后的实际字号 {el.font_size * k.scale:g}px 过小；提高字号或 scale")
             x, y = b.x + k.dx - b.width * (k.scale - 1) / 2, b.y + k.dy - b.height * (k.scale - 1) / 2
             a = style.presenter_safe_area
-            if a and not el.decorative and k.opacity > .1 and x < a.x+a.width and x+b.width*k.scale > a.x and y < a.y+a.height and y+b.height*k.scale > a.y:
+            # Image boxes can contain large transparent margins. The browser
+            # checks decoded painted pixels against this same presenter area.
+            if a and el.kind != "image" and not el.decorative and k.opacity > .1 and x < a.x+a.width and x+b.width*k.scale > a.x and y < a.y+a.height and y+b.height*k.scale > a.y:
                 raise ValueError(f"#{el.id} 在 time={k.time:g} 进入右下讲解员区域；移动实际内容，只局部避让，不要缩小整幅画面")
             # An entrance can begin outside the viewport while fully transparent.
             # Safe margins are a design recommendation, actual clipping is a defect.
@@ -235,10 +246,25 @@ def compile_scene(scene: SceneSpec, *, width: int, height: int, duration: float,
         return "#" + "".join(c * 2 for c in value[1:]) if len(value) == 4 else value
     background = resolve_background_style(scene.background if style.background_style == "auto" else style.background_style)
     background_css = background.css.format(bg=full_hex(style.background_color), primary=full_hex(style.primary_color))
+    image_data: dict[str, str] = {}
+    allowed = {asset.asset_id: asset for asset in style.scene_assets}
+    for asset_id in sorted({el.asset_id for el in scene.elements if el.kind == "image"}):
+        asset = allowed[asset_id]
+        source = style.scene_asset_sources.get(asset_id)
+        if not source:
+            raise ValueError(f"图片素材 {asset_id} 缺少服务端解析路径")
+        path = Path(source).resolve()
+        suffix = ".png" if asset.mime_type == "image/png" else ".jpg"
+        if (path.stem != asset_id or path.suffix.lower() != suffix or
+                path.parent.parent.name != "visuals" or not re.fullmatch(r"[0-9a-f]{64}", path.parent.name)):
+            raise ValueError(f"图片素材 {asset_id} 的路径无效")
+        if not path.is_file() or path.stat().st_size != asset.size_bytes or asset.size_bytes > 2 << 20:
+            raise ValueError(f"图片素材 {asset_id} 已丢失或内容被改动")
+        image_data[asset_id] = f"data:{asset.mime_type};base64,{base64.b64encode(path.read_bytes()).decode('ascii')}"
     # Reserve the final reading hold in the compiler rather than forcing the LLM
     # to calculate a duration-specific fraction. An end keyframe at 1 is legal.
     animated_until = 1 - min(FINAL_HOLD_SEC, duration * FINAL_HOLD_RATIO) / duration
-    payload = {"scene": scene.model_dump(), "width": width, "height": height,
+    payload = {"scene": scene.model_dump(), "imageData": image_data, "width": width, "height": height,
                "animatedUntil": animated_until,
                "duration": duration, "style": {"background": style.background_color,
                "primary": style.primary_color, "font": style.font_family, "theme": style.theme,

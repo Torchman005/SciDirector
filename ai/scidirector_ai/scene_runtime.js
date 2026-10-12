@@ -3,6 +3,9 @@
   'use strict';
   const config = JSON.parse(document.getElementById('scid-scene-v1').textContent);
   const {scene, width:W, height:H, duration:D, style} = config;
+  const imageData=config.imageData || {};
+  window.__ready=false;
+  window.__loadError='';
   const animatedUntil=config.animatedUntil || 1;
   // A shared timeline preserves synchronization between connected objects.
   const timelineEnd=scene.elements.some(e=>e.keyframes.some(k=>k.time>animatedUntil))?animatedUntil:1;
@@ -55,6 +58,7 @@
     }
     return {...defaults,...a};
   };
+  const imageLoads=[];
   const nodes=scene.elements.map(el => {
     const root=make('div',stage,'scene-element'); root.id=el.id;
     root.setAttribute('data-scene-kind',el.kind);
@@ -80,6 +84,21 @@
         }
       }
       record.content=make('span',root);record.content.textContent=el.text;
+    } else if(el.kind==='image') {
+      const src=imageData[el.asset_id];
+      if(typeof src!=='string' || !src.startsWith('data:image/')) throw new Error(`图片素材 ${el.asset_id} 没有可用数据`);
+      const img=make('img',root,'scene-image');
+      img.alt=''; img.draggable=false;
+      Object.assign(img.style,{display:'block',width:'100%',height:'100%',objectFit:el.image_fit||'contain'});
+      imageLoads.push(new Promise((resolve,reject)=>{
+        img.onload=()=>{ if(img.naturalWidth&&img.naturalHeight) resolve(); else reject(new Error(`图片素材 ${el.asset_id} 解码为空`)); };
+        img.onerror=()=>reject(new Error(`图片素材 ${el.asset_id} 解码失败`));
+        img.src=src;
+        if(img.complete) {
+          if(img.naturalWidth&&img.naturalHeight) resolve();
+          else reject(new Error(`图片素材 ${el.asset_id} 解码失败`));
+        }
+      }));
     } else if(el.kind==='grid') {
       const columns=Math.min(el.columns,el.cells.length);
       Object.assign(root.style,{display:'grid',gridTemplateColumns:`repeat(${columns},1fr)`,gridTemplateRows:`repeat(${Math.ceil(el.cells.length/columns)},1fr)`,gap:'10px'});
@@ -177,5 +196,9 @@
       }
     }
   };
-  window.__seek(0);window.__ready=true;
+  window.__seek(0);
+  Promise.all(imageLoads).then(()=>{window.__ready=true;}).catch(error=>{
+    window.__loadError=String(error);
+    window.__ready=false;
+  });
 })();

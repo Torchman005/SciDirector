@@ -25,6 +25,7 @@ import (
 
 	"github.com/itJinYu/SciDirector/backend/internal/ai"
 	"github.com/itJinYu/SciDirector/backend/internal/archive"
+	"github.com/itJinYu/SciDirector/backend/internal/assets"
 	"github.com/itJinYu/SciDirector/backend/internal/config"
 	"github.com/itJinYu/SciDirector/backend/internal/domain"
 	"github.com/itJinYu/SciDirector/backend/internal/logging"
@@ -106,6 +107,10 @@ func (p *Processor) HandleGenerateJob(ctx context.Context, task GenerateTask) er
 
 	// 读到任务后立刻绑定归属，让后续所有日志都带 tenant_id。
 	ctx = bindTenant(ctx, job)
+	styleGuide, err := p.resolvedShotStyleGuide(job, nil)
+	if err != nil {
+		return fmt.Errorf("worker: 分镜视觉素材不可用: %w", err)
+	}
 
 	lg.Info("开始执行生成任务",
 		"target_duration_sec", job.TargetDurationSec,
@@ -121,7 +126,7 @@ func (p *Processor) HandleGenerateJob(ctx context.Context, task GenerateTask) er
 	req := &pb.RunPipelineRequest{
 		JobId:              jobID,
 		RawScript:          job.RawScript,
-		StyleGuideJson:     mustJSON(shotStyleGuide(job, nil)),
+		StyleGuideJson:     mustJSON(styleGuide),
 		TargetDurationSec:  job.TargetDurationSec,
 		MaxAttemptsPerShot: int32(p.cfg.Pipeline.ShotMaxAttempts),
 		Locale:             job.Locale,
@@ -567,12 +572,16 @@ func (p *Processor) HandleRenderShot(ctx context.Context, task RenderShotTask) e
 	partial := task.Payload.WantsPartialRender() &&
 		shot.Artifact != nil && shot.Artifact.VideoPath != ""
 
+	styleGuide, err := p.resolvedShotStyleGuide(job, shot)
+	if err != nil {
+		return fmt.Errorf("worker: 分镜视觉素材不可用: %w", err)
+	}
 	req := &pb.ReviseShotRequest{
 		JobId:          jobID,
 		Shot:           pbconv.ShotToPB(shot),
 		HumanComment:   task.Payload.HumanComment,
 		Attempt:        int32(task.Payload.Attempt),
-		StyleGuideJson: mustJSON(shotStyleGuide(job, shot)),
+		StyleGuideJson: mustJSON(styleGuide),
 		OutputDir:      outputDir,
 	}
 	req.PreviousError = shot.Error
@@ -812,6 +821,57 @@ func shotStyleGuide(job *domain.Job, shot *domain.Shot) map[string]any {
 		out["background_style"] = shot.BackgroundStyle
 	}
 	return out
+}
+
+// Resolve selected IDs at execution time, after the tenant has been loaded
+// from the job. The browser payload is an internal path map made by Go.
+func (p *Processor) resolvedShotStyleGuide(job *domain.Job, shot *domain.Shot) (map[string]any, error) {
+	out := shotStyleGuide(job, shot)
+	raw, ok := out["scene_assets"]
+	if !ok || raw == nil {
+		return out, nil
+	}
+	var selections []any
+	switch typed := raw.(type) {
+	case []any:
+		selections = typed
+	case []assets.VisualAsset:
+		for _, asset := range typed {
+			selections = append(selections, asset)
+		}
+	default:
+		return nil, fmt.Errorf("scene_assets 的存储格式无效")
+	}
+	store, err := assets.NewStore(filepath.Join(p.cfg.Media.WorkDir, "assets"))
+	if err != nil {
+		return nil, err
+	}
+	sources := make(map[string]string, len(selections))
+	resolved := make([]assets.VisualAsset, 0, len(selections))
+	for _, selected := range selections {
+		var id string
+		switch entry := selected.(type) {
+		case map[string]any:
+			id, _ = entry["asset_id"].(string)
+		case assets.VisualAsset:
+			id = entry.AssetID
+		}
+		if len(id) != 32 {
+			return nil, fmt.Errorf("scene_assets 包含无效的 asset_id")
+		}
+		if _, duplicate := sources[id]; duplicate {
+			return nil, fmt.Errorf("scene_assets 包含重复的 asset_id")
+		}
+		asset, path, err := store.ResolveVisual(job.TenantID, id)
+		if err != nil {
+			return nil, fmt.Errorf("视觉素材 %s 已丢失: %w", id, err)
+		}
+		sources[id] = path
+		resolved = append(resolved, asset)
+	}
+	out["scene_assets"] = resolved
+	out["scene_asset_sources"] = sources
+	return out, nil
 }
 
 // isRetryDelivery 报告当前这次执行是不是 Asynq 的**重投**（而非首跑）。

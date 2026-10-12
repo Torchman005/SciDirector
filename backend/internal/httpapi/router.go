@@ -73,6 +73,9 @@ func NewRouter(s *Server, deps Deps) *gin.Engine {
 		// 素材上传：目前只有背景音乐。请求方拿到 asset_id 后，
 		// 在 /generate 的 effects.bgm.asset_id 里引用它。
 		v1.POST("/assets", s.HandleUploadAsset)
+		v1.POST("/assets/visuals", s.HandleUploadVisual)
+		v1.GET("/assets/visuals", s.HandleListVisuals)
+		v1.GET("/assets/visuals/:id", s.HandleGetVisual)
 		v1.POST("/assets/live2d", s.HandleUploadLive2D)
 		v1.POST("/assets/portraits", s.HandleUploadPortrait)
 		v1.GET("/assets/portraits/:id/:state", s.HandlePortraitPreview)

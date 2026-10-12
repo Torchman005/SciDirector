@@ -3,11 +3,61 @@ package worker
 import (
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/itJinYu/SciDirector/backend/internal/assets"
+	"github.com/itJinYu/SciDirector/backend/internal/config"
 	"github.com/itJinYu/SciDirector/backend/internal/domain"
 	pb "github.com/itJinYu/SciDirector/backend/internal/pb/scidirector/v1"
 )
+
+func TestSelectedVisualsSurviveJobSerializationAndShotRevision(t *testing.T) {
+	work := t.TempDir()
+	store, err := assets.NewStore(filepath.Join(work, "assets"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(work, "image.png")
+	if err := os.WriteFile(source, []byte("trusted-image-test"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	asset, path, err := store.SaveVisual("tenant-a", source, ".png", assets.VisualAsset{
+		Filename: "portrait.png", MIMEType: "image/png", Role: "character", Width: 1, Height: 1, SizeBytes: int64(len("trusted-image-test")),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	processor := &Processor{cfg: &config.Config{Media: config.MediaConfig{WorkDir: work}}}
+	job := &domain.Job{TenantID: "tenant-a", StyleGuide: map[string]any{"scene_assets": []assets.VisualAsset{asset}}}
+	for _, current := range []*domain.Job{job} {
+		for _, shot := range []*domain.Shot{nil, {BackgroundStyle: "grid"}} {
+			resolved, err := processor.resolvedShotStyleGuide(current, shot)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if resolved["scene_asset_sources"].(map[string]string)[asset.AssetID] != path {
+				t.Fatal("lost trusted image path")
+			}
+			if selected := resolved["scene_assets"].([]assets.VisualAsset); len(selected) != 1 || selected[0].AssetID != asset.AssetID {
+				t.Fatal("lost trusted metadata")
+			}
+		}
+	}
+	raw, _ := json.Marshal(job)
+	var restored domain.Job
+	if err := json.Unmarshal(raw, &restored); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := processor.resolvedShotStyleGuide(&restored, nil); err != nil {
+		t.Fatalf("Redis-shaped job lost images: %v", err)
+	}
+	restored.TenantID = "tenant-b"
+	if _, err := processor.resolvedShotStyleGuide(&restored, nil); err == nil {
+		t.Fatal("foreign image accepted")
+	}
+}
 
 func TestInterruptedPipelineLeavesUnreviewedShotsPending(t *testing.T) {
 	job := &domain.Job{Shots: []*domain.Shot{

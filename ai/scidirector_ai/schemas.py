@@ -310,6 +310,19 @@ class SafeArea(BaseModel):
         return self
 
 
+class SceneAsset(BaseModel):
+    """Metadata supplied by Go after tenant-scoped ID resolution."""
+
+    asset_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    filename: str = Field(max_length=180)
+    mime_type: Literal["image/png", "image/jpeg"]
+    role: Literal["character", "prop", "background"]
+    description: str = Field(default="", max_length=240)
+    width: int = Field(ge=1, le=4096)
+    height: int = Field(ge=1, le=4096)
+    size_bytes: int = Field(ge=1, le=2 << 20)
+
+
 class StyleGuide(BaseModel):
     """风格约束。跨镜头一致性靠它维持（避免每个镜头风格漂移）。"""
 
@@ -337,6 +350,11 @@ class StyleGuide(BaseModel):
     extra: dict[str, Any] = Field(default_factory=dict)
     animation_style: Literal["precise", "anime"] = "precise"
     presenter_safe_area: SafeArea | None = None
+    scene_assets: list[SceneAsset] = Field(default_factory=list, max_length=6)
+    # Internal paths are created by the Go worker from tenant-owned IDs.
+    # The graph checkpointer serializes StyleGuide between nodes. Keep the
+    # server-resolved paths in that private checkpoint or later shots lose them.
+    scene_asset_sources: dict[str, str] = Field(default_factory=dict, repr=False)
 
     @model_validator(mode="after")
     def _apply_preset(self) -> StyleGuide:

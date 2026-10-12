@@ -144,6 +144,10 @@ func (s *Server) HandleGenerate(c *gin.Context) {
 		abortWith(c, http.StatusBadRequest, ErrCodeBadRequest, "风格参数非法", err)
 		return
 	}
+	if err := s.resolveVisualSelections(tenant, req.StyleGuide); err != nil {
+		abortWith(c, http.StatusBadRequest, ErrCodeBadRequest, "分镜图片素材无效", err)
+		return
+	}
 
 	effects, err := s.resolveEffects(c, tenant, req.Effects)
 	if err != nil {

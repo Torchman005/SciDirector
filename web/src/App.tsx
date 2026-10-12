@@ -30,6 +30,7 @@ import { api, errorText } from './api'
 import { EventTimeline } from './components/EventTimeline'
 import { ShotTable } from './components/ShotTable'
 import { PresenterSettings } from './components/PresenterSettings'
+import { SceneAssetSettings } from './components/SceneAssetSettings'
 import { deriveReviewSummary, deriveStat, shotsOf } from './stream'
 import { useJobStream } from './useJobStream'
 import { BACKGROUND_STYLES, STYLE_PRESETS, formatTime, jobStatus } from './display'
@@ -99,6 +100,8 @@ export function App() {
   const [submitting, setSubmitting] = useState(false)
   const [presenter, setPresenter] = useState<Effects['presenter']>()
   const [presenterBusy, setPresenterBusy] = useState(false)
+  const [sceneAssetIds, setSceneAssetIds] = useState<string[]>([])
+  const [sceneAssetsBusy, setSceneAssetsBusy] = useState(false)
   const [refreshTick, setRefreshTick] = useState(0)
   const [estimate, setEstimate] = useState<number | null>(null)
   const [estimateBasis, setEstimateBasis] = useState('')
@@ -238,7 +241,7 @@ export function App() {
   }
 
   async function submit(values: SubmitForm) {
-    if (presenterBusy || bgmBusy || submitting) return
+    if (presenterBusy || bgmBusy || sceneAssetsBusy || submitting) return
     setSubmitting(true)
     try {
       const effects: Effects = {}
@@ -272,6 +275,7 @@ export function App() {
           animation_style: values.animation_style,
           preset: values.preset,
           background_style: values.background_style,
+          scene_assets: sceneAssetIds.map(asset_id => ({ asset_id })),
         },
         effects,
       }
@@ -509,6 +513,7 @@ export function App() {
                 </Col>
               </Row>
 
+              <SceneAssetSettings selected={sceneAssetIds} onChange={setSceneAssetIds} onBusyChange={setSceneAssetsBusy} />
               <PresenterSettings value={presenter} onChange={setPresenter} onBusyChange={setPresenterBusy} />
               <Form.Item label="背景音乐" style={{ marginBottom: 8 }}>
                 {bgm ? (
@@ -602,7 +607,7 @@ export function App() {
               </Form.Item>
 
               <Button type="primary" size="large" htmlType="submit" aria-label="开始生成" aria-busy={submitting}
-                loading={submitting} disabled={submitting || bgmBusy || presenterBusy}>
+                loading={submitting} disabled={submitting || bgmBusy || presenterBusy || sceneAssetsBusy}>
                 开始生成
               </Button>
             </Form>

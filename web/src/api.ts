@@ -24,6 +24,7 @@ import type {
   Shot,
   ShotsResponse,
   UploadAssetResponse,
+  VisualAsset,
 } from './types'
 
 /** 后端不可用时的统一异常类型。 */
@@ -106,6 +107,22 @@ async function uploadPresenter(file: File, kind: 'live2d'|'portraits', signal?: 
 export const api = {
   uploadLive2D: (file: File, signal?: AbortSignal) => uploadPresenter(file,'live2d',signal),
   uploadPortrait: (file: File, signal?: AbortSignal) => uploadPresenter(file,'portraits',signal),
+  listVisuals: () => request<VisualAsset[]>('/api/v1/assets/visuals'),
+  visualUrl: (id: string) => `/api/v1/assets/visuals/${encodeURIComponent(id)}`,
+  uploadVisual: async (file: File, role: VisualAsset['role'], description: string): Promise<VisualAsset> => {
+    const form = new FormData()
+    form.append('file', file)
+    form.append('role', role)
+    form.append('description', description)
+    const resp = await fetch('/api/v1/assets/visuals', { method: 'POST', body: form, headers: { Accept: 'application/json' } })
+    let body: { data?: VisualAsset; message?: string; code?: string }
+    try { body = await resp.json() }
+    catch { throw new Error(`图片上传未完成（HTTP ${resp.status}），请检查服务连接。`) }
+    if (resp.status === 404 && body.code === 'NOT_FOUND')
+      throw new Error('图片素材接口不存在，请重建并重启 Go API。')
+    if (!resp.ok || !body.data) throw new Error(body.message || `图片上传失败（HTTP ${resp.status}）`)
+    return body.data
+  },
   /** 提交生成任务。 */
   generate: (req: GenerateRequest) =>
     request<GenerateResponse>('/api/v1/generate', { method: 'POST', ...json(req) }),

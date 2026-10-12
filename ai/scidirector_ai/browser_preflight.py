@@ -74,7 +74,7 @@ MEASURE_JS = r"""({minFont,presenterArea}) => {
     const a=presenterArea, safe={left:a.x*innerWidth,right:(a.x+a.width)*innerWidth,top:a.y*innerHeight,bottom:(a.y+a.height)*innerHeight};
     for(const t of texts) if(t.rects.some(r=>overlap(r,safe)>1)) issues.push(`${t.id} 文字进入右下讲解员叠层区域；局部调整布局，保持主画面满幅`);
     for(const el of document.querySelectorAll('[data-scene-kind]'))
-      if(el.dataset.decorative!=='true' && visible(el) && overlap(el.getBoundingClientRect(),safe)>4)
+      if(el.dataset.sceneKind!=='image' && el.dataset.decorative!=='true' && visible(el) && overlap(el.getBoundingClientRect(),safe)>4)
         issues.push(`#${el.id} 动画进入右下讲解员叠层区域；修正运动路径或局部布局`);
   }
   for(let i=0;i<texts.length;i++) for(let j=i+1;j<texts.length;j++){
@@ -86,7 +86,43 @@ MEASURE_JS = r"""({minFont,presenterArea}) => {
     }
   }
   const shapes=Array.from(document.querySelectorAll('[data-scene-kind]'))
-    .filter(e=>['rect','circle','card','character','icon','grid'].includes(e.dataset.sceneKind)&&visible(e));
+    .filter(e=>['rect','circle','card','character','icon','grid','image'].includes(e.dataset.sceneKind)&&visible(e));
+  // Imported transparent portraits often contain wide empty margins. Inspect
+  // their decoded alpha, then map the painted pixels through object-fit before
+  // testing foreground occlusion. Never treat the full <img> box as opaque.
+  const paintedBox=e=>{
+    if(e.dataset.sceneKind!=='image') return e.getBoundingClientRect();
+    const img=e.querySelector('img');
+    if(!img || !img.naturalWidth || !img.naturalHeight) return e.getBoundingClientRect();
+    // The axis-aligned alpha mapping below assumes no rotation. For rotated
+    // artwork, use the full swept box rather than underreport an occlusion.
+    const transform=getComputedStyle(e).transform;
+    if(transform!=='none'){
+      const matrix=new DOMMatrixReadOnly(transform);
+      if(Math.abs(matrix.b)>0.001 || Math.abs(matrix.c)>0.001) return e.getBoundingClientRect();
+    }
+    const w=img.naturalWidth,h=img.naturalHeight,canvas=document.createElement('canvas');
+    canvas.width=Math.min(w,512);canvas.height=Math.min(h,512);
+    const ctx=canvas.getContext('2d',{willReadFrequently:true});
+    ctx.drawImage(img,0,0,canvas.width,canvas.height);
+    const pixels=ctx.getImageData(0,0,canvas.width,canvas.height).data;
+    let left=canvas.width,right=0,top=canvas.height,bottom=0;
+    for(let y=0;y<canvas.height;y++) for(let x=0;x<canvas.width;x++) {
+      if(pixels[(y*canvas.width+x)*4+3]>24){left=Math.min(left,x);right=Math.max(right,x+1);top=Math.min(top,y);bottom=Math.max(bottom,y+1);}
+    }
+    if(right<=left || bottom<=top) return {left:0,right:0,top:0,bottom:0};
+    const box=img.getBoundingClientRect();
+    const fit=img.style.objectFit;
+    const factor=fit==='cover'?Math.max(box.width/w,box.height/h):Math.min(box.width/w,box.height/h);
+    const ox=box.left+(box.width-w*factor)/2,oy=box.top+(box.height-h*factor)/2;
+    return {left:Math.max(box.left,ox+left*w/canvas.width*factor),right:Math.min(box.right,ox+right*w/canvas.width*factor),
+      top:Math.max(box.top,oy+top*h/canvas.height*factor),bottom:Math.min(box.bottom,oy+bottom*h/canvas.height*factor)};
+  };
+  if(presenterArea){
+    const a=presenterArea,safe={left:a.x*innerWidth,right:(a.x+a.width)*innerWidth,top:a.y*innerHeight,bottom:(a.y+a.height)*innerHeight};
+    for(const el of shapes) if(el.dataset.sceneKind==='image' && el.dataset.decorative!=='true' && overlap(paintedBox(el),safe)>4)
+      issues.push(`#${el.id} 图片进入右下讲解员叠层区域；调整素材可见内容的位置`);
+  }
   const sameGroup=(a,b)=>a.dataset.overlapGroup && a.dataset.overlapGroup===b.dataset.overlapGroup;
   const fill=e=>e.dataset.material==='outline'?'none':e.dataset.sceneKind==='card'?getComputedStyle(e).backgroundColor:
     (e.dataset.fillColor||e.querySelector('rect,circle')?.getAttribute('fill'));
@@ -102,7 +138,7 @@ MEASURE_JS = r"""({minFont,presenterArea}) => {
     if(text.owner===shape || sameGroup(text.owner,shape) || shape.dataset.material==='outline') continue;
     const a=Number(getComputedStyle(text.owner).zIndex)||0,b=Number(getComputedStyle(shape).zIndex)||0;
     const above=b>a || (b===a && !!(text.owner.compareDocumentPosition(shape)&Node.DOCUMENT_POSITION_FOLLOWING));
-    const box=shape.getBoundingClientRect();
+    const box=paintedBox(shape);
     const labelBox=text.owner.getBoundingClientRect();
     const contained=labelBox.left>=box.left-1&&labelBox.right<=box.right+1&&labelBox.top>=box.top-1&&labelBox.bottom<=box.bottom+1;
     // Text intentionally inside its background is valid. A foreground callout
@@ -169,7 +205,10 @@ def inspect(html: Path, width: int, height: int, duration: float, min_font: int,
                 issues.append("window.__seek 运行时不存在；必须定义可调用的纯函数，不能只在注释里出现")
                 return {"issues": issues[:MAX_ISSUES], "warnings": warnings}
             try:
-                page.wait_for_function("() => window.__ready !== false", timeout=READY_TIMEOUT_MS)
+                page.wait_for_function("() => window.__ready === true || (window.__ready === undefined && document.readyState === 'complete') || !!window.__loadError", timeout=READY_TIMEOUT_MS)
+                load_error = page.evaluate("() => window.__loadError || ''")
+                if load_error:
+                    raise ValueError(load_error)
                 page.evaluate("() => document.fonts.ready")
                 payload = page.evaluate("() => {const e=document.getElementById('scid-scene-v1');return e?JSON.parse(e.textContent):null}")
                 times = sample_times(duration, payload)
