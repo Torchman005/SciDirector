@@ -90,6 +90,7 @@ export const STYLE_PRESETS: { value: string; label: string }[] = [
   { value: 'minimal', label: '极简（灰白）' },
   { value: 'nature', label: '自然（绿）' },
   { value: 'sunset', label: '日落（粉紫）' },
+  { value: 'paper', label: '暖纸（奶油色）' },
 ]
 
 /**
@@ -112,6 +113,7 @@ export const BACKGROUND_STYLES: { value: string; label: string }[] = [
   { value: 'vignette', label: '暗角聚光' },
   { value: 'noise', label: '细颗粒' },
   { value: 'scanlines', label: '扫描线' },
+  { value: 'paper_stage', label: '暖纸剧场' },
 ]
 
 /** 逐镜头背景样式的可选项（含"跟随全片"）。 */

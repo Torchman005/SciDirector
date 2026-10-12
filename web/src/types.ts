@@ -184,7 +184,7 @@ export interface GenerateRequest {
 export interface StyleGuide {
   animation_style?: 'precise' | 'anime'
   preset?: string
-  /** 背景**图案**：auto / solid / gradient / grid / vignette / noise / scanlines。 */
+  /** 背景**图案**：auto / solid / gradient / grid / vignette / noise / scanlines / paper_stage。 */
   background_style?: string
   primary_color?: string
   background_color?: string

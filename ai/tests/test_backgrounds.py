@@ -33,6 +33,7 @@ GO_BACKGROUND_STYLE_IDS = (
     "vignette",
     "noise",
     "scanlines",
+    "paper_stage",
 )
 
 #: Go 侧 media/background.go 的 stylePresets。
@@ -43,6 +44,7 @@ GO_STYLE_PRESETS = {
     "minimal": ("#E6ECFF", "#101216"),
     "nature": ("#5FD68A", "#0B1A12"),
     "sunset": ("#FF6B9D", "#1B1020"),
+    "paper": ("#A65F50", "#F4EBDD"),
 }
 
 
@@ -100,10 +102,19 @@ def test_non_auto_style_demands_varied_composition() -> None:
     「只有文字变化，背景不变化」—— 那正是这次要修的问题。
     """
     for style_id in BACKGROUND_STYLE_IDS:
-        if style_id == "auto":
+        if style_id in {"auto", "paper_stage"}:
             continue
         block = background_prompt_block(StyleGuide(background_style=style_id))
         assert "构图必须不同" in block, f"{style_id} 没有要求逐镜头变化背景构图"
+
+
+def test_paper_stage_keeps_stage_stable_and_uses_light_ink() -> None:
+    style = StyleGuide(preset="paper", background_style="paper_stage", animation_style="anime")
+    assert style.theme == "light"
+    block = background_prompt_block(style)
+    assert "纸纹、地面和机位全片保持一致" in block
+    assert "背景构图必须不同" not in block
+    assert "#F4EBDD" in block
 
 
 def test_auto_style_defers_to_the_model() -> None:

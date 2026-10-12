@@ -40,7 +40,7 @@ func TestBackgroundStyleIDsMatchPythonContract(t *testing.T) {
 	// 这里把 Python 侧的值写死（而不是去读 .py）是刻意的：CI 里未必有 Python 环境，
 	// 而写死的列表一旦被单边修改就会立刻变红 —— 这正是它要起的作用。
 	// 对侧由 ai/tests/test_backgrounds.py 反向钉住 Go 的这张表。
-	want := []string{"auto", "solid", "gradient", "grid", "vignette", "noise", "scanlines"}
+	want := []string{"auto", "solid", "gradient", "grid", "vignette", "noise", "scanlines", "paper_stage"}
 	got := BackgroundStyleIDs()
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("背景样式 id 与 Python 侧不一致\nGo:     %s\nPython: %s",

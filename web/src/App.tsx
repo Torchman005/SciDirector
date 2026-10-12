@@ -357,9 +357,9 @@ export function App() {
               onFinish={(values) => void submit(values)}
               initialValues={{
                 target_duration_sec: null,
-                preset: 'default',
+                preset: 'paper',
                 animation_style: 'anime',
-                background_style: 'auto',
+                background_style: 'paper_stage',
                 grade: 'none',
                 grade_strength: 1,
                 fade_in_sec: 0,

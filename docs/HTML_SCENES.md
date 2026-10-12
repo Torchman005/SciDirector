@@ -31,7 +31,7 @@ box 的 x/y/width/height 为画布比例；font_size 是实际成片像素。
 | line | color、arrow | 线段及可选箭头 |
 
 颜色只能 text/primary/muted 或 #RRGGBB。风格和字体来自现有 StyleGuide；正文不插入 HTML。
-background 支持既有 solid/gradient/grid/vignette/noise/scanlines 预设；StyleGuide 的明确选择优先，auto 时由场景选择。
+background 支持 solid/gradient/grid/vignette/noise/scanlines/paper_stage 预设；StyleGuide 的明确选择优先，auto 时由场景选择。paper_stage 由固定运行时绘制浅色纸纹、地平线和透视地面，搭配 paper 配色使用；场景元素仍按原布局与时间轴渲染。
 keyframes 使用归一化 time，必须从 0 严格递增；每帧完整状态为 opacity/dx/dy/rotation/reveal。
 未写字段恢复默认值，不继承上一帧。easing=linear/smooth/step 描述到达该帧的方式。
 reveal 只控制 code 打字、bars 生长。最后一帧后定格，阅读停留不强制制造无关变化。

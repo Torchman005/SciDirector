@@ -10,10 +10,14 @@
   // A shared timeline preserves synchronization between connected objects.
   const timelineEnd=scene.elements.some(e=>e.keyframes.some(k=>k.time>animatedUntil))?animatedUntil:1;
   const stage = document.getElementById('stage');
+  const paper=Boolean(style.paperStage);
+  if(paper) stage.classList.add('paper-stage');
   const light = style.theme === 'light';
-  const palette = {primary:style.primary, text:light?'#101216':'#E6ECFF', muted:light?'#485368':'#A8B5CF',
-    secondary:light?'#087F8C':'#59DCE4',accent:light?'#7954BF':'#BB9CFF',
-    success:light?'#167753':'#7EE3AF',warning:light?'#B14A24':'#FFB487'};
+  const palette = paper
+    ? {primary:style.primary,text:'#382F2A',muted:'#71645C',secondary:'#527C83',accent:'#957399',success:'#5A8068',warning:'#B47B3D'}
+    : {primary:style.primary, text:light?'#101216':'#E6ECFF', muted:light?'#485368':'#A8B5CF',
+      secondary:light?'#087F8C':'#59DCE4',accent:light?'#7954BF':'#BB9CFF',
+      success:light?'#167753':'#7EE3AF',warning:light?'#B14A24':'#FFB487'};
   const color = value => palette[value] || value;
   const mix=(a,b,t)=>{
     const rgb=h=>{h=h.slice(1);if(h.length===3)h=h.split('').map(c=>c+c).join('');return [0,2,4].map(i=>parseInt(h.slice(i,i+2),16));};
@@ -74,7 +78,7 @@
     if(['text','card','code'].includes(el.kind)) {
       root.className+=' scene-text'+(el.kind==='card'?' scene-card':el.kind==='code'?' scene-code':'');
       if(el.kind!=='text') {
-        const tint=color(el.color==='text'?'primary':el.color),base=light?'#F0F3FA':'#151E32';
+        const tint=color(el.color==='text'?'primary':el.color),base=paper?'#FFF9EF':light?'#F0F3FA':'#151E32';
         root.style.borderColor=el.stroke_color?color(el.stroke_color):mix(tint,base,.5);
         root.style.borderRadius=el.corner_radius+'px';
         root.style.backgroundColor=material==='outline'?'transparent':base;
@@ -103,7 +107,7 @@
       const columns=Math.min(el.columns,el.cells.length);
       Object.assign(root.style,{display:'grid',gridTemplateColumns:`repeat(${columns},1fr)`,gridTemplateRows:`repeat(${Math.ceil(el.cells.length/columns)},1fr)`,gap:'10px'});
       for(const item of el.cells){
-        const cell=make('div',root,'scene-grid-cell'),tint=color(item.color||el.color),base=light?'#F0F3FA':'#151E32';
+        const cell=make('div',root,'scene-grid-cell'),tint=color(item.color||el.color),base=paper?'#FFF9EF':light?'#F0F3FA':'#151E32';
         Object.assign(cell.style,{display:'flex',alignItems:'center',justifyContent:'center',border:`2px solid ${mix(tint,base,.2)}`,borderRadius:'8px',
           color:palette.text,background:`linear-gradient(145deg,${mix(base,tint,.36)},${mix(base,tint,.12)})`,boxShadow:`inset 0 2px 0 ${tint}30,0 4px 0 ${base}`,overflow:'hidden'});
         cell.textContent=item.label;record.cells.push(cell);

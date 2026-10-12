@@ -292,6 +292,7 @@ STYLE_PRESETS: dict[str, dict[str, str]] = {
     "minimal": {"primary_color": "#E6ECFF", "background_color": "#101216"},
     "nature": {"primary_color": "#5FD68A", "background_color": "#0B1A12"},
     "sunset": {"primary_color": "#FF6B9D", "background_color": "#1B1020"},
+    "paper": {"primary_color": "#A65F50", "background_color": "#F4EBDD"},
 }
 
 DEFAULT_PRESET = "default"
@@ -373,6 +374,8 @@ class StyleGuide(BaseModel):
             self.primary_color = palette["primary_color"]
         if not self.background_color:
             self.background_color = palette["background_color"]
+        if self.preset == "paper":
+            self.theme = "light"
         return self
 
     @field_validator("background_style")

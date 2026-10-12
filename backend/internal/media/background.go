@@ -25,6 +25,7 @@ var backgroundStyleIDs = []string{
 	"vignette",
 	"noise",
 	"scanlines",
+	"paper_stage",
 }
 
 // BackgroundStyleIDs 返回全部背景样式 id（副本，调用方改不动内部状态）。
@@ -155,6 +156,15 @@ func BackgroundFilter(styleID, backgroundColour, primaryColour string, w, h, fps
 		// x=w 后两列数值完全一致。
 		return base + fmt.Sprintf(",drawgrid=w=%d:h=%d:t=1:c=%s@0.10:x=%d:y=0",
 			w*10, lineH, pr, w), nil
+	case "paper_stage":
+		// Effect preview approximates the HTML paper fibres and floor without
+		// claiming to reproduce the scene compositor's perspective geometry.
+		floor, berr := blendHexColour(bg, "0xB89972", 0.13)
+		if berr != nil {
+			return "", berr
+		}
+		return base + fmt.Sprintf(",drawgrid=w=%d:h=%d:t=1:c=0x8B7564@0.07:x=0:y=0,drawbox=x=0:y=%d:w=%d:h=%d:color=%s:t=fill",
+			maxInt(8, w/120), h*8, h*72/100, w, h*28/100, floor), nil
 	}
 	return "", fmt.Errorf("media: 未处理的背景样式 %q", style)
 }
@@ -240,6 +250,7 @@ var stylePresets = []StylePreset{
 	{ID: "minimal", PrimaryColor: "#E6ECFF", BackgroundColor: "#101216"},
 	{ID: "nature", PrimaryColor: "#5FD68A", BackgroundColor: "#0B1A12"},
 	{ID: "sunset", PrimaryColor: "#FF6B9D", BackgroundColor: "#1B1020"},
+	{ID: "paper", PrimaryColor: "#A65F50", BackgroundColor: "#F4EBDD"},
 }
 
 // StylePresets 返回全部风格预设（副本）。

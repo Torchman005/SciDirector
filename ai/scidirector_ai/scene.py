@@ -166,7 +166,7 @@ class Element(SceneModel):
 
 class SceneSpec(SceneModel):
     version: Literal[1] = 1
-    background: Literal["solid", "gradient", "grid", "vignette", "noise", "scanlines"] = "solid"
+    background: Literal["solid", "gradient", "grid", "vignette", "noise", "scanlines", "paper_stage"] = "solid"
     elements: list[Element] = Field(min_length=1, max_length=48)
     explanation: str = Field(default="", max_length=4000)
 
@@ -270,7 +270,7 @@ def compile_scene(scene: SceneSpec, *, width: int, height: int, duration: float,
                "primary": style.primary_color, "font": style.font_family, "theme": style.theme,
                "animationStyle": style.animation_style,
                "presenterSafeArea": style.presenter_safe_area.model_dump() if style.presenter_safe_area else None,
-               "backgroundCSS": background_css}}
+               "backgroundCSS": background_css, "paperStage": background.id == "paper_stage"}}
     # JSON in a raw-text script must not be able to terminate its containing tag.
     data = json.dumps(payload, ensure_ascii=False, allow_nan=False).replace("<", "\\u003c").replace("&", "\\u0026")
     return ("<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\">"
@@ -284,6 +284,14 @@ def compile_scene(scene: SceneSpec, *, width: int, height: int, duration: float,
             ".scene-bar-row{display:flex;flex-direction:column;justify-content:center;gap:.15em}"
             ".scene-bar-label{display:flex;justify-content:space-between;gap:1em}"
             ".scene-bar-fill{height:.45em;border-radius:.2em;transform-origin:left}"
+            "#stage.paper-stage{isolation:isolate}"
+            "#stage.paper-stage::before{content:'';position:absolute;left:0;right:0;top:72%;height:1px;"
+            "background:linear-gradient(90deg,transparent,#B6A38A80 22%,#B6A38A80 78%,transparent);z-index:-19}"
+            "#stage.paper-stage::after{content:'';position:absolute;left:-1%;top:72%;width:102%;height:29%;"
+            "background:repeating-linear-gradient(90deg,#8B75640a 0px,#8B75640a 2px,transparent 2px,transparent 30px),"
+            "linear-gradient(180deg,#C9AD8C26,#D9C4A73d);"
+            "clip-path:polygon(31% 0,69% 0,100% 100%,0 100%);z-index:-18;pointer-events:none}"
+            "#stage.paper-stage .scene-image img{filter:drop-shadow(0 12px 9px #6B4B3B38)}"
             "svg{display:block;width:100%;height:100%;overflow:visible}"
             "</style></head><body><div id=\"stage\"></div>"
             f'<script id="scid-scene-v1" type="application/json">{data}</script>'

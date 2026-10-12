@@ -34,6 +34,7 @@ BACKGROUND_STYLE_IDS: tuple[str, ...] = (
     "vignette",
     "noise",
     "scanlines",
+    "paper_stage",
 )
 
 
@@ -131,6 +132,21 @@ _STYLES: dict[str, BackgroundStyle] = {
         ),
         manim="用一组等距的水平细线（Line 或 VGroup）铺满背景。",
     ),
+    "paper_stage": BackgroundStyle(
+        id="paper_stage",
+        label="暖纸剧场",
+        prompt="奶油色纸纹与低对比竖向纤维，底部有浅暖色透视地面；主图保持清晰，避免把纹理盖到公式和数据上。",
+        css=(
+            "background-color:{bg};"
+            "background-image:"
+            "radial-gradient(ellipse at 48% 24%,#FFFDF5b3 0%,transparent 63%),"
+            "repeating-linear-gradient(90deg,#8B756414 0px,#8B756414 1px,transparent 1px,transparent 16px),"
+            "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='128' height='128'%3E"
+            "%3Cfilter id='p'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.72' numOctaves='2' seed='7'/%3E%3C/filter%3E"
+            "%3Crect width='100%25' height='100%25' opacity='.035' filter='url(%23p)'/%3E%3C/svg%3E\");"
+        ),
+        manim="以浅奶油色为底，叠低透明竖线与极细颗粒；底部用低对比梯形表示透视地面。不能把纸纹铺到公式前方。",
+    ),
 }
 
 #: 对外的只读视图，按 BACKGROUND_STYLE_IDS 的顺序。
@@ -164,7 +180,9 @@ def background_prompt_block(guide: StyleGuide) -> str:
     ]
     # "auto" 之外都要求**样式统一、构图不同**：统一才像一部片子，
     # 构图不同才不会退化成"同一张背景在换文字"（用户此前正是这么反馈的）。
-    if style.id != "auto":
+    if style.id == "paper_stage":
+        lines.append("  - 纸纹、地面和机位全片保持一致；每镜通过人物姿态、道具位置与科学主图焦点变化组织画面。")
+    elif style.id != "auto":
         lines.append(
             "  - **同一部片子里所有镜头都用这个背景样式，但每个镜头的背景构图必须不同**"
             "（网格疏密/偏移、光晕位置与强度、颗粒浓度、线条间距…）。"

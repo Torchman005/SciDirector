@@ -132,8 +132,8 @@ AI 不可用只标为 `degraded`（已提交的任务仍可查询）。
 
 | 字段 | 说明 |
 | --- | --- |
-| `preset` | 风格预设：`default` / `tech` / `warm` / `minimal` / `nature` / `sunset`。未登记的预设**报错**，不静默回落 |
-| `background_style` | 背景样式：`auto` / `solid` / `gradient` / `grid` / `vignette` / `noise` / `scanlines`。缺省 `auto`（模型自定，与旧任务行为一致）。未登记的值报错 |
+| `preset` | 风格预设：`default` / `tech` / `warm` / `minimal` / `nature` / `sunset` / `paper`。`paper` 使用奶油色底与暖棕红主色，并启用浅色文字主题。未登记的预设**报错**，不静默回落 |
+| `background_style` | 背景样式：`auto` / `solid` / `gradient` / `grid` / `vignette` / `noise` / `scanlines` / `paper_stage`。`paper_stage` 提供纸纹与透视地面；推荐搭配 `paper` 预设。缺省 `auto`（模型自定，与旧任务行为一致）。未登记的值报错 |
 | `primary_color` / `background_color` | 显式色值，**优先于**预设 |
 | `min_font_size` | 正文字号下限（成片像素），同时是审查 rubric 里的硬性指标 |
 
