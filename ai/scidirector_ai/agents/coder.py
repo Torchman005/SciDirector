@@ -297,6 +297,7 @@ class CoderAgent(Agent):
         system += "\n\nJSON Schema（必须符合）：\n" + json.dumps(schema.model_json_schema(), ensure_ascii=False)
         user = render_prompt("coder_scene_user", index=shot.index, tag=shot.tag.value,
                              narration=shot.narration, visual_brief=shot.visual_brief,
+                             beats=" → ".join(shot.beats) or "（无；按旁白语义划分）",
                              production_brief=production_brief(shot, style, self.settings),
                              style_guide=style_guide_to_text(style), feedback=feedback or "（首稿）",
                              previous_scene=previous.model_dump_json(exclude_defaults=True) if previous else "（无）")

@@ -4,6 +4,7 @@
   const config = JSON.parse(document.getElementById('scid-scene-v1').textContent);
   const {scene, width:W, height:H, duration:D, style} = config;
   const imageData=config.imageData || {};
+  const imageRoles=config.imageRoles || {};
   window.__ready=false;
   window.__loadError='';
   const animatedUntil=config.animatedUntil || 1;
@@ -74,7 +75,7 @@
     const b=el.box;
     Object.assign(root.style,{left:b.x*W+'px',top:b.y*H+'px',width:b.width*W+'px',height:b.height*H+'px',
       fontSize:el.font_size+'px',textAlign:el.align,color:color(el.color),zIndex:String(el.layer)});
-    const record={el,root,content:null,bars:[],cells:[],packets:[],stroke:null,strokeLength:0,arrow:null,character:null};
+    const record={el,root,content:null,bars:[],cells:[],packets:[],stroke:null,strokeLength:0,arrow:null,character:null,images:null};
     if(['text','card','code'].includes(el.kind)) {
       root.className+=' scene-text'+(el.kind==='card'?' scene-card':el.kind==='code'?' scene-code':'');
       if(el.kind!=='text') {
@@ -89,20 +90,26 @@
       }
       record.content=make('span',root);record.content.textContent=el.text;
     } else if(el.kind==='image') {
-      const src=imageData[el.asset_id];
-      if(typeof src!=='string' || !src.startsWith('data:image/')) throw new Error(`图片素材 ${el.asset_id} 没有可用数据`);
-      const img=make('img',root,'scene-image');
-      img.alt=''; img.draggable=false;
-      Object.assign(img.style,{display:'block',width:'100%',height:'100%',objectFit:el.image_fit||'contain'});
-      imageLoads.push(new Promise((resolve,reject)=>{
-        img.onload=()=>{ if(img.naturalWidth&&img.naturalHeight) resolve(); else reject(new Error(`图片素材 ${el.asset_id} 解码为空`)); };
-        img.onerror=()=>reject(new Error(`图片素材 ${el.asset_id} 解码失败`));
-        img.src=src;
-        if(img.complete) {
-          if(img.naturalWidth&&img.naturalHeight) resolve();
-          else reject(new Error(`图片素材 ${el.asset_id} 解码失败`));
-        }
-      }));
+      root.setAttribute('data-scene-asset-role',imageRoles[el.asset_id]||'prop');
+      record.images=new Map();
+      const ids=[...new Set([el.asset_id,...el.keyframes.map(frame=>frame.asset_id).filter(Boolean)])];
+      for(const id of ids){
+        const src=imageData[id];
+        if(typeof src!=='string' || !src.startsWith('data:image/')) throw new Error(`图片素材 ${id} 没有可用数据`);
+        const img=make('img',root,'scene-image');
+        img.alt=''; img.draggable=false; img.dataset.assetId=id;
+        Object.assign(img.style,{position:'absolute',left:'0',top:'0',width:'100%',height:'100%',objectFit:el.image_fit||'contain',visibility:'hidden',opacity:'0'});
+        record.images.set(id,img);
+        imageLoads.push(new Promise((resolve,reject)=>{
+          img.onload=()=>{ if(img.naturalWidth&&img.naturalHeight) resolve(); else reject(new Error(`图片素材 ${id} 解码为空`)); };
+          img.onerror=()=>reject(new Error(`图片素材 ${id} 解码失败`));
+          img.src=src;
+          if(img.complete) {
+            if(img.naturalWidth&&img.naturalHeight) resolve();
+            else reject(new Error(`图片素材 ${id} 解码失败`));
+          }
+        }));
+      }
     } else if(el.kind==='grid') {
       const columns=Math.min(el.columns,el.cells.length);
       Object.assign(root.style,{display:'grid',gridTemplateColumns:`repeat(${columns},1fr)`,gridTemplateRows:`repeat(${Math.ceil(el.cells.length/columns)},1fr)`,gap:'10px'});
@@ -162,11 +169,24 @@
   });
   window.__seek = seconds => {
     const t=Math.max(0,Math.min(D,Number.isFinite(seconds)?seconds:0))/D;
-    for(const {el,root,content,bars,cells,packets,stroke,strokeLength,arrow,character} of nodes) {
+    for(const {el,root,content,bars,cells,packets,stroke,strokeLength,arrow,character,images} of nodes) {
       const local=Math.min(1,t/timelineEnd);
       const s=sample(el.keyframes, local);
       root.style.opacity=String(s.opacity);
       root.style.transform=`translate(${s.dx*W}px,${s.dy*H}px) rotate(${s.rotation}deg) scale(${s.scale})`;
+      if(images){
+        let current=el.asset_id,previous=current,switchedAt=null;
+        for(const frame of el.keyframes){
+          if(local<frame.time) break;
+          if(frame.asset_id && frame.asset_id!==current){previous=current;current=frame.asset_id;switchedAt=frame.time;}
+        }
+        const blend=switchedAt===null?1:Math.max(0,Math.min(1,(local-switchedAt)*D/.18));
+        for(const [id,img] of images){
+          const opacity=id===current?blend:(id===previous?1-blend:0);
+          img.style.opacity=String(opacity);
+          img.style.visibility=opacity>0?'visible':'hidden';
+        }
+      }
       if(character) {
         let index=0;
         for(let i=1;i<el.keyframes.length;i++) if(local>=el.keyframes[i].time) index=i;

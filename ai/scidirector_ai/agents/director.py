@@ -17,7 +17,7 @@ from ..config import get_settings
 from ..llm import LLMClient, LLMError, LLMParseError, Task
 from ..logging import get_logger
 from ..schemas import SceneTag, ScriptPlan, ShotSpec, StyleGuide, TAG_TO_ENGINE
-from .base import Agent, render_prompt
+from .base import Agent, render_prompt, style_guide_to_text
 
 logger = get_logger(__name__)
 
@@ -94,7 +94,7 @@ class DirectorAgent(Agent):
             raw_script=raw_script,
             target_duration_sec=int(target_duration_sec),
             locale=locale,
-            style_guide=style_guide,
+            style_guide=style_guide_to_text(style_guide),
         )
 
         self.log.info(

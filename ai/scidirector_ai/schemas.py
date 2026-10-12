@@ -319,6 +319,8 @@ class SceneAsset(BaseModel):
     mime_type: Literal["image/png", "image/jpeg"]
     role: Literal["character", "prop", "background"]
     description: str = Field(default="", max_length=240)
+    subject: str = Field(default="", max_length=48)
+    pose: str = Field(default="", max_length=32)
     width: int = Field(ge=1, le=4096)
     height: int = Field(ge=1, le=4096)
     size_bytes: int = Field(ge=1, le=2 << 20)

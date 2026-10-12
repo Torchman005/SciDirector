@@ -2,6 +2,7 @@
 
 画外音：{{narration}}
 视觉意图：{{visual_brief}}
+画面节拍：{{beats}}
 
 {{production_brief}}
 

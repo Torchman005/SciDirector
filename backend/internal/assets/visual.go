@@ -20,6 +20,8 @@ type VisualAsset struct {
 	MIMEType    string `json:"mime_type"`
 	Role        string `json:"role"`
 	Description string `json:"description,omitempty"`
+	Subject     string `json:"subject,omitempty"`
+	Pose        string `json:"pose,omitempty"`
 	Width       int    `json:"width"`
 	Height      int    `json:"height"`
 	SizeBytes   int64  `json:"size_bytes"`

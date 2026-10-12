@@ -53,6 +53,16 @@ func (s *Server) HandleUploadVisual(c *gin.Context) {
 		abortWith(c, http.StatusBadRequest, ErrCodeBadRequest, "素材说明最多 240 字", nil)
 		return
 	}
+	subject := strings.TrimSpace(c.PostForm("subject"))
+	pose := strings.TrimSpace(c.PostForm("pose"))
+	if utf8.RuneCountInString(subject) > 48 || utf8.RuneCountInString(pose) > 32 {
+		abortWith(c, http.StatusBadRequest, ErrCodeBadRequest, "对象名称最多 48 字，姿态/状态最多 32 字", nil)
+		return
+	}
+	if pose != "" && subject == "" {
+		abortWith(c, http.StatusBadRequest, ErrCodeBadRequest, "填写姿态/状态时需填写同一对象名称", nil)
+		return
+	}
 	ext := strings.ToLower(filepath.Ext(header.Filename))
 	if ext != ".png" && ext != ".jpg" && ext != ".jpeg" {
 		abortWith(c, http.StatusBadRequest, ErrCodeBadRequest, "只支持 PNG 和 JPEG 图片", nil)
@@ -129,7 +139,7 @@ func (s *Server) HandleUploadVisual(c *gin.Context) {
 		name = string([]rune(name)[:180])
 	}
 	asset, _, err := store.SaveVisual(tenantOf(c), tmpPath, storedExt, assets.VisualAsset{
-		Filename: name, MIMEType: mimeType, Role: role, Description: description,
+		Filename: name, MIMEType: mimeType, Role: role, Description: description, Subject: subject, Pose: pose,
 		Width: config.Width, Height: config.Height, SizeBytes: info.Size(),
 	})
 	if err != nil {

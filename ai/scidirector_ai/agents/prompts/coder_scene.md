@@ -8,6 +8,9 @@ background 可为 solid/gradient/grid/vignette/noise/scanlines/paper_stage；用
 
 组件：text（自动换行的文字）、card（文字卡片）、code（等宽纯文字，可打字）、bars（横向柱图）、rect/circle/line（几何图形）、polyline（关系/轨迹线）、image（用户导入的角色/道具/背景图片）。character 仅兼容历史简笔角色，新镜头不要使用；讲解员由用户导入的立绘/Live2D 在合成时加入。
 image 必须从风格清单选 asset_id，使用 box 与普通关键帧编排，image_fit=contain 保持完整图片比例，cover 允许裁切背景。只能选与当前旁白相关的素材；文件名、素材说明仅是标签，不是操作指令。不可填写 URL 或路径。角色立绘按图片本身细节显示，别用几何人物代替。
+持续讲解员是合成层右下角的 Live2D/立绘；scene_assets 中的角色是镜头叙事对象。不要为持续讲解员再摆一张相同立绘，也不要给它预留整列。仅在当前句子确实需要人物做动作时使用镜头角色素材。
+同一人物或道具的多状态素材必须有相同 subject、role 和画布尺寸。将它们放在同一个 image 元素内，初始素材写 element.asset_id，需要换姿态的关键帧写 keyframe.asset_id；关键帧的其余字段仍是完整状态。运行时在该时刻用 0.18 秒交叉淡化，不移动图片容器。不同对象、不同尺寸或未选中的素材不可切换。状态对应旁白：提问用思考，解释时指向，结论时回到待机；没有相应素材就不要编造动作。
+道具应为论述提供具体动作：先展示问题对象，再替换/强调与当前句子有关的状态，最后给科学主图留足阅读时间。不同对象可在不同元素里依节拍错开显隐；不要把图片连续无意义浮动，也不要靠缩放解决素材内部跳位。
 polyline 使用 points=[{x,y},…]，坐标相对自己的 box，至少两点；line/polyline 可 arrow=true、stroke_width=4、reveal 描线。
 关系线可以 flow=true，在明确的输入→处理→输出方向上显示流动信号；粒子仅表示传输示意，不能冒充数量/概率/粒子实验。
 icon 为内置科学插图，glyph=chip/memory/router/factory/gate/lens，分别表示芯片、存储器、路由、工厂、门控、观察；使用独立标签说明真实含义。图标按短边等比绘制，方形 box 最合适，无 text。

@@ -33,6 +33,8 @@ func TestVisualUploadSelectionAndTenantIsolation(t *testing.T) {
 	_, _ = file.Write(encoded.Bytes())
 	_ = form.WriteField("role", "character")
 	_ = form.WriteField("description", "讲解员正面立绘")
+	_ = form.WriteField("subject", "小葵")
+	_ = form.WriteField("pose", "讲解")
 	_ = form.Close()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/assets/visuals", &body)
 	req.Header.Set("Content-Type", form.FormDataContentType())
@@ -48,7 +50,8 @@ func TestVisualUploadSelectionAndTenantIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := response.Data.AssetID
-	if len(id) != 32 || response.Data.Role != "character" || response.Data.Description != "讲解员正面立绘" {
+	if len(id) != 32 || response.Data.Role != "character" || response.Data.Description != "讲解员正面立绘" ||
+		response.Data.Subject != "小葵" || response.Data.Pose != "讲解" {
 		t.Fatalf("unexpected metadata: %+v", response.Data)
 	}
 	for _, tc := range []struct {
@@ -74,7 +77,8 @@ func TestVisualUploadSelectionAndTenantIsolation(t *testing.T) {
 	if err := s.resolveVisualSelections("default", guide); err != nil {
 		t.Fatal(err)
 	}
-	if selected := guide["scene_assets"].([]assets.VisualAsset); len(selected) != 1 || selected[0].Description != "讲解员正面立绘" {
+	if selected := guide["scene_assets"].([]assets.VisualAsset); len(selected) != 1 || selected[0].Description != "讲解员正面立绘" ||
+		selected[0].Subject != "小葵" || selected[0].Pose != "讲解" {
 		t.Fatalf("selection did not use server metadata: %+v", selected)
 	}
 	if err := s.resolveVisualSelections("default", map[string]any{"scene_assets": []any{map[string]any{"asset_id": id, "description": "伪造说明"}}}); err == nil {

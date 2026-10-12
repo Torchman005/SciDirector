@@ -199,6 +199,8 @@ export interface VisualAsset {
   mime_type: 'image/png' | 'image/jpeg'
   role: 'character' | 'prop' | 'background'
   description?: string
+  subject?: string
+  pose?: string
   width: number
   height: number
   size_bytes: number

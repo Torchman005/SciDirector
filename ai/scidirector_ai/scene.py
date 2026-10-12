@@ -55,6 +55,7 @@ class Keyframe(SceneModel):
     expression: Literal["neutral", "smile", "curious", "surprised", "focused"] = "neutral"
     gesture: Literal["idle", "explain", "point", "think", "wave"] = "idle"
     easing: Literal["linear", "smooth", "step", "ease_in", "ease_out", "spring"] = "smooth"
+    asset_id: str = Field(default="", pattern=r"^$|^[0-9a-f]{32}$")
 
 
 class Point(SceneModel):
@@ -129,6 +130,8 @@ class Element(SceneModel):
             raise ValueError(f"#{self.id} 图片必须引用已选择的 asset_id")
         if self.kind != "image" and self.asset_id:
             raise ValueError(f"#{self.id} asset_id 仅用于 image")
+        if self.kind != "image" and any(frame.asset_id for frame in self.keyframes):
+            raise ValueError(f"#{self.id} 关键帧 asset_id 仅用于 image")
         if self.kind == "grid" and not self.cells:
             raise ValueError(f"#{self.id} grid 必须提供 cells 标签；示意网格不编造数值")
         if self.kind != "grid" and self.cells:
@@ -181,9 +184,18 @@ class SceneSpec(SceneModel):
 def validate_layout(scene: SceneSpec, *, width: int, height: int, duration: float,
                     style: StyleGuide) -> None:
     """Reject geometric/time defects before launching Chromium; text fit is measured there."""
+    allowed_assets = {asset.asset_id: asset for asset in style.scene_assets}
     for el in scene.elements:
-        if el.kind == "image" and el.asset_id not in {asset.asset_id for asset in style.scene_assets}:
-            raise ValueError(f"#{el.id} 引用了未选中的图片素材；只能使用本任务 scene_assets 的 asset_id")
+        if el.kind == "image":
+            ids = [el.asset_id, *(frame.asset_id for frame in el.keyframes if frame.asset_id)]
+            if any(asset_id not in allowed_assets for asset_id in ids):
+                raise ValueError(f"#{el.id} 引用了未选中的图片素材；只能使用本任务 scene_assets 的 asset_id")
+            first = allowed_assets[el.asset_id]
+            for asset_id in ids[1:]:
+                other = allowed_assets[asset_id]
+                if (not first.subject or first.subject != other.subject or first.role != other.role or
+                        (first.width, first.height) != (other.width, other.height)):
+                    raise ValueError(f"#{el.id} 状态切换必须使用同一对象、同一用途和相同画布尺寸的图片")
         text = el.kind in {"text", "card", "code", "bars", "grid"}
         if text and el.font_size < style.min_font_size:
             raise ValueError(f"#{el.id} 字号 {el.font_size}px 小于下限 {style.min_font_size}px")
@@ -248,7 +260,10 @@ def compile_scene(scene: SceneSpec, *, width: int, height: int, duration: float,
     background_css = background.css.format(bg=full_hex(style.background_color), primary=full_hex(style.primary_color))
     image_data: dict[str, str] = {}
     allowed = {asset.asset_id: asset for asset in style.scene_assets}
-    for asset_id in sorted({el.asset_id for el in scene.elements if el.kind == "image"}):
+    image_ids = {el.asset_id for el in scene.elements if el.kind == "image"}
+    image_ids.update(frame.asset_id for el in scene.elements if el.kind == "image"
+                     for frame in el.keyframes if frame.asset_id)
+    for asset_id in sorted(image_ids):
         asset = allowed[asset_id]
         source = style.scene_asset_sources.get(asset_id)
         if not source:
@@ -264,7 +279,9 @@ def compile_scene(scene: SceneSpec, *, width: int, height: int, duration: float,
     # Reserve the final reading hold in the compiler rather than forcing the LLM
     # to calculate a duration-specific fraction. An end keyframe at 1 is legal.
     animated_until = 1 - min(FINAL_HOLD_SEC, duration * FINAL_HOLD_RATIO) / duration
-    payload = {"scene": scene.model_dump(), "imageData": image_data, "width": width, "height": height,
+    payload = {"scene": scene.model_dump(), "imageData": image_data,
+               "imageRoles": {asset_id: allowed[asset_id].role for asset_id in image_ids},
+               "width": width, "height": height,
                "animatedUntil": animated_until,
                "duration": duration, "style": {"background": style.background_color,
                "primary": style.primary_color, "font": style.font_family, "theme": style.theme,
@@ -291,7 +308,7 @@ def compile_scene(scene: SceneSpec, *, width: int, height: int, duration: float,
             "background:repeating-linear-gradient(90deg,#8B75640a 0px,#8B75640a 2px,transparent 2px,transparent 30px),"
             "linear-gradient(180deg,#C9AD8C26,#D9C4A73d);"
             "clip-path:polygon(31% 0,69% 0,100% 100%,0 100%);z-index:-18;pointer-events:none}"
-            "#stage.paper-stage .scene-image img{filter:drop-shadow(0 12px 9px #6B4B3B38)}"
+            "#stage.paper-stage img.scene-image{filter:drop-shadow(0 12px 9px #6B4B3B38)}"
             "svg{display:block;width:100%;height:100%;overflow:visible}"
             "</style></head><body><div id=\"stage\"></div>"
             f'<script id="scid-scene-v1" type="application/json">{data}</script>'

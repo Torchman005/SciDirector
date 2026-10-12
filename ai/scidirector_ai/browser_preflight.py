@@ -92,8 +92,8 @@ MEASURE_JS = r"""({minFont,presenterArea}) => {
   // testing foreground occlusion. Never treat the full <img> box as opaque.
   const paintedBox=e=>{
     if(e.dataset.sceneKind!=='image') return e.getBoundingClientRect();
-    const img=e.querySelector('img');
-    if(!img || !img.naturalWidth || !img.naturalHeight) return e.getBoundingClientRect();
+    const shown=Array.from(e.querySelectorAll('img')).filter(img=>getComputedStyle(img).visibility!=='hidden' && Number(getComputedStyle(img).opacity)>.05);
+    if(!shown.length) return {left:0,right:0,top:0,bottom:0};
     // The axis-aligned alpha mapping below assumes no rotation. For rotated
     // artwork, use the full swept box rather than underreport an occlusion.
     const transform=getComputedStyle(e).transform;
@@ -101,26 +101,32 @@ MEASURE_JS = r"""({minFont,presenterArea}) => {
       const matrix=new DOMMatrixReadOnly(transform);
       if(Math.abs(matrix.b)>0.001 || Math.abs(matrix.c)>0.001) return e.getBoundingClientRect();
     }
-    const w=img.naturalWidth,h=img.naturalHeight,canvas=document.createElement('canvas');
-    canvas.width=Math.min(w,512);canvas.height=Math.min(h,512);
-    const ctx=canvas.getContext('2d',{willReadFrequently:true});
-    ctx.drawImage(img,0,0,canvas.width,canvas.height);
-    const pixels=ctx.getImageData(0,0,canvas.width,canvas.height).data;
-    let left=canvas.width,right=0,top=canvas.height,bottom=0;
-    for(let y=0;y<canvas.height;y++) for(let x=0;x<canvas.width;x++) {
-      if(pixels[(y*canvas.width+x)*4+3]>24){left=Math.min(left,x);right=Math.max(right,x+1);top=Math.min(top,y);bottom=Math.max(bottom,y+1);}
-    }
-    if(right<=left || bottom<=top) return {left:0,right:0,top:0,bottom:0};
-    const box=img.getBoundingClientRect();
-    const fit=img.style.objectFit;
-    const factor=fit==='cover'?Math.max(box.width/w,box.height/h):Math.min(box.width/w,box.height/h);
-    const ox=box.left+(box.width-w*factor)/2,oy=box.top+(box.height-h*factor)/2;
-    return {left:Math.max(box.left,ox+left*w/canvas.width*factor),right:Math.min(box.right,ox+right*w/canvas.width*factor),
-      top:Math.max(box.top,oy+top*h/canvas.height*factor),bottom:Math.min(box.bottom,oy+bottom*h/canvas.height*factor)};
+    const boxes=shown.map(img=>{
+      if(!img.naturalWidth || !img.naturalHeight) return e.getBoundingClientRect();
+      const w=img.naturalWidth,h=img.naturalHeight,canvas=document.createElement('canvas');
+      canvas.width=Math.min(w,512);canvas.height=Math.min(h,512);
+      const ctx=canvas.getContext('2d',{willReadFrequently:true});
+      ctx.drawImage(img,0,0,canvas.width,canvas.height);
+      const pixels=ctx.getImageData(0,0,canvas.width,canvas.height).data;
+      let left=canvas.width,right=0,top=canvas.height,bottom=0;
+      for(let y=0;y<canvas.height;y++) for(let x=0;x<canvas.width;x++) {
+        if(pixels[(y*canvas.width+x)*4+3]>24){left=Math.min(left,x);right=Math.max(right,x+1);top=Math.min(top,y);bottom=Math.max(bottom,y+1);}
+      }
+      if(right<=left || bottom<=top) return null;
+      const box=img.getBoundingClientRect();
+      const fit=img.style.objectFit;
+      const factor=fit==='cover'?Math.max(box.width/w,box.height/h):Math.min(box.width/w,box.height/h);
+      const ox=box.left+(box.width-w*factor)/2,oy=box.top+(box.height-h*factor)/2;
+      return {left:Math.max(box.left,ox+left*w/canvas.width*factor),right:Math.min(box.right,ox+right*w/canvas.width*factor),
+        top:Math.max(box.top,oy+top*h/canvas.height*factor),bottom:Math.min(box.bottom,oy+bottom*h/canvas.height*factor)};
+    }).filter(Boolean);
+    if(!boxes.length) return {left:0,right:0,top:0,bottom:0};
+    return {left:Math.min(...boxes.map(box=>box.left)),right:Math.max(...boxes.map(box=>box.right)),
+      top:Math.min(...boxes.map(box=>box.top)),bottom:Math.max(...boxes.map(box=>box.bottom))};
   };
   if(presenterArea){
     const a=presenterArea,safe={left:a.x*innerWidth,right:(a.x+a.width)*innerWidth,top:a.y*innerHeight,bottom:(a.y+a.height)*innerHeight};
-    for(const el of shapes) if(el.dataset.sceneKind==='image' && el.dataset.decorative!=='true' && overlap(paintedBox(el),safe)>4)
+    for(const el of shapes) if(el.dataset.sceneKind==='image' && el.dataset.sceneAssetRole!=='background' && el.dataset.decorative!=='true' && overlap(paintedBox(el),safe)>4)
       issues.push(`#${el.id} 图片进入右下讲解员叠层区域；调整素材可见内容的位置`);
   }
   const sameGroup=(a,b)=>a.dataset.overlapGroup && a.dataset.overlapGroup===b.dataset.overlapGroup;
@@ -128,14 +134,20 @@ MEASURE_JS = r"""({minFont,presenterArea}) => {
     (e.dataset.fillColor||e.querySelector('rect,circle')?.getAttribute('fill'));
   const outlined=e=>{const s=e.querySelector('rect,circle')?.getAttribute('stroke');return s&&s!=='none'&&s!==fill(e)};
   for(let i=0;i<shapes.length;i++) for(let j=i+1;j<shapes.length;j++){
-    const a=shapes[i],b=shapes[j],ar=a.getBoundingClientRect(),br=b.getBoundingClientRect();
-    if(sameGroup(a,b)||['character'].includes(a.dataset.sceneKind)||b.dataset.sceneKind==='character') continue;
+    const a=shapes[i],b=shapes[j],ar=paintedBox(a),br=paintedBox(b);
+    if(sameGroup(a,b)||['character'].includes(a.dataset.sceneKind)||b.dataset.sceneKind==='character' ||
+       a.dataset.sceneAssetRole==='background'||b.dataset.sceneAssetRole==='background') continue;
+    if(a.dataset.sceneKind==='image' || b.dataset.sceneKind==='image'){
+      if(overlap(ar,br)>Math.min(area(ar),area(br))*.2 && Math.min(area(ar),area(br))>0)
+        issues.push(`#${a.id} 与 #${b.id} 图片可见区域重叠；调整构图或错开出现时间`);
+      continue;
+    }
     const ac=fill(a),bc=fill(b);
     if(ac && ac!=='none' && ac===bc && !outlined(a)&&!outlined(b) && overlap(ar,br)>Math.min(area(ar),area(br))*.12)
       issues.push(`#${a.id} 与 #${b.id} 同色图形重叠，边界无法区分；分离布局、增加不同填色/轮廓，确需叠合的复合图形标记相同 overlap_group`);
   }
   for(const text of texts) if(text.owner) for(const shape of shapes){
-    if(text.owner===shape || sameGroup(text.owner,shape) || shape.dataset.material==='outline') continue;
+    if(text.owner===shape || sameGroup(text.owner,shape) || shape.dataset.material==='outline' || shape.dataset.sceneAssetRole==='background') continue;
     const a=Number(getComputedStyle(text.owner).zIndex)||0,b=Number(getComputedStyle(shape).zIndex)||0;
     const above=b>a || (b===a && !!(text.owner.compareDocumentPosition(shape)&Node.DOCUMENT_POSITION_FOLLOWING));
     const box=paintedBox(shape);
@@ -164,6 +176,9 @@ def sample_times(duration: float, payload: dict[str, Any] | None = None) -> list
             frames = el.get("keyframes", [])
             for k in frames:
                 times.add(min(duration - .01, max(0, k["time"] * scale * duration)))
+                if el.get("kind") == "image" and k.get("asset_id"):
+                    switch_at = k["time"] * scale * duration
+                    times.add(min(duration - .01, switch_at + .09))
             for a, b in zip(frames, frames[1:]):
                 times.add((a["time"] + b["time"]) / 2 * scale * duration)
     ordered = sorted(times)

@@ -18,6 +18,8 @@ export function SceneAssetSettings({ selected, onChange, onBusyChange }: {
   const [items, setItems] = useState<VisualAsset[]>([])
   const [role, setRole] = useState<VisualAsset['role']>('character')
   const [description, setDescription] = useState('')
+  const [subject, setSubject] = useState('')
+  const [pose, setPose] = useState('')
   const [busy, setBusy] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -36,11 +38,16 @@ export function SceneAssetSettings({ selected, onChange, onBusyChange }: {
       setError('请选择不超过 2 MB 的 PNG 或 JPEG 图片。')
       return
     }
+    if (pose.trim() && !subject.trim()) {
+      setError('填写姿态或状态时，请先填写同一对象名称。')
+      return
+    }
     setBusy(true); onBusyChange(true); setError('')
     try {
-      const asset = await api.uploadVisual(file, role, description.trim())
+      const asset = await api.uploadVisual(file, role, description.trim(), subject.trim(), pose.trim())
       setItems(current => [...current, asset])
       setDescription('')
+      setPose('')
       const current = items.filter(item => selected.includes(item.asset_id))
       if (current.length < MAX_SELECTED && current.reduce((sum, item) => sum + item.size_bytes, 0) + asset.size_bytes <= MAX_TOTAL)
         onChange([...selected, asset.asset_id])
@@ -72,6 +79,13 @@ export function SceneAssetSettings({ selected, onChange, onBusyChange }: {
       </Radio.Group>
       <Input value={description} disabled={busy} onChange={event => setDescription(event.target.value)}
         maxLength={240} showCount placeholder="描述画面内容与使用场景，例如：讲解员侧身指向左侧图表" />
+      <Space.Compact style={{ width: '100%' }}>
+        <Input value={subject} disabled={busy} onChange={event => setSubject(event.target.value)} maxLength={48}
+          aria-label="同一对象名称" placeholder="同一人物或道具名称，例如：小葵" />
+        <Input value={pose} disabled={busy} onChange={event => setPose(event.target.value)} maxLength={32}
+          aria-label="姿态或状态" placeholder="姿态/状态，例如：思考" />
+      </Space.Compact>
+      <Typography.Text type="secondary" style={{ fontSize: 12 }}>同一角色的多张立绘填相同对象名称，各自填写待机、讲解、思考等状态；图片需使用相同画布尺寸，才能在镜头中无跳位切换。</Typography.Text>
       <Upload.Dragger accept=".png,.jpg,.jpeg,image/png,image/jpeg" multiple={false} showUploadList={false} disabled={busy}
         beforeUpload={file => { void upload(file); return false }}>
         <p className="ant-upload-drag-icon"><InboxOutlined /></p>
@@ -89,7 +103,7 @@ export function SceneAssetSettings({ selected, onChange, onBusyChange }: {
               style={{ width: '100%', height: 110, objectFit: 'contain', background: 'repeating-conic-gradient(#263149 0% 25%,#1d283d 0% 50%) 50% / 16px 16px', borderRadius: 4 }} />
             <div style={{ marginTop: 7 }}><Checkbox checked={selected.includes(item.asset_id)} disabled={busy}
               onChange={event => toggle(item, event.target.checked)}>{item.filename}</Checkbox></div>
-            <Space size={5} wrap><Tag>{roleName[item.role]}</Tag><Typography.Text type="secondary" style={{ fontSize: 12 }}>{item.width} × {item.height}</Typography.Text></Space>
+            <Space size={5} wrap><Tag>{roleName[item.role]}</Tag>{item.subject && <Tag color="blue">{item.subject} · {item.pose || '默认'}</Tag>}<Typography.Text type="secondary" style={{ fontSize: 12 }}>{item.width} × {item.height}</Typography.Text></Space>
             {item.description && <Typography.Paragraph ellipsis={{ rows: 2 }} style={{ marginBottom: 0, fontSize: 12 }}>{item.description}</Typography.Paragraph>}
           </label>)}
         </div>}

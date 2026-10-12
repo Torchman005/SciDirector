@@ -109,11 +109,13 @@ export const api = {
   uploadPortrait: (file: File, signal?: AbortSignal) => uploadPresenter(file,'portraits',signal),
   listVisuals: () => request<VisualAsset[]>('/api/v1/assets/visuals'),
   visualUrl: (id: string) => `/api/v1/assets/visuals/${encodeURIComponent(id)}`,
-  uploadVisual: async (file: File, role: VisualAsset['role'], description: string): Promise<VisualAsset> => {
+  uploadVisual: async (file: File, role: VisualAsset['role'], description: string, subject: string, pose: string): Promise<VisualAsset> => {
     const form = new FormData()
     form.append('file', file)
     form.append('role', role)
     form.append('description', description)
+    form.append('subject', subject)
+    form.append('pose', pose)
     const resp = await fetch('/api/v1/assets/visuals', { method: 'POST', body: form, headers: { Accept: 'application/json' } })
     let body: { data?: VisualAsset; message?: string; code?: string }
     try { body = await resp.json() }
