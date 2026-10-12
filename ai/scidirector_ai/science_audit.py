@@ -37,11 +37,15 @@ def science_request(shot: ShotSpec, previous: CriticFeedback | None) -> str:
     if not manifest:
         return ""
     data = json.loads(manifest[manifest.index('{'):])
-    old = [t.model_dump() for t in (previous.repair_tasks if previous else [])
+    # The previous diagnosis describes an OLD source. Passing its quoted wrong
+    # formula/"missing label" as current evidence made the auditor repeat a
+    # disproven finding. Retain obligations, not stale observations.
+    old = [{'task_id': t.task_id, 'target': t.target, 'acceptance': t.acceptance}
+           for t in (previous.repair_tasks if previous else [])
            if t.task_id.startswith('science-') and t.status != 'resolved']
     if not old and not data['mathematical_source'] and not any(t['kind'] in {'Tex', 'MathTex'} for t in data['literal_text']):
         return ""
-    return json.dumps({'narration': shot.narration, 'visual_brief_draft': shot.visual_brief,
+    return json.dumps({'narration': shot.narration,
                        'source_evidence': data, 'previous_science_tasks': old}, ensure_ascii=False)
 
 

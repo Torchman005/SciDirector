@@ -36,6 +36,7 @@ from ..review_tasks import active_repairs, merge_repairs
 from ..scene_revision import review_manifest
 from ..science_evidence import manim_review_manifest
 from ..science_audit import audit_science, science_request, science_tasks, resolve_science
+from ..review_reasoning import check_review_reasoning
 from ..schemas import (
     CriticFeedback,
     FeedbackSource,
@@ -157,6 +158,7 @@ class CriticAgent(Agent):
         previous_feedback: str = "",
         previous_review: CriticFeedback | None = None,
         repair_prechecks: list[dict[str, Any]] | None = None,
+        user_intent: str = "",
     ) -> CritiqueOutcome:
         """审查一个渲染产物。
 
@@ -175,6 +177,7 @@ class CriticAgent(Agent):
         # A VLM may accept a smooth curve with a mathematically false label.
         # Check source definitions independently before spending a visual call.
         request = science_request(shot, previous_review)
+        science_context = ""
         if request:
             try:
                 key = hashlib.sha256(request.encode()).hexdigest()
@@ -186,6 +189,10 @@ class CriticAgent(Agent):
                     self._science_cache[key] = audit
                 tasks = science_tasks(audit, attempt=attempt, duration=artifact.duration_sec)
                 previous_review = resolve_science(previous_review, audit)
+                science_context = ("\n## 当前源码科学核对（不是历史诊断）\n"
+                    "以下是当前表达式的核对结果；你仍需验证限定说明在当前画面可见，及遮挡/时序。"
+                    "不得从旧版诊断引用当前已不存在的函数或把已注明假设的正确切片当作无条件定义。\n"
+                    + audit.model_dump_json())
                 if tasks:
                     # Preserve unclosed layout/content obligations when the new
                     # mathematical failure makes a visual call unnecessary.
@@ -257,7 +264,10 @@ class CriticAgent(Agent):
             narration=shot.narration or "（无画外音）",
             visual_brief=shot.visual_brief or "（无明确视觉意图）",
             style_guide=style_guide_to_text(style_guide),
-            previous_feedback=_format_previous(previous_feedback),
+            # Machine error transcripts mix old source with human intent. With
+            # typed history, use the task acceptance checklist below instead.
+            previous_feedback=(("\n## 用户本次期望\n" + user_intent) if user_intent else "")
+                + (_format_previous(previous_feedback) if previous_review is None else ""),
             frame_count=len(frames),
             frame_interval_sec=f"{frame_interval_sec:.1f}",
             preview_width=preview_width,
@@ -268,6 +278,7 @@ class CriticAgent(Agent):
         user_prompt += review_manifest(shot.code)
         if shot.engine and shot.engine.value == "manim":
             user_prompt += manim_review_manifest(shot.code)
+        user_prompt += science_context
         images = list(frames)
         image_labels = [f"图像 {i}：当前版本完整帧 {i}/{len(frames)}，用于本轮整体评分。" for i in range(1, len(frames) + 1)]
         current_indices = set(range(1, len(frames) + 1))
@@ -312,7 +323,9 @@ class CriticAgent(Agent):
                               "after_image": after_index})
             if pairs:
                 paired_ids.add(task.task_id)
-            repair_context.append({"task": task.model_dump(), "precheck": row.get("status", "unverified"),
+            repair_context.append({"task": task.model_dump(include={
+                'task_id', 'category', 'severity', 'target', 'acceptance', 'start_sec', 'end_sec'}),
+                                   "precheck": row.get("status", "unverified"),
                                    "evidence_pairs": pairs})
         if repair_context:
             user_prompt += "\n" + render_prompt("repair_review", current_count=len(frames),
@@ -353,13 +366,23 @@ class CriticAgent(Agent):
             for t in feedback.repair_tasks if t.severity != "advisory"
         )
         missing_results = paired_ids - {result.task_id for result in parsed.repair_results}
-        if (missing_results or invalid_new_tasks or (needs_locations and not _valid_task_locations(feedback.repair_tasks, artifact)
+        disputes = []
+        if request and feedback.logic_score < DIMENSION_FLOORS['logic_score']:
+            try:
+                disputes = check_review_reasoning(self.llm, request, parsed.model_dump_json()).disputes
+            except (LLMError, ValueError) as exc:
+                # This optional check never grants a pass when unavailable.
+                logger.warning('审核依据复核未完成，保留原判定', extra={'reason': str(exc)[:200]})
+        if (disputes or missing_results or invalid_new_tasks or (needs_locations and not _valid_task_locations(feedback.repair_tasks, artifact)
                                   and not active_repairs(previous_review))):
-            # One bounded clarification, never a render retry with vague feedback.
+            # Location and reasoning corrections share ONE clarification budget.
+            correction = ('\n独立核对发现判负推理需要纠正：' + json.dumps(
+                [d.model_dump() for d in disputes], ensure_ascii=False)
+                + '\n请重新核对当前图片，修正不成立的扣分理由，保留真实缺陷；这不是要求通过。') if disputes else ''
             try:
                 parsed = self.llm.vision_json(
                     system_prompt,
-                    user_prompt + "\n上一份审核反馈缺少有效定位或逐项验收结果。请重新输出完整 JSON，"
+                    user_prompt + correction + "\n请重新核对上一份审核并输出完整 JSON，"
                     "补充真实帧号/时间段、具体对象、画面证据、修改指令与可验收条件。"
                     f"本轮完整帧的 frame_indices 只能为 1～{len(frames)}；标为历史版本 BEFORE 的图不得作为当前问题。"
                     f"repair_results 必须回答这些已提供对比图的 task_id：{sorted(paired_ids)}，引用相应当前 AFTER 图像编号。"

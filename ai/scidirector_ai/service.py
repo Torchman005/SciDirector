@@ -497,6 +497,7 @@ class PipelineService:
                 shot=updated, artifact=artifact, style_guide=style_guide,
                 attempt=round_attempt, previous_feedback=feedback_text,
                 previous_review=previous_review, repair_prechecks=rows,
+                user_intent=human_comment,
             )
             last_valid = (updated, artifact, outcome.feedback, honored)
             if outcome.feedback.passed or outcome.degraded or not active_repairs(outcome.feedback):
@@ -508,7 +509,8 @@ class PipelineService:
         if last_valid:
             return last_valid
         raise RenderFailed(f"自动诊断修复在第 {revision_round + 1}/{rounds} 轮停止：{failure}。"
-                           "已保留原产物；请根据具体诊断处理依赖或调整内容后重试，无需编写修复代码。")
+                           "未能生成通过门禁的新版本，已保留原产物与诊断；"
+                           "仍可直接发起自动修复，无需填写技术修复方案。")
 
     # ------------------------------------------------------------------
     # 内部：渲染

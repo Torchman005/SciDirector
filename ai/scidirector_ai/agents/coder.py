@@ -179,7 +179,18 @@ class CoderAgent(Agent):
             if engine == "manim" and previous_code:
                 feedback_text += manim_review_manifest(previous_code)
             previous_code = ""
+            # Prior examples are useful for first drafts, but can anchor a
+            # failed rebuild to the very same crowded spatial arrangement.
+            examples = []
             feedback_text += "\n完整重建：重新安排所有对象的位置和阶段，禁止照抄旧坐标。保留核对正确的科学含义，修正错误定义。"
+            if engine == "manim" and "SCID_LAYOUT" in feedback_text:
+                feedback_text += ("\n实测布局失败的恢复方案：把比较对象按旁白先后分阶段展示，不再并排挤两张图。"
+                                  "每个阶段先构建图形、曲线和全部标注的 VGroup，再用 self.scid_place 实测摆放。"
+                                  "前阶段淡出后复用同一区域；长公式/限定参数可先独立展示，保持完整科学含义。"
+                                  "标题区域 (0.04,0.03,0.92,0.13)，正文图组区域 (0.04,0.19,0.72,0.75)，"
+                                  "独立公式阶段可使用 (0.04,0.20,0.92,0.32)。"
+                                  "估算组的总尺寸，轴高不超过2.8世界单位，留出组内标题与标注空间；"
+                                  "调用 scid_place 后不再给组成员 shift/move_to。")
         user_prompt = self._build_user_prompt(
             shot=shot,
             style_guide=style_guide,

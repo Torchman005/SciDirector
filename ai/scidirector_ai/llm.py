@@ -94,6 +94,7 @@ class Task:
     SCENE_REPAIR = "scene_repair"  # 按稳定元素 id 修订场景
     CRITIQUE = "critique"  # 审查：抽帧 -> 评审意见
     SCIENCE = "science"   # 独立核对绘图表达式与科学定义
+    REVIEW_REASONING = "review_reasoning"  # 复核判负依据，不替代画面审核
     FREE = "free"          # 自由文本
 
 
@@ -617,6 +618,8 @@ def _mock_response(messages: list[Message], *, json_mode: bool, task: str) -> st
     if not json_mode:
         return "（mock 模式）这是一段占位说明文本。"
 
+    if task == Task.REVIEW_REASONING:
+        return {"disputes": []}
     if task == Task.SCIENCE:
         return json.dumps({"findings": [{"verdict": "correct", "target": "mock",
                           "evidence": "mock 模式占位核对，不代表真实科学验收"}], "resolutions": []})

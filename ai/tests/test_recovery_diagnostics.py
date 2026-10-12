@@ -48,8 +48,11 @@ def test_manim_rebuild_cannot_reinject_bad_spatial_baseline():
     agent=make_agent([VALID_MANIM])
     shot=make_shot().model_copy(update={'meta':{'repair_strategy':'rebuild'}})
     old=VALID_MANIM+'\n        label=Text("meaningful fact").move_to([99,99,0])'
-    result=agent.generate(shot=shot,style_guide=StyleGuide(),previous_code=old)
+    result=agent.generate(shot=shot,style_guide=StyleGuide(),previous_code=old,
+                          feedback_text='SCID_LAYOUT 标注进入讲解员区域')
     prompt=agent.llm.calls[0]['user']
     assert result.policy_ok and 'meaningful fact' in prompt
     assert '99,99' not in prompt and 'move_to([99' not in prompt
     assert '上一版代码（以此为基础修改）' not in prompt
+    assert result.examples_used == []
+    assert 'self.scid_place' in prompt and '分阶段展示' in prompt

@@ -850,6 +850,7 @@ class PipelineNodes:
             previous_feedback=_collect_feedback(state, shot.shot_id),
             previous_review=(state.get("feedback") or {}).get(shot.shot_id),
             repair_prechecks=(state.get("repair_prechecks") or {}).get(shot.shot_id, []),
+            user_intent=(state.get("human_feedback") or {}).get(shot.shot_id, ""),
         )
 
         feedback_map = dict(state.get("feedback") or {})
