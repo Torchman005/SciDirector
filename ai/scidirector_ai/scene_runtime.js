@@ -9,7 +9,8 @@
   window.__loadError='';
   const animatedUntil=config.animatedUntil || 1;
   // A shared timeline preserves synchronization between connected objects.
-  const timelineEnd=scene.elements.some(e=>e.keyframes.some(k=>k.time>animatedUntil))?animatedUntil:1;
+  const timelineEnd=(scene.elements.some(e=>e.keyframes.some(k=>k.time>animatedUntil)) ||
+    (scene.motion_groups||[]).some(g=>g.keyframes.some(k=>k.time>animatedUntil)))?animatedUntil:1;
   const stage = document.getElementById('stage');
   const paper=Boolean(style.paperStage);
   if(paper) stage.classList.add('paper-stage');
@@ -63,6 +64,14 @@
     }
     return {...defaults,...a};
   };
+  const groups=new Map((scene.motion_groups||[]).map(group=>{
+    const members=scene.elements.filter(el=>el.motion_group===group.id);
+    const left=Math.min(...members.map(el=>el.box.x)),top=Math.min(...members.map(el=>el.box.y));
+    const right=Math.max(...members.map(el=>el.box.x+el.box.width));
+    const bottom=Math.max(...members.map(el=>el.box.y+el.box.height));
+    return [group.id,{cx:(left+right)*W/2,cy:(top+bottom)*H/2,
+      frames:group.keyframes.map(frame=>({...defaults,...frame}))}];
+  }));
   const imageLoads=[];
   const nodes=scene.elements.map(el => {
     const root=make('div',stage,'scene-element'); root.id=el.id;
@@ -172,8 +181,17 @@
     for(const {el,root,content,bars,cells,packets,stroke,strokeLength,arrow,character,images} of nodes) {
       const local=Math.min(1,t/timelineEnd);
       const s=sample(el.keyframes, local);
-      root.style.opacity=String(s.opacity);
-      root.style.transform=`translate(${s.dx*W}px,${s.dy*H}px) rotate(${s.rotation}deg) scale(${s.scale})`;
+      const group=groups.get(el.motion_group);
+      if(group){
+        const motion=sample(group.frames,local),cx=(el.box.x+el.box.width/2)*W,cy=(el.box.y+el.box.height/2)*H;
+        const dx=motion.dx*W+(motion.scale-1)*(cx-group.cx)+motion.scale*s.dx*W;
+        const dy=motion.dy*H+(motion.scale-1)*(cy-group.cy)+motion.scale*s.dy*H;
+        root.style.opacity=String(s.opacity*motion.opacity);
+        root.style.transform=`translate(${dx}px,${dy}px) rotate(${s.rotation}deg) scale(${s.scale*motion.scale})`;
+      }else{
+        root.style.opacity=String(s.opacity);
+        root.style.transform=`translate(${s.dx*W}px,${s.dy*H}px) rotate(${s.rotation}deg) scale(${s.scale})`;
+      }
       if(images){
         let current=el.asset_id,previous=current,switchedAt=null;
         for(const frame of el.keyframes){

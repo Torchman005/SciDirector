@@ -18,7 +18,7 @@ MATH 默认继续 Manim；需要 LaTeX、复杂数学、3D、复杂曲线/角色
 
 ## SceneSpec v1
 
-对象：`version:1 / background / elements / explanation`。每个元素包含稳定唯一 id、kind、box、内容与 keyframes。
+对象：`version:1 / background / elements / motion_groups? / explanation`。每个元素包含稳定唯一 id、kind、box、内容与 keyframes。
 box 的 x/y/width/height 为画布比例；font_size 是实际成片像素。
 
 | kind | 内容 | 固定能力 |
@@ -32,7 +32,7 @@ box 的 x/y/width/height 为画布比例；font_size 是实际成片像素。
 
 颜色只能 text/primary/muted 或 #RRGGBB。风格和字体来自现有 StyleGuide；正文不插入 HTML。
 background 支持 solid/gradient/grid/vignette/noise/scanlines/paper_stage 预设；StyleGuide 的明确选择优先，auto 时由场景选择。paper_stage 由固定运行时绘制浅色纸纹、地平线和透视地面，搭配 paper 配色使用；场景元素仍按原布局与时间轴渲染。
-keyframes 使用归一化 time，必须从 0 严格递增；每帧完整状态为 opacity/dx/dy/rotation/reveal。
+keyframes 使用归一化 time，严格递增；首帧可以晚于 0，此前对象隐藏。每帧完整状态为 opacity/dx/dy/rotation/reveal/scale。
 未写字段恢复默认值，不继承上一帧。easing=linear/smooth/step 描述到达该帧的方式。
 reveal 只控制 code 打字、bars 生长。最后一帧后定格，阅读停留不强制制造无关变化。
 旋转仅允许几何图形；复杂图案可使用多个几何元素，但没有任意 JS/SVG path 逃逸字段。
@@ -43,6 +43,8 @@ reveal 只控制 code 打字、bars 生长。最后一帧后定格，阅读停�
 实际文字宽高与重叠仍要浏览器测量：换行会保留完整内容，溢出由现有预检发现，不缩字号或省略正文来假装通过。
 CSS 无自主动画；每次 seek 都重设完整状态，支持倒序、重复、并行页面从中间时刻开始和局部重渲。
 草稿视口缩小通过舞台缩放实现，保持 authored layout。
+
+`image` 可引用当前任务已选择的 PNG/JPEG，关键帧 `asset_id` 在同 subject/role/画布尺寸的状态间切换；固定运行时 0.18 秒交叉淡化。每个元素可填 `motion_group`，对应 `motion_groups` 中一条轨道，至少两个成员。组轨道仅有 time/opacity/dx/dy/scale/easing，围绕成员原始 box 并集中心缩放，保持道具与关系线的位置关系。平移限制在画布 ±0.25、缩放 0.85～1.15；单元素局部运动与组轨道按绝对时间复合。组越界、字号不足和进入右下讲解员区在编译时被拒绝，浏览器预检取组关键帧与中点检查实际遮挡。SceneRevision 可通过 upsert_groups/remove_groups 定点修复组运动。
 
 ## 生成与审核预算
 

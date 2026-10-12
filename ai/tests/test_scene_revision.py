@@ -34,6 +34,18 @@ def test_patch_preserves_unrelated_content_order_and_source() -> None:
     assert result.elements[0].font_size == 60
 
 
+def test_group_track_can_be_repaired_without_rebuilding_scene() -> None:
+    from test_scene_motion_safety import grouped_scene
+    original = grouped_scene()
+    changed = original.motion_groups[0].model_copy(deep=True)
+    changed.keyframes[-1].dx = .05
+    result = apply_revision(original, SceneRevision(upsert_groups=[changed]))
+    assert result.motion_groups[0].keyframes[-1].dx == .05
+    assert original.motion_groups[0].keyframes[-1].dx == .1
+    with pytest.raises(ValueError, match="没有改变"):
+        apply_revision(original, SceneRevision(upsert_groups=original.motion_groups))
+
+
 def test_patch_rejects_fake_progress_unknown_deletion_and_conflicts() -> None:
     original = spec()
     for patch in [SceneRevision(explanation="已全部修复"), SceneRevision(upsert=original.elements),

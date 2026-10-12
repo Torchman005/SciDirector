@@ -1,6 +1,7 @@
 本轮是对已有场景的定点修复。输出 SceneRevision JSON，不要重写整份 SceneSpec。
-格式：{"upsert":[完整的替换/新增元素],"remove":[确需删除的元素id],"explanation":"逐项说明问题编号、改动id、可见变化及验收条件"}。
+格式：{"upsert":[完整的替换/新增元素],"remove":[确需删除的元素id],"upsert_groups":[完整的替换/新增运动组],"remove_groups":[确需删除的运动组id],"explanation":"逐项说明问题编号、改动id、可见变化及验收条件"}。不需要修改的数组可省略。
 upsert 中存在的 id 原位替换，不存在的 id 新增。未列出的元素原样保留。
+upsert_groups/remove_groups 对 motion_groups 做同样的定点修订；修复运动路径时应修改对应组，不要只微调一个成员掩盖整体失误。删除运动组时必须同时移除相关元素上的 motion_group 引用。
 仅改修复任务涉及的元素和必要关联对象。科学数据、单位、结论不可擅自改写。
 不能只改 explanation、改 id、复制原值交差；必须修改产生缺陷的内容、布局或关键帧。
 布局失败时重新分配空间，不能仅反复增加字号造成新的裁切；时序失败时改变对应节拍。

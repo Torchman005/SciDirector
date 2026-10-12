@@ -58,6 +58,27 @@ class Keyframe(SceneModel):
     asset_id: str = Field(default="", pattern=r"^$|^[0-9a-f]{32}$")
 
 
+class GroupKeyframe(SceneModel):
+    time: float = Field(ge=0, le=1)
+    opacity: float = Field(default=1, ge=0, le=1)
+    dx: float = Field(default=0, ge=-.25, le=.25)
+    dy: float = Field(default=0, ge=-.25, le=.25)
+    scale: float = Field(default=1, ge=.85, le=1.15)
+    easing: Literal["linear", "smooth", "step", "ease_in", "ease_out", "spring"] = "smooth"
+
+
+class MotionGroup(SceneModel):
+    id: str = Field(pattern=r"^[A-Za-z][A-Za-z0-9_-]{0,47}$")
+    keyframes: list[GroupKeyframe] = Field(min_length=1, max_length=12)
+
+    @model_validator(mode="after")
+    def ordered(self) -> MotionGroup:
+        times = [frame.time for frame in self.keyframes]
+        if any(b <= a for a, b in zip(times, times[1:])):
+            raise ValueError(f"运动组 #{self.id} 的 keyframes 必须严格递增")
+        return self
+
+
 class Point(SceneModel):
     x: float = Field(ge=0, le=1)
     y: float = Field(ge=0, le=1)
@@ -100,6 +121,7 @@ class Element(SceneModel):
     flow: bool = False
     asset_id: str = Field(default="", pattern=r"^$|^[0-9a-f]{32}$")
     image_fit: Literal["contain", "cover"] = "contain"
+    motion_group: str = Field(default="", pattern=r"^[A-Za-z0-9_-]{0,48}$")
 
     @model_validator(mode="before")
     @classmethod
@@ -171,6 +193,7 @@ class SceneSpec(SceneModel):
     version: Literal[1] = 1
     background: Literal["solid", "gradient", "grid", "vignette", "noise", "scanlines", "paper_stage"] = "solid"
     elements: list[Element] = Field(min_length=1, max_length=48)
+    motion_groups: list[MotionGroup] = Field(default_factory=list, max_length=8)
     explanation: str = Field(default="", max_length=4000)
 
     @model_validator(mode="after")
@@ -178,6 +201,15 @@ class SceneSpec(SceneModel):
         ids = [el.id for el in self.elements]
         if len(ids) != len(set(ids)):
             raise ValueError("场景元素 id 必须唯一")
+        groups = [group.id for group in self.motion_groups]
+        if len(groups) != len(set(groups)):
+            raise ValueError("运动组 id 必须唯一")
+        for element in self.elements:
+            if element.motion_group and element.motion_group not in groups:
+                raise ValueError(f"#{element.id} 引用了不存在的运动组 {element.motion_group}")
+        for group in self.motion_groups:
+            if sum(element.motion_group == group.id for element in self.elements) < 2:
+                raise ValueError(f"运动组 #{group.id} 至少需要两个元素")
         return self
 
 
@@ -231,11 +263,63 @@ def validate_layout(scene: SceneSpec, *, width: int, height: int, duration: floa
             rows = math.ceil(len(el.cells)/cols)
             if b.height*height/rows < el.font_size*1.8 or b.width*width/cols < el.font_size*2.4:
                 raise ValueError(f"#{el.id} 网格格子过小；减少列/行或扩大 box")
+    def sample_track(frames: list[Keyframe] | list[GroupKeyframe], at: float) -> tuple[float, float, float, float]:
+        if not frames:
+            return 1, 0, 0, 1
+        first = frames[0]
+        if at < first.time:
+            return 0, first.dx, first.dy, first.scale
+        previous = first
+        for current in frames[1:]:
+            if at < current.time:
+                fraction = (at - previous.time) / (current.time - previous.time)
+                if current.easing == "step": fraction = 0
+                elif current.easing == "smooth": fraction = fraction*fraction*(3-2*fraction)
+                elif current.easing == "ease_in": fraction = fraction**3
+                elif current.easing == "ease_out": fraction = 1-(1-fraction)**3
+                elif current.easing == "spring": fraction = (1-(1+7*fraction)*math.exp(-7*fraction))/(1-8*math.exp(-7))
+                return tuple(getattr(previous, key)+(getattr(current, key)-getattr(previous, key))*fraction
+                             for key in ("opacity", "dx", "dy", "scale"))
+            previous = current
+        return previous.opacity, previous.dx, previous.dy, previous.scale
+
+    for group in scene.motion_groups:
+        members = [el for el in scene.elements if el.motion_group == group.id]
+        left = min(el.box.x for el in members)
+        top = min(el.box.y for el in members)
+        right = max(el.box.x + el.box.width for el in members)
+        bottom = max(el.box.y + el.box.height for el in members)
+        pivot_x, pivot_y = (left+right)/2, (top+bottom)/2
+        key_times = sorted({0., 1., *(frame.time for frame in group.keyframes),
+                            *(frame.time for el in members for frame in el.keyframes)})
+        probe_times = sorted(set(key_times) | {(a+b)/2 for a, b in zip(key_times, key_times[1:])})
+        for at in probe_times:
+            group_opacity, group_dx, group_dy, group_scale = sample_track(group.keyframes, at)
+            for el in members:
+                opacity, dx, dy, scale = sample_track(el.keyframes, at)
+                if group_opacity*opacity <= .1:
+                    continue
+                box = el.box
+                cx, cy = box.x+box.width/2, box.y+box.height/2
+                actual_cx = pivot_x + group_scale*(cx+dx-pivot_x) + group_dx
+                actual_cy = pivot_y + group_scale*(cy+dy-pivot_y) + group_dy
+                actual_scale = group_scale*scale
+                x, y = actual_cx-box.width*actual_scale/2, actual_cy-box.height*actual_scale/2
+                right_edge, bottom_edge = x+box.width*actual_scale, y+box.height*actual_scale
+                if min(x, y) < -GEOMETRY_EPSILON or right_edge > 1+GEOMETRY_EPSILON or bottom_edge > 1+GEOMETRY_EPSILON:
+                    raise ValueError(f"运动组 #{group.id} 使 #{el.id} 在 time={at:g} 超出画布")
+                safe = style.presenter_safe_area
+                if safe and el.kind != "image" and not el.decorative and x < safe.x+safe.width and right_edge > safe.x and y < safe.y+safe.height and bottom_edge > safe.y:
+                    raise ValueError(f"运动组 #{group.id} 使 #{el.id} 在 time={at:g} 进入右下讲解员区域")
+                if el.kind in {"text", "card", "code", "bars", "grid"} and el.font_size*actual_scale < style.min_font_size*.9:
+                    raise ValueError(f"运动组 #{group.id} 使 #{el.id} 的实际字号过小")
     # The first frame may intentionally establish a scene. The final state must
     # contain visible content; otherwise the renderer would produce a blank tail.
-    if not any(not el.keyframes or (el.keyframes[-1].opacity > .1
-                                    and (el.kind not in {"code", "bars", "grid"}
-                                         or el.keyframes[-1].reveal > 0))
+    groups_by_id = {group.id: group for group in scene.motion_groups}
+    if not any((not el.keyframes or (el.keyframes[-1].opacity > .1
+                                     and (el.kind not in {"code", "bars", "grid"}
+                                          or el.keyframes[-1].reveal > 0)))
+               and (not el.motion_group or sample_track(groups_by_id[el.motion_group].keyframes, 1)[0] > .1)
                for el in scene.elements):
         raise ValueError("末帧必须有可见内容")
 

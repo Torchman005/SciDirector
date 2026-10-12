@@ -169,14 +169,15 @@ def sample_times(duration: float, payload: dict[str, Any] | None = None) -> list
     times = {min(.2, duration * .1), *(duration * i / 8 for i in range(1, 8)), max(0, duration - .05)}
     if payload:
         elements = payload.get("scene", {}).get("elements", [])
-        keys = {k["time"] for el in elements for k in el.get("keyframes", [])}
+        groups = payload.get("scene", {}).get("motion_groups", [])
+        keys = {k["time"] for item in [*elements, *groups] for k in item.get("keyframes", [])}
         end = payload.get("animatedUntil", 1)
         scale = end if any(t > end for t in keys) else 1
-        for el in elements:
-            frames = el.get("keyframes", [])
+        for item in [*elements, *groups]:
+            frames = item.get("keyframes", [])
             for k in frames:
                 times.add(min(duration - .01, max(0, k["time"] * scale * duration)))
-                if el.get("kind") == "image" and k.get("asset_id"):
+                if item.get("kind") == "image" and k.get("asset_id"):
                     switch_at = k["time"] * scale * duration
                     times.add(min(duration - .01, switch_at + .09))
             for a, b in zip(frames, frames[1:]):
