@@ -33,6 +33,9 @@ shot = dict(shot_id="s1",index=1,tag="ILLUSTRATION",engine="d3",duration_sec=8,
 job = dict(job_id="ui-quality",status="RENDERING",raw_script=shot["narration"],target_duration_sec=8,
            shots=[shot],created_at="2026-10-10T10:00:00Z")
 detail = dict(job=job,progress=.5,stat=dict(total=1,approved=0,awaiting_human=1,failed=0,in_progress=0))
+visuals = [dict(asset_id=letter*32,filename=filename,mime_type="image/png",role="character",
+                subject="小葵",pose=pose,width=100,height=120,size_bytes=1000)
+           for letter, filename, pose in [("c", "idle.png", "待机"), ("d", "thinking.png", "思考")]]
 
 
 def main():
@@ -47,6 +50,10 @@ def main():
 
         def api(route):
             path = route.request.url.split("?")[0]
+            if path.endswith("/assets/visuals"):
+                route.fulfill(json={"ok":True,"data":visuals}); return
+            if "/assets/visuals/" in path:
+                route.fulfill(path=str(ROOT/".data/anime-demo/preview.png"),content_type="image/png"); return
             if path.endswith("/reject"):
                 repair_calls.append(route.request.post_data_json)
                 if len(repair_calls) == 1:
@@ -90,6 +97,11 @@ def main():
         expect(page.get_by_text("请输入脚本",exact=True)).to_be_visible()
         script = page.locator("#raw_script")
         script.fill("光的反射遵循明确的几何规律：反射角等于入射角，二者都从法线量起。")
+        expect(page.get_by_text("本次未选分镜图片",exact=False)).to_be_visible()
+        page.get_by_role("checkbox",name="idle.png").check()
+        expect(page.get_by_text("100 × 120 · 当前不可切换",exact=True)).to_be_visible()
+        page.get_by_role("checkbox",name="thinking.png").check()
+        expect(page.get_by_text("100 × 120 · 可切换",exact=True)).to_be_visible()
         animation = page.locator("#animation_style")
         animation.focus(); page.keyboard.press("ArrowDown")
         expect(page.locator(".ant-select-dropdown:not(.ant-select-dropdown-hidden)")).to_be_visible()

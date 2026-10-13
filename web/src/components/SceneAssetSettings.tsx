@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Alert, Button, Checkbox, Form, Input, Radio, Space, Spin, Tag, Typography, Upload } from 'antd'
 import { InboxOutlined, ReloadOutlined } from '@ant-design/icons'
 import { api, errorText } from '../api'
+import { inspectSceneAssets } from '../sceneAssetReadiness'
 import type { VisualAsset } from '../types'
 
 const MAX_SELECTED = 6
@@ -67,6 +68,7 @@ export function SceneAssetSettings({ selected, onChange, onBusyChange }: {
   }
 
   const chosen = items.filter(item => selected.includes(item.asset_id))
+  const readiness = inspectSceneAssets(chosen)
   return <Form.Item label="分镜图片素材（可选）">
     <Space direction="vertical" style={{ width: '100%' }} size="middle">
       <Typography.Text type="secondary">
@@ -96,6 +98,18 @@ export function SceneAssetSettings({ selected, onChange, onBusyChange }: {
       <Space><Typography.Text strong>本次选用 {chosen.length}/{MAX_SELECTED} 张</Typography.Text>
         <Typography.Text type="secondary">{(chosen.reduce((sum, item) => sum + item.size_bytes, 0) / 1024 / 1024).toFixed(2)} / 8 MB</Typography.Text>
         <Button size="small" loading={loading} onClick={() => void refresh()}>刷新</Button></Space>
+      {!loading && <Alert type={readiness.warnings.length ? 'warning' : 'info'} showIcon message="分镜素材准备"
+        description={<Space direction="vertical" size={6} style={{ width: '100%' }}>
+          {readiness.warnings.map(warning => <Typography.Text key={warning}>{warning}</Typography.Text>)}
+          {readiness.groups.map(group => <Space key={`${group.role}-${group.subject}`} size={6} wrap>
+            <Typography.Text strong>{group.subject}</Typography.Text>
+            <Tag>{roleName[group.role]}</Tag>
+            {group.poses.map((pose, index) => <Tag key={`${pose}-${index}`} color={group.switchable ? 'blue' : undefined}>{pose}</Tag>)}
+            <Typography.Text type="secondary">{group.dimensions}{group.switchable ? ' · 可切换' : ' · 当前不可切换'}</Typography.Text>
+          </Space>)}
+          {readiness.notes.map(note => <Typography.Text key={note} type="secondary">{note}</Typography.Text>)}
+          <Typography.Text type="secondary">这里只检查名称、格式和画布尺寸；画风质量及是否贴合旁白仍需观看实际分镜。</Typography.Text>
+        </Space>} />}
       {loading ? <Spin /> : items.length === 0 ? <Typography.Text type="secondary">素材库暂无图片。</Typography.Text> :
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(190px,1fr))', gap: 12 }}>
           {items.map(item => <label key={item.asset_id} style={{ display: 'block', padding: 10, border: selected.includes(item.asset_id) ? '1px solid #6f9ff8' : '1px solid #394865', borderRadius: 8, cursor: 'pointer' }}>
