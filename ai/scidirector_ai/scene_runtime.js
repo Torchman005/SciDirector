@@ -89,7 +89,7 @@
     Object.assign(root.style,{left:b.x*W+'px',top:b.y*H+'px',width:b.width*W+'px',height:b.height*H+'px',
       fontSize:el.font_size+'px',textAlign:el.align,color:color(el.color),zIndex:String(el.layer)});
     if(el.anchor_from) Object.assign(root.style,{left:'0px',top:'0px',width:W+'px',height:H+'px',pointerEvents:'none'});
-    const record={el,root,content:null,bars:[],cells:[],packets:[],stroke:null,strokeLength:0,arrow:null,character:null,images:null};
+    const record={el,root,content:null,bars:[],cells:[],packets:[],stroke:null,strokeLength:0,arrow:null,character:null,images:null,iconAction:null};
     if(['text','card','code'].includes(el.kind)) {
       root.className+=' scene-text'+(el.kind==='card'?' scene-card':el.kind==='code'?' scene-code':'');
       if(el.kind!=='text') {
@@ -152,7 +152,8 @@
       const w=el.anchor_from?W:b.width*W,h=el.anchor_from?H:b.height*H;
       const svg=svgNode('svg',root,{viewBox:`0 0 ${w} ${h}`});
       const tint=color(el.color),outlined=material==='outline';
-      if(el.kind==='icon')createScienceIcon(svg,svgNode,el.glyph,w,h,tint,light?'#F0F3FA':'#151E32');
+      if(el.kind==='icon')record.iconAction=createScienceIcon(svg,svgNode,el.glyph,w,h,tint,
+        paper?'#FFF9EF':light?'#F0F3FA':'#151E32');
       let fill=outlined?'none':tint;
       const stroke=el.stroke_color?color(el.stroke_color):material==='solid'?'none':mix(tint,light?'#000000':'#FFFFFF',.35);
       if(['gradient','glass'].includes(material)&&['rect','circle'].includes(el.kind)){
@@ -212,7 +213,7 @@
   window.__seek = seconds => {
     const t=Math.max(0,Math.min(D,Number.isFinite(seconds)?seconds:0))/D;
     const local=Math.min(1,t/timelineEnd);
-    for(const {el,root,content,bars,cells,packets,stroke,strokeLength,arrow,character,images} of nodes) {
+    for(const {el,root,content,bars,cells,packets,stroke,strokeLength,arrow,character,images,iconAction} of nodes) {
       const s=sample(el.keyframes, local);
       const group=groups.get(el.motion_group);
       if(group){
@@ -246,6 +247,7 @@
         s.gestureMix=frame?Math.min(1,Math.max(0,(local-frame.time)*D/.3)):1;
         character(t*D,s);
       }
+      if(iconAction) iconAction(s.reveal);
       if(stroke && !el.anchor_from) paintStroke(byId.get(el.id),s,t);
       if(el.kind==='code') content.textContent=Array.from(el.text).slice(0,Math.floor(Array.from(el.text).length*s.reveal)).join('');
       for(const bar of bars) bar.style.transform=`scaleX(${s.reveal})`;

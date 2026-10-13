@@ -14,9 +14,9 @@ image 必须从风格清单选 asset_id，使用 box 与普通关键帧编排，
 若人物和道具要一起移动或改变主次尺度，给至少两个相关对象设置相同 motion_group，并在 scene.motion_groups 中提供对应 {id,keyframes}。组关键帧只支持 time、opacity、dx、dy、scale、easing；dx/dy 是画布比例，限制在 ±0.25，scale 在 0.85～1.15。组围绕成员原始 box 的并集中心缩放，所有成员保持相对位置；每个成员自己的关键帧仍用于局部动作。不要把字幕、无关标题或持续右下讲解员放进运动组。组运动只在解释对象切换时短促发生，结果落定后留阅读停顿；禁止无意义持续漂移或大幅摇晃。
 对象 A 指向对象 B 的关系线一律使用 kind=line、anchor_from="A 的 id"、anchor_to="B 的 id"。不要手填 box/points；固定运行时按当前对象位置连接两侧边缘，对象独立运动或同组运动都能跟随，任一对象隐藏时线自动隐藏。锚定线不得设置 motion_group 或自己的 dx/dy/scale/rotation；只用 opacity/reveal 控制显隐和描线。先安排对象之间有足够走线通道，关系线不能穿过第三个对象或文字，也不能经过右下讲解员区域。确实表示自由轨迹而非对象关系时才使用 polyline points=[{x,y},…]，坐标相对自己的 box，至少两点；line/polyline 可 arrow=true、stroke_width=4、reveal 描线。
 关系线可以 flow=true，在明确的输入→处理→输出方向上显示流动信号；粒子仅表示传输示意，不能冒充数量/概率/粒子实验。
-icon 为内置科学插图，glyph=chip/memory/router/factory/gate/lens，分别表示芯片、存储器、路由、工厂、门控、观察；使用独立标签说明真实含义。图标按短边等比绘制，方形 box 最合适，无 text。
+icon 为离线矢量道具，glyph=chip/memory/router/factory/gate/lens/phone/calendar/book/film/scissors/microscope/parcel。前六种用于计算机制，后七种用于叙事中的手机、日历、书、胶片、剪刀、显微镜和包裹；只在旁白确实涉及该对象时使用，不能把泛用图标冒充真实仪器或实验数据。使用独立标签说明含义；图标按短边等比绘制，接近方形的 box 最合适，无 text。scissors 可用 reveal=0→1 表示一次张开到合拢的剪切动作，其他 icon 不支持 reveal。
 grid 为结构化词元/张量示意网格，cells=[{label:"Q",color:"secondary"},…]，columns=1～8；reveal 逐格出现。单格宽至少 2.4×font_size，高至少 1.8×font_size。无真实数值时用对象标签或空格，不要伪造矩阵值。
-为内容选择构图：数据搬运用 memory+grid+flow+chip，稀疏选择用 router+分支+少数亮起的专家，特征变换用 factory+不同形状网格；不要每镜都画成两个玻璃卡片。先画能解释机制的主图，再安排标题/注释。
+为内容选择构图：数据搬运用 memory+grid+flow+chip，稀疏选择用 router+分支+少数亮起的专家，特征变换用 factory+不同形状网格；叙事中的真实物件可用 phone/calendar/book/film/scissors/microscope/parcel。每镜先确定一个具体的主物件和它发生的变化，再加最多两三个支持对象；主物件应足够大，别让大标题、等宽卡片和空白区域抢走焦点。连续镜头切换主物件或构图，不能反复画同一种双卡片流程。动作要与旁白动词一致，例如“剪开”才安排剪刀闭合；不能用无意义浮动代替解释。先画能解释机制的主图，再安排标题/注释。
 character 无 text，建议 box 宽高像素比约 2:3；不要拉成横条。角色让出主图与底部字幕区域。
 角色关键帧可 expression=neutral/smile/curious/surprised/focused、gesture=idle/explain/point/think/wave；在到达该帧时切换。
 每个元素有唯一稳定 id、kind、box={x,y,width,height}，box 坐标为画布归一化比例。
@@ -38,7 +38,7 @@ keyframes 最多 24 个，time 为秒数 / {{duration_sec}}，严格递增。第
 省略字段由系统恢复默认，不继承前一帧；只有非默认状态必须在该帧写出。静止元素省略 keyframes。
 通常每元素 2～6 个关键帧足够，只有运动方向或阶段改变时增加；不要复制相同状态堆满 24 帧。
 保留必要内容和全部对象，explanation 简述阶段、布局、来源和修复即可，不复述整份 JSON。
-reveal 影响 code 打字、bars 生长、line/polyline 描线、grid 逐格显示；其他组件不要用它。文字和图表不能旋转；可轻微缩放，但实际 font_size × scale 必须保持可读。
+reveal 影响 code 打字、bars 生长、line/polyline 描线、grid 逐格显示和 scissors 合拢；其他组件不要用它。文字和图表不能旋转；可轻微缩放，但实际 font_size × scale 必须保持可读。
 几何与角色可使用 scale（0.5～1.5，默认1），必须预留放大及旋转后的包围范围。
 easing 为 linear/smooth/step/ease_in/ease_out/spring，描述到达当前关键帧的插值方式；step 在该时间点切换，spring 是不越界的阻尼落定。
 不提供 keyframes 表示静止，最后一个关键帧之后定格。关键帧可在 1 结束，编译器会自动预留 min(0.5秒,总时长10%) 的完成态停留。

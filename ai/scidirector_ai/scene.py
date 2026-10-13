@@ -117,7 +117,8 @@ class Element(SceneModel):
     stroke_width: float = Field(default=4, ge=1, le=20)
     overlap_group: str = Field(default="", pattern=r"^[A-Za-z0-9_-]{0,48}$")
     decorative: bool = False
-    glyph: Literal["chip", "memory", "router", "factory", "gate", "lens"] = "chip"
+    glyph: Literal["chip", "memory", "router", "factory", "gate", "lens",
+                   "phone", "calendar", "book", "film", "scissors", "microscope", "parcel"] = "chip"
     cells: list[GridCell] = Field(default_factory=list, max_length=64)
     columns: int = Field(default=4, ge=1, le=8)
     flow: bool = False
@@ -194,8 +195,9 @@ class Element(SceneModel):
             raise ValueError(f"#{self.id} points 仅用于 polyline")
         if self.kind not in {"rect", "circle", "line", "polyline", "character", "icon", "image"} and any(k.rotation for k in self.keyframes):
             raise ValueError(f"#{self.id} 文字/图表不可旋转；请用几何元素表达旋转")
-        if self.kind not in {"code", "bars", "line", "polyline", "grid"} and any(k.reveal != 1 for k in self.keyframes):
-            raise ValueError(f"#{self.id} reveal 仅支持 code/bars/line/polyline；其他元素请用 opacity")
+        can_reveal = self.kind in {"code", "bars", "line", "polyline", "grid"} or (self.kind == "icon" and self.glyph == "scissors")
+        if not can_reveal and any(k.reveal != 1 for k in self.keyframes):
+            raise ValueError(f"#{self.id} reveal 仅支持 code/bars/line/polyline/grid/scissors；其他元素请用 opacity")
         if self.kind != "character" and any(k.expression != "neutral" or k.gesture != "idle" for k in self.keyframes):
             raise ValueError(f"#{self.id} expression/gesture 仅用于 character")
         return self
