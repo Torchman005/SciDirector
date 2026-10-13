@@ -42,6 +42,7 @@
     parent.appendChild(node);return node;
   };
   const defaults = {opacity:1,dx:0,dy:0,rotation:0,reveal:1,scale:1};
+  const ROUTE_CLEARANCE=12, ROUTE_BEND_COST=36;
   const sample = (frames,t) => {
     if(!frames.length) return {...defaults};
     let a=frames[0];
@@ -168,10 +169,11 @@
       if(el.kind==='circle') svgNode('circle',svg,{cx:w/2,cy:h/2,r:Math.max(1,Math.min(w,h)/2-inset),fill,stroke,'stroke-width':sw});
       if(['line','polyline'].includes(el.kind)) {
         const attrs={stroke:color(el.color),'stroke-width':el.stroke_width,fill:'none',pathLength:1,'stroke-linecap':'round','stroke-linejoin':'round'};
-        if(el.kind==='line') Object.assign(attrs,el.anchor_from?{x1:0,y1:0,x2:0,y2:0}:
-          {x1:4,y1:4,x2:Math.max(4,w-8),y2:Math.max(4,h-8)});
+        if(el.kind==='line' && !el.anchor_from) Object.assign(attrs,
+           {x1:4,y1:4,x2:Math.max(4,w-8),y2:Math.max(4,h-8)});
+        else if(el.anchor_from) attrs.points='0,0 0,0';
         else attrs.points=el.points.map(p=>`${p.x*w},${p.y*h}`).join(' ');
-        record.stroke=svgNode(el.kind==='line'?'line':'polyline',svg,attrs);
+        record.stroke=svgNode(el.kind==='line' && !el.anchor_from?'line':'polyline',svg,attrs);
         record.strokeLength=record.stroke.getTotalLength();
         if(el.flow){
           for(let i=0;i<3;i++)record.packets.push(svgNode('circle',svg,{r:Math.max(3,el.stroke_width*1.15),fill:tint,stroke:light?'#FFFFFF':'#E6ECFF','stroke-width':1}));
@@ -203,12 +205,116 @@
       arrow.setAttribute('transform',`translate(${tip.x} ${tip.y}) rotate(${angle})`);
     }
   };
-  const connectionPoint=(rect,toward)=>{
-    const cx=(rect.left+rect.right)/2,cy=(rect.top+rect.bottom)/2;
-    const dx=toward.x-cx,dy=toward.y-cy;
-    const factor=Math.min((rect.width/2)/Math.max(Math.abs(dx),.001),
-      (rect.height/2)/Math.max(Math.abs(dy),.001));
-    return {x:cx+dx*factor,y:cy+dy*factor};
+  const toSceneRect=(r,stageRect)=>{
+    const sx=W/stageRect.width,sy=H/stageRect.height;
+    return {left:(r.left-stageRect.left)*sx,right:(r.right-stageRect.left)*sx,
+      top:(r.top-stageRect.top)*sy,bottom:(r.bottom-stageRect.top)*sy};
+  };
+  const imageAlphaBounds=img=>{
+    if(img.src.startsWith('data:image/jpeg'))return {left:0,right:1,top:0,bottom:1};
+    const canvas=document.createElement('canvas');
+    canvas.width=Math.min(img.naturalWidth,512);canvas.height=Math.min(img.naturalHeight,512);
+    const ctx=canvas.getContext('2d',{willReadFrequently:true});
+    ctx.drawImage(img,0,0,canvas.width,canvas.height);
+    const pixels=ctx.getImageData(0,0,canvas.width,canvas.height).data;
+    let left=canvas.width,right=0,top=canvas.height,bottom=0;
+    for(let y=0;y<canvas.height;y++)for(let x=0;x<canvas.width;x++){
+      if(pixels[(y*canvas.width+x)*4+3]<=24)continue;
+      left=Math.min(left,x);right=Math.max(right,x+1);
+      top=Math.min(top,y);bottom=Math.max(bottom,y+1);
+    }
+    return right>left&&bottom>top?{left:left/canvas.width,right:right/canvas.width,
+      top:top/canvas.height,bottom:bottom/canvas.height}:null;
+  };
+  const paintedSceneRect=(root,stageRect)=>{
+    if(root.dataset.sceneKind==='text'){
+      const range=document.createRange();range.selectNodeContents(root.firstElementChild);
+      const rects=[...range.getClientRects()];
+      if(rects.length)return toSceneRect({left:Math.min(...rects.map(r=>r.left)),
+        right:Math.max(...rects.map(r=>r.right)),top:Math.min(...rects.map(r=>r.top)),
+        bottom:Math.max(...rects.map(r=>r.bottom))},stageRect);
+    }
+    if(root.dataset.sceneKind!=='image')return toSceneRect(root.getBoundingClientRect(),stageRect);
+    const transform=getComputedStyle(root).transform;
+    if(transform!=='none'){
+      const m=new DOMMatrixReadOnly(transform);
+      if(Math.abs(m.b)>.001||Math.abs(m.c)>.001)return toSceneRect(root.getBoundingClientRect(),stageRect);
+    }
+    const rects=[...root.querySelectorAll('img')].filter(img=>
+      getComputedStyle(img).visibility!=='hidden'&&Number(getComputedStyle(img).opacity)>.05&&img.__alphaBounds)
+      .map(img=>{
+        const box=img.getBoundingClientRect(),a=img.__alphaBounds;
+        const factor=img.style.objectFit==='cover'
+          ?Math.max(box.width/img.naturalWidth,box.height/img.naturalHeight)
+          :Math.min(box.width/img.naturalWidth,box.height/img.naturalHeight);
+        const ox=box.left+(box.width-img.naturalWidth*factor)/2;
+        const oy=box.top+(box.height-img.naturalHeight*factor)/2;
+        return {left:Math.max(box.left,ox+a.left*img.naturalWidth*factor),
+          right:Math.min(box.right,ox+a.right*img.naturalWidth*factor),
+          top:Math.max(box.top,oy+a.top*img.naturalHeight*factor),
+          bottom:Math.min(box.bottom,oy+a.bottom*img.naturalHeight*factor)};
+      });
+    if(!rects.length)return null;
+    return toSceneRect({left:Math.min(...rects.map(r=>r.left)),right:Math.max(...rects.map(r=>r.right)),
+      top:Math.min(...rects.map(r=>r.top)),bottom:Math.max(...rects.map(r=>r.bottom))},stageRect);
+  };
+  const ports=r=>[
+    {x:r.right,y:(r.top+r.bottom)/2,ox:1,oy:0},
+    {x:r.left,y:(r.top+r.bottom)/2,ox:-1,oy:0},
+    {x:(r.left+r.right)/2,y:r.bottom,ox:0,oy:1},
+    {x:(r.left+r.right)/2,y:r.top,ox:0,oy:-1},
+  ];
+  const crosses=(a,b,r)=>{
+    const dx=b.x-a.x,dy=b.y-a.y;
+    let lo=0,hi=1;
+    for(const [p,q] of [[-dx,a.x-r.left],[dx,r.right-a.x],[-dy,a.y-r.top],[dy,r.bottom-a.y]]){
+      if(Math.abs(p)<1e-9){if(q<=0)return false;continue;}
+      const t=q/p;
+      if(p<0)lo=Math.max(lo,t);else hi=Math.min(hi,t);
+      if(lo>=hi)return false;
+    }
+    return (hi-lo)*Math.hypot(dx,dy)>1;
+  };
+  const routeConnector=(source,target,obstacles)=>{
+    let best=null,bestCost=Infinity;
+    const lanesX=[...new Set(obstacles.flatMap(o=>[o.rect.left-ROUTE_CLEARANCE,o.rect.right+ROUTE_CLEARANCE]))];
+    const lanesY=[...new Set(obstacles.flatMap(o=>[o.rect.top-ROUTE_CLEARANCE,o.rect.bottom+ROUTE_CLEARANCE]))];
+    const consider=points=>{
+      const path=points.filter((p,i)=>!i || p.x!==points[i-1].x || p.y!==points[i-1].y);
+      if(path.length<2 || path.some(p=>p.x<0||p.x>W||p.y<0||p.y>H))return;
+      const first=path[0],second=path[1],last=path[path.length-1],before=path[path.length-2];
+      if((second.x-first.x)*first.ox+(second.y-first.y)*first.oy<=0 ||
+         (before.x-last.x)*last.ox+(before.y-last.y)*last.oy<=0)return;
+      let cost=0;
+      for(let i=1;i<path.length;i++){
+        const a=path[i-1],b=path[i];
+        for(const obstacle of obstacles){
+          if((i===1&&obstacle.id===source.id)||(i===path.length-1&&obstacle.id===target.id))continue;
+          const r=obstacle.id===source.id || obstacle.id===target.id?obstacle.rect:
+            {left:obstacle.rect.left-ROUTE_CLEARANCE,right:obstacle.rect.right+ROUTE_CLEARANCE,
+              top:obstacle.rect.top-ROUTE_CLEARANCE,bottom:obstacle.rect.bottom+ROUTE_CLEARANCE};
+          if(crosses(a,b,r))return;
+        }
+        cost+=Math.hypot(b.x-a.x,b.y-a.y);
+        if(i>1){
+          const prev=path[i-2];
+          if((a.x-prev.x)*(b.y-a.y)!==(a.y-prev.y)*(b.x-a.x))cost+=ROUTE_BEND_COST;
+        }
+      }
+      if(cost<bestCost){best=path;bestCost=cost;}
+    };
+    const pairs=ports(source.rect).flatMap(from=>ports(target.rect).map(to=>[from,to]));
+    for(const [from,to] of pairs)consider([from,to]);
+    if(best)return best;
+    for(const [from,to] of pairs){
+      const a={x:from.x+from.ox*ROUTE_CLEARANCE,y:from.y+from.oy*ROUTE_CLEARANCE};
+      const b={x:to.x+to.ox*ROUTE_CLEARANCE,y:to.y+to.oy*ROUTE_CLEARANCE};
+      consider([from,a,{x:b.x,y:a.y},b,to]);
+      consider([from,a,{x:a.x,y:b.y},b,to]);
+      for(const x of lanesX)consider([from,a,{x,y:a.y},{x,y:b.y},b,to]);
+      for(const y of lanesY)consider([from,a,{x:a.x,y},{x:b.x,y},b,to]);
+    }
+    return best;
   };
   window.__seek = seconds => {
     const t=Math.max(0,Math.min(D,Number.isFinite(seconds)?seconds:0))/D;
@@ -259,25 +365,41 @@
     // Resolve connectors after all objects have reached their absolute-time
     // positions. A connector is never animated by guessed local coordinates.
     const stageRect=nodes.some(record=>record.el.anchor_from)?stage.getBoundingClientRect():null;
+    const obstacles=stageRect?nodes.filter(({el,root})=>!el.anchor_from&&!el.decorative&&
+      el.kind!=='polyline'&&el.kind!=='line'&&
+      root.dataset.sceneAssetRole!=='background'&&Number(getComputedStyle(root).opacity)>.35)
+      .map(({el,root})=>({id:el.id,rect:paintedSceneRect(root,stageRect)}))
+      .filter(item=>item.rect):[];
+    if(stageRect && style.presenterSafeArea){
+      const p=style.presenterSafeArea;
+      obstacles.push({id:'presenter',rect:{left:p.x*W,right:(p.x+p.width)*W,
+        top:p.y*H,bottom:(p.y+p.height)*H}});
+    }
     for(const record of nodes){
       const {el,root,stroke}=record;
       if(!el.anchor_from) continue;
       const source=byId.get(el.anchor_from).root,target=byId.get(el.anchor_to).root;
-      const sourceRect=source.getBoundingClientRect(),targetRect=target.getBoundingClientRect();
-      const aCenter={x:(sourceRect.left+sourceRect.right)/2,y:(sourceRect.top+sourceRect.bottom)/2};
-      const bCenter={x:(targetRect.left+targetRect.right)/2,y:(targetRect.top+targetRect.bottom)/2};
-      const a=connectionPoint(sourceRect,bCenter),b=connectionPoint(targetRect,aCenter);
-      stroke.setAttribute('x1',(a.x-stageRect.left)*W/stageRect.width);
-      stroke.setAttribute('y1',(a.y-stageRect.top)*H/stageRect.height);
-      stroke.setAttribute('x2',(b.x-stageRect.left)*W/stageRect.width);
-      stroke.setAttribute('y2',(b.y-stageRect.top)*H/stageRect.height);
       const endpointsVisible=Number(getComputedStyle(source).opacity)>.1 && Number(getComputedStyle(target).opacity)>.1;
-      root.style.opacity=endpointsVisible?String(sample(el.keyframes,local).opacity):'0';
-      paintStroke(record,sample(el.keyframes,local),t);
+      const state=sample(el.keyframes,local);
+      const sourceRect=paintedSceneRect(source,stageRect),targetRect=paintedSceneRect(target,stageRect);
+      const route=endpointsVisible&&sourceRect&&targetRect?routeConnector(
+        {id:el.anchor_from,rect:sourceRect},
+        {id:el.anchor_to,rect:targetRect},obstacles):null;
+      root.dataset.routeBlocked=String(endpointsVisible && state.opacity>.35 && state.reveal>0 && !route);
+      root.style.opacity=route?String(state.opacity):'0';
+      if(route){
+        stroke.setAttribute('points',route.map(p=>`${p.x},${p.y}`).join(' '));
+        paintStroke(record,state,t);
+      }else stroke.setAttribute('points','0,0 0,0');
     }
   };
   window.__seek(0);
-  Promise.all(imageLoads).then(()=>{window.__ready=true;}).catch(error=>{
+  Promise.all(imageLoads).then(()=>{
+    for(const record of nodes)if(record.images)for(const img of record.images.values())
+      img.__alphaBounds=imageAlphaBounds(img);
+    window.__seek(0);
+    window.__ready=true;
+  }).catch(error=>{
     window.__loadError=String(error);
     window.__ready=false;
   });

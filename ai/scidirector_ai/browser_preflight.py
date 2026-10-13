@@ -163,29 +163,39 @@ MEASURE_JS = r"""({minFont,presenterArea}) => {
     return (hi-lo)*Math.hypot(dx,dy)>8;
   };
   for(const line of document.querySelectorAll('[data-anchor-from]')){
+    if(line.dataset.routeBlocked==='true'){
+      issues.push(`#${line.id} 关系线找不到避开对象和讲解员的路线；调整对象间距或出场时间`);
+      continue;
+    }
     if(!visible(line,.35))continue;
-    const stroke=line.querySelector('svg line'),matrix=stroke?.getScreenCTM();
+    const stroke=line.querySelector('svg line,svg polyline'),matrix=stroke?.getScreenCTM();
     if(!matrix)continue;
-    const a=new DOMPoint(Number(stroke.getAttribute('x1')),Number(stroke.getAttribute('y1'))).matrixTransform(matrix);
-    const b=new DOMPoint(Number(stroke.getAttribute('x2')),Number(stroke.getAttribute('y2'))).matrixTransform(matrix);
-    if(Math.hypot(a.x-b.x,a.y-b.y)<20){
+    const points=stroke.tagName.toLowerCase()==='polyline'
+      ? Array.from({length:stroke.points.numberOfItems},(_,i)=>stroke.points.getItem(i))
+      : [{x:Number(stroke.getAttribute('x1')),y:Number(stroke.getAttribute('y1'))},
+         {x:Number(stroke.getAttribute('x2')),y:Number(stroke.getAttribute('y2'))}];
+    const route=points.map(p=>new DOMPoint(p.x,p.y).matrixTransform(matrix));
+    const segments=route.slice(1).map((p,i)=>[route[i],p]);
+    const routeLength=segments.reduce((sum,[a,b])=>sum+Math.hypot(a.x-b.x,a.y-b.y),0);
+    if(routeLength<20){
       issues.push(`#${line.id} 锚定关系线两端距离过短；分开源对象与目标对象`);
       continue;
     }
     if(presenterArea){
       const p=presenterArea,safe={left:p.x*innerWidth,right:(p.x+p.width)*innerWidth,
         top:p.y*innerHeight,bottom:(p.y+p.height)*innerHeight};
-      if(segmentCrosses(a,b,safe))issues.push(`#${line.id} 关系线进入右下讲解员区域；重新安排对象位置`);
+      if(segments.some(([a,b])=>segmentCrosses(a,b,safe)))
+        issues.push(`#${line.id} 关系线进入右下讲解员区域；重新安排对象位置`);
     }
     for(const shape of shapes){
       if([line.dataset.anchorFrom,line.dataset.anchorTo].includes(shape.id)||shape.dataset.decorative==='true'||
          shape.dataset.sceneAssetRole==='background')continue;
-      if(segmentCrosses(a,b,paintedBox(shape)))
+      if(segments.some(([a,b])=>segmentCrosses(a,b,paintedBox(shape))))
         issues.push(`#${line.id} 关系线穿过无关对象 #${shape.id}；移动对象或重新安排流程顺序`);
     }
     for(const text of texts){
       if(!text.owner || [line.dataset.anchorFrom,line.dataset.anchorTo].includes(text.owner.id))continue;
-      if(text.rects.some(rect=>segmentCrosses(a,b,rect)))
+      if(text.rects.some(rect=>segments.some(([a,b])=>segmentCrosses(a,b,rect))))
         issues.push(`#${line.id} 关系线穿过无关文字 ${text.id}；移动标签或重新安排流程顺序`);
     }
   }

@@ -47,7 +47,7 @@ CSS 无自主动画；每次 seek 都重设完整状态，支持倒序、重复�
 
 `image` 可引用当前任务已选择的 PNG/JPEG，关键帧 `asset_id` 在同 subject/role/画布尺寸的状态间切换；固定运行时 0.18 秒交叉淡化。每个元素可填 `motion_group`，对应 `motion_groups` 中一条轨道，至少两个成员。组轨道仅有 time/opacity/dx/dy/scale/easing，围绕成员原始 box 并集中心缩放，保持道具与关系线的位置关系。平移限制在画布 ±0.25、缩放 0.85～1.15；单元素局部运动与组轨道按绝对时间复合。组越界、字号不足和进入右下讲解员区在编译时被拒绝，浏览器预检取组关键帧与中点检查实际遮挡。SceneRevision 可通过 upsert_groups/remove_groups 定点修复组运动。
 
-新对象关系用 `kind=line, anchor_from="source-id", anchor_to="target-id"`；可省略 box。两端必须引用不同的非装饰对象。运行时在每次 seek 更新所有对象后，依据当前屏幕包围盒连接两端边缘；任一端隐藏时线隐藏。锚定线自身只允许 opacity/reveal，不允许手动位移/缩放/旋转或 motion_group。旧自由 line/polyline 和组内自由轨迹保持兼容。浏览器预检拦截线穿过第三个对象、文字或右下讲解员区域，也拦截不同颜色的前景组件大面积重叠；外框与内嵌内容等有意叠合需共享 `overlap_group`。审核仍需核查语义关系本身是否科学正确。
+新对象关系用 `kind=line, anchor_from="source-id", anchor_to="target-id"`；可省略 box。两端必须引用不同的非装饰对象。运行时在每次 seek 更新所有对象后，依据当前屏幕包围盒选择连接点；直线路径被可见对象或讲解员区域阻挡时尝试折线绕行，走不通则隐藏线并让浏览器预检报告该线 id。图片按解码后的可见像素边界参与走线，透明留白不占通道。任一端隐藏时线隐藏。锚定线自身只允许 opacity/reveal，不允许手动位移/缩放/旋转或 motion_group。旧自由 line/polyline 和组内自由轨迹保持兼容。浏览器预检按实际折线逐段检查第三个对象、文字和右下讲解员区域，也拦截不同颜色的前景组件大面积重叠；外框与内嵌内容等有意叠合需共享 `overlap_group`。审核仍需核查语义关系本身是否科学正确。
 
 `icon.glyph` 有计算用 `chip/memory/router/factory/gate/lens`，以及具体叙事道具 `phone/calendar/book/film/scissors/microscope/parcel`。只有剪刀道具可用 `reveal=0→1` 表示一次张开到合拢；其他 icon 的 reveal 仍不受支持。道具是受信任的离线 SVG，不需要图片服务。样片运行 `PYTHONPATH=ai python scripts/render-prop-story-demo.py` 后生成 `.data/prop-story-demo.html`，可在 2、5、9 秒检查动作、关系线和纸纹构图。真实人物质感仍取决于导入的透明立绘/Live2D 素材。
 

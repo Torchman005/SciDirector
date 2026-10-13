@@ -135,6 +135,36 @@ def test_image_alpha_occlusion_decode_and_reverse_seek(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(not os.environ.get("SCID_CHROME"), reason="SCID_CHROME 未设置")
+def test_transparent_image_margin_does_not_block_relation(tmp_path: Path) -> None:
+    from playwright.sync_api import sync_playwright
+
+    from scidirector_ai.browser_preflight import inspect
+
+    scene = SceneSpec.model_validate({"elements": [
+        {"id": "portrait", "kind": "image", "asset_id": ASSET_ID,
+         "box": {"x": .01, "y": .1, "width": .88, "height": .8}},
+        {"id": "source", "kind": "rect", "box": {"x": .3, "y": .38, "width": .1, "height": .2}},
+        {"id": "target", "kind": "rect", "box": {"x": .65, "y": .38, "width": .1, "height": .2}},
+        {"id": "relation", "kind": "line", "anchor_from": "source", "anchor_to": "target"},
+    ]})
+    page_path = tmp_path / "transparent-route.html"
+    page_path.write_text(compile_scene(scene, width=1280, height=720, duration=2,
+                                       style=imported_style(tmp_path)), encoding="utf-8")
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(executable_path=os.environ["SCID_CHROME"])
+        try:
+            page = browser.new_page(viewport={"width": 1280, "height": 720})
+            page.goto(page_path.resolve().as_uri())
+            page.wait_for_function("() => window.__ready")
+            relation = page.locator("#relation")
+            assert relation.get_attribute("data-route-blocked") == "false"
+            assert relation.evaluate("e => e.style.opacity") == "1"
+        finally:
+            browser.close()
+    assert not inspect(page_path, 1280, 720, 2, 12, os.environ["SCID_CHROME"])["issues"]
+
+
+@pytest.mark.skipif(not os.environ.get("SCID_CHROME"), reason="SCID_CHROME 未设置")
 def test_pose_switch_crossfade_and_reverse_seek(tmp_path: Path) -> None:
     from playwright.sync_api import sync_playwright
     from scidirector_ai.browser_preflight import inspect, sample_times

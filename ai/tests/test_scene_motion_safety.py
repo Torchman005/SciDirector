@@ -134,9 +134,10 @@ def test_anchor_tracks_moving_objects_and_reverse_seek(tmp_path: Path):
                   window.__seek(t);
                   const from=document.getElementById('source').getBoundingClientRect();
                   const to=document.getElementById('target').getBoundingClientRect();
-                  const line=document.querySelector('#relation svg line');
+                  const line=document.querySelector('#relation svg polyline');
+                  const first=line.points.getItem(0),last=line.points.getItem(line.points.numberOfItems-1);
                   return {fromRight:from.right,toLeft:to.left,
-                    x1:Number(line.getAttribute('x1')),x2:Number(line.getAttribute('x2')),
+                    x1:first.x,x2:last.x,
                     opacity:document.getElementById('relation').style.opacity};
                 }""", time)
             start = state(0)
@@ -161,8 +162,13 @@ def test_preflight_catches_wrong_routes_and_different_color_collisions(tmp_path:
                                       style=StyleGuide()), encoding="utf-8")
         return inspect(file, 1280, 720, 4, 32, os.environ["SCID_CHROME"])
 
-    blocked = report(anchored_scene(obstacle=True))
-    assert any("关系线穿过无关对象 #obstacle" in issue for issue in blocked["issues"]), blocked
+    routed = report(anchored_scene(obstacle=True))
+    assert not routed["issues"], routed
+    walled = SceneSpec.model_validate({"elements": [*anchored_scene().model_dump()["elements"], dict(
+        id="wall", kind="rect", box=dict(x=.45, y=0, width=.1, height=1), color="success"
+    )]})
+    blocked = report(walled)
+    assert any("#relation 关系线找不到避开" in issue for issue in blocked["issues"]), blocked
     shapes = SceneSpec.model_validate({"elements": [
         element("a", color="secondary"), element("b", x=.2, color="accent")
     ]})
