@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from scidirector_ai.browser_preflight import inspect, sample_times
+from scidirector_ai.browser_preflight import inspect, motion_scan_times, sample_times
 from scidirector_ai.scene import SceneSpec, compile_scene
 from scidirector_ai.schemas import StyleGuide
 
@@ -94,6 +94,59 @@ def test_group_keyframes_are_sampled_for_mid_motion():
     scene = grouped_scene()
     payload = {"scene": scene.model_dump(), "animatedUntil": .95}
     assert any(t == pytest.approx(1.) for t in sample_times(4, payload))
+
+
+def test_motion_scan_uses_render_frame_cadence_and_skips_static_scene():
+    scene = SceneSpec(elements=[element("still")])
+    assert motion_scan_times(4, {"scene": scene.model_dump()}) == ([], [])
+    scene = SceneSpec(elements=[element("moving", keyframes=[
+        {"time": 0}, {"time": .5, "dx": .1}])])
+    times, dynamic = motion_scan_times(1, {"scene": scene.model_dump()}, fps=24)
+    assert dynamic == ["moving"]
+    assert len(times) == 21
+    assert times[0] == pytest.approx(.125)
+    assert times[-1] == pytest.approx(23 / 24)
+
+
+@pytest.mark.skipif(not os.environ.get("SCID_CHROME"), reason="需要 Chromium")
+@pytest.mark.parametrize("kind,needle", [("rect", "前景组件重叠"), ("text", "文字重叠")])
+def test_preflight_catches_short_collision_between_keyframe_samples(tmp_path: Path, kind: str, needle: str):
+    moving = element("moving", kind=kind, x=.1, color="secondary",
+                     keyframes=[{"time": 0, "easing": "linear"},
+                                {"time": .5, "dx": .8 if kind == "text" else .6,
+                                 "easing": "linear"}])
+    fixed = element("fixed", kind=kind, x=.6 if kind == "text" else .5, color="accent")
+    moving["box"]["width"] = fixed["box"]["width"] = .055 if kind == "text" else .02
+    if kind == "text":
+        moving["text"], fixed["text"] = "甲", "乙"
+    scene = SceneSpec(elements=[moving, fixed])
+    file = tmp_path / "crossing.html"
+    file.write_text(compile_scene(scene, width=1280, height=720, duration=4,
+                                  style=StyleGuide()), encoding="utf-8")
+    report = inspect(file, 1280, 720, 4, 32, os.environ["SCID_CHROME"])
+    assert any("#moving 与 #fixed" in issue and needle in issue
+               and issue.startswith(("1.2", "1.3"))
+               for issue in report["issues"]), report
+
+
+@pytest.mark.skipif(not os.environ.get("SCID_CHROME"), reason="需要 Chromium")
+@pytest.mark.parametrize("intentional", [False, True])
+def test_motion_scan_respects_gap_and_intentional_compound(tmp_path: Path, intentional: bool):
+    moving = element("moving", x=.1, color="secondary",
+                     keyframes=[{"time": 0, "easing": "linear"},
+                                {"time": .5, "dx": .6, "easing": "linear"}])
+    moving["box"]["width"] = .02
+    fixed = element("fixed", x=.5, color="accent")
+    fixed["box"]["width"] = .02
+    if intentional:
+        moving["overlap_group"] = fixed["overlap_group"] = "compound"
+    else:
+        fixed["box"]["y"] = .56
+    file = tmp_path / "motion-safe.html"
+    file.write_text(compile_scene(SceneSpec(elements=[moving, fixed]), width=1280,
+                                  height=720, duration=4, style=StyleGuide()), encoding="utf-8")
+    report = inspect(file, 1280, 720, 4, 32, os.environ["SCID_CHROME"])
+    assert not report["issues"], report
 
 
 @pytest.mark.skipif(not os.environ.get("SCID_CHROME"),reason="需要 Chromium")

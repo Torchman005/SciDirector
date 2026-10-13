@@ -11,6 +11,7 @@ sys.path[:] = [p for p in sys.path if str(Path(p or ".").resolve()) != _HERE]
 import argparse  # noqa: E402
 import io  # noqa: E402
 import json  # noqa: E402
+import math  # noqa: E402
 from typing import Any  # noqa: E402
 
 # A small raster difference tolerates font/antialias noise but catches state accumulation.
@@ -18,6 +19,7 @@ DETERMINISM_CHANGE_RATIO = .005
 READY_TIMEOUT_MS = 8_000
 MAX_ISSUES = 12
 MAX_SAMPLE_TIMES = 24
+MOTION_SCAN_FPS = 30
 
 # Measure actual DOM/SVG text, including clipping ancestors. Unknown Canvas text is reported as a gap.
 MEASURE_JS = r"""({minFont,presenterArea}) => {
@@ -217,6 +219,82 @@ MEASURE_JS = r"""({minFont,presenterArea}) => {
 }"""
 
 
+# Broad phase only: seek at rendered-frame cadence and locate overlap peaks.
+# The full DOM/alpha-aware detector above decides whether each peak is an issue.
+MOTION_CANDIDATES_JS = r"""({times,dynamicIds}) => {
+  const dynamic=new Set(dynamicIds), peaks=new Map(), candidates=[], blockedSeen=new Set();
+  const elements=[...document.querySelectorAll('[data-scene-kind]')].filter(e=>
+    !['line','polyline'].includes(e.dataset.sceneKind) &&
+    e.dataset.decorative!=='true' && e.dataset.sceneAssetRole!=='background');
+  const area=r=>Math.max(0,r.right-r.left)*Math.max(0,r.bottom-r.top);
+  const overlap=(a,b)=>Math.max(0,Math.min(a.right,b.right)-Math.max(a.left,b.left))*
+    Math.max(0,Math.min(a.bottom,b.bottom)-Math.max(a.top,b.top));
+  const painted=e=>{
+    if(e.dataset.sceneKind==='text'){
+      const range=document.createRange();range.selectNodeContents(e.firstElementChild);
+      const rects=[...range.getClientRects()];
+      if(!rects.length)return e.getBoundingClientRect();
+      return {left:Math.min(...rects.map(r=>r.left)),right:Math.max(...rects.map(r=>r.right)),
+        top:Math.min(...rects.map(r=>r.top)),bottom:Math.max(...rects.map(r=>r.bottom))};
+    }
+    if(e.dataset.sceneKind!=='image')return e.getBoundingClientRect();
+    const transform=getComputedStyle(e).transform;
+    if(transform!=='none'){
+      const m=new DOMMatrixReadOnly(transform);
+      if(Math.abs(m.b)>.001||Math.abs(m.c)>.001)return e.getBoundingClientRect();
+    }
+    const boxes=[...e.querySelectorAll('img')].filter(img=>
+      getComputedStyle(img).visibility!=='hidden'&&Number(getComputedStyle(img).opacity)>.05)
+      .map(img=>{
+        const box=img.getBoundingClientRect(),a=img.__alphaBounds;
+        if(!a||!img.naturalWidth||!img.naturalHeight)return box;
+        const factor=img.style.objectFit==='cover'
+          ?Math.max(box.width/img.naturalWidth,box.height/img.naturalHeight)
+          :Math.min(box.width/img.naturalWidth,box.height/img.naturalHeight);
+        const ox=box.left+(box.width-img.naturalWidth*factor)/2;
+        const oy=box.top+(box.height-img.naturalHeight*factor)/2;
+        return {left:Math.max(box.left,ox+a.left*img.naturalWidth*factor),
+          right:Math.min(box.right,ox+a.right*img.naturalWidth*factor),
+          top:Math.max(box.top,oy+a.top*img.naturalHeight*factor),
+          bottom:Math.min(box.bottom,oy+a.bottom*img.naturalHeight*factor)};
+      });
+    if(!boxes.length)return null;
+    return {left:Math.min(...boxes.map(b=>b.left)),right:Math.max(...boxes.map(b=>b.right)),
+      top:Math.min(...boxes.map(b=>b.top)),bottom:Math.max(...boxes.map(b=>b.bottom))};
+  };
+  for(const t of times){
+    window.__seek(t);
+    for(const line of document.querySelectorAll('[data-anchor-from][data-route-blocked="true"]')){
+      if(!blockedSeen.has(line.id)){
+        candidates.push(t);blockedSeen.add(line.id);
+      }
+    }
+    const active=elements.map(e=>{
+      const s=getComputedStyle(e);
+      if(s.display==='none'||s.visibility==='hidden'||Number(s.opacity)<=.1)return null;
+      const r=painted(e);
+      return r&&area(r)>0?{e,r}:null;
+    }).filter(Boolean);
+    const touched=new Set();
+    for(let i=0;i<active.length;i++)for(let j=i+1;j<active.length;j++){
+      const a=active[i],b=active[j];
+      if(!dynamic.has(a.e.id)&&!dynamic.has(b.e.id))continue;
+      if(a.e.dataset.overlapGroup&&a.e.dataset.overlapGroup===b.e.dataset.overlapGroup)continue;
+      const score=overlap(a.r,b.r)/Math.min(area(a.r),area(b.r));
+      if(score<=0)continue;
+      const key=a.e.id+'|'+b.e.id;
+      touched.add(key);
+      if(!peaks.has(key)||score>peaks.get(key).score)peaks.set(key,{time:t,score});
+    }
+    for(const [key,peak] of peaks)if(!touched.has(key)){
+      candidates.push(peak.time);peaks.delete(key);
+    }
+  }
+  for(const peak of peaks.values())candidates.push(peak.time);
+  return [...new Set(candidates)].sort((a,b)=>a-b);
+}"""
+
+
 def sample_times(duration: float, payload: dict[str, Any] | None = None) -> list[float]:
     """Probe stage boundaries and their midpoints, where crossings are easy to miss."""
     times = {min(.2, duration * .1), *(duration * i / 8 for i in range(1, 8)), max(0, duration - .05)}
@@ -241,6 +319,24 @@ def sample_times(duration: float, payload: dict[str, Any] | None = None) -> list
     return ordered
 
 
+def motion_scan_times(duration: float, payload: dict[str, Any], fps: int = MOTION_SCAN_FPS) -> tuple[list[float], list[str]]:
+    """Use render-frame cadence only for structured elements that can change."""
+    if fps < 1:
+        raise ValueError("预检帧率必须为正数")
+    scene = payload.get("scene", {})
+    groups = {group["id"] for group in scene.get("motion_groups", [])
+              if len(group.get("keyframes", [])) > 1 or group.get("keyframes", [{}])[0].get("time", 0) > 0}
+    dynamic = [element["id"] for element in scene.get("elements", [])
+               if len(element.get("keyframes", [])) > 1
+               or (element.get("keyframes") and element["keyframes"][0]["time"] > 0)
+               or element.get("motion_group") in groups]
+    if not dynamic:
+        return [], []
+    start = min(.25, duration * .1)
+    frames = (i / fps for i in range(math.ceil(duration * fps)))
+    return [t for t in frames if start <= t < duration], dynamic
+
+
 def _different(before: bytes, after: bytes) -> bool:
     from PIL import Image, ImageChops
 
@@ -254,7 +350,8 @@ def _different(before: bytes, after: bytes) -> bool:
 
 
 def inspect(html: Path, width: int, height: int, duration: float, min_font: int,
-            executable: str = "", presenter_area: dict | None = None) -> dict[str, Any]:
+            executable: str = "", presenter_area: dict | None = None,
+            fps: int = MOTION_SCAN_FPS) -> dict[str, Any]:
     from playwright.sync_api import sync_playwright
 
     issues: list[str] = []
@@ -295,6 +392,22 @@ def inspect(html: Path, width: int, height: int, duration: float, min_font: int,
                     warnings.extend(f"{t:.2f}s：{warning}" for warning in measured["warnings"])
                     if t == check_time:
                         before = page.screenshot(type="png")
+                if payload and not issues:
+                    scan_times, dynamic_ids = motion_scan_times(duration, payload, fps)
+                    if scan_times:
+                        candidates = page.evaluate(MOTION_CANDIDATES_JS,
+                                                   {"times": scan_times, "dynamicIds": dynamic_ids})
+                        seen: set[str] = set()
+                        for t in candidates:
+                            seek(t)
+                            measured = page.evaluate(MEASURE_JS, {"minFont": min_font,
+                                "presenterArea": presenter_area or payload.get("style", {}).get("presenterSafeArea")})
+                            for issue in measured["issues"]:
+                                if issue not in seen:
+                                    issues.append(f"{t:.2f}s：{issue}")
+                                    seen.add(issue)
+                            if len(issues) >= MAX_ISSUES:
+                                break
                 seek(check_time)  # Backwards seek, then repeat: parallel capture needs both properties.
                 after = page.screenshot(type="png")
                 seek(check_time)
@@ -317,11 +430,13 @@ def main() -> int:
     parser.add_argument("--height", type=int, required=True)
     parser.add_argument("--duration", type=float, required=True)
     parser.add_argument("--min-font", type=int, required=True)
+    parser.add_argument("--fps", type=int, default=MOTION_SCAN_FPS)
     parser.add_argument("--executable", default="")
     parser.add_argument("--presenter-area", default="null")
     args = parser.parse_args()
     try:
-        report = inspect(Path(args.html), args.width, args.height, args.duration, args.min_font, args.executable, json.loads(args.presenter_area))
+        report = inspect(Path(args.html), args.width, args.height, args.duration, args.min_font,
+                         args.executable, json.loads(args.presenter_area), args.fps)
         Path(args.output).write_text(json.dumps(report, ensure_ascii=False), encoding="utf-8")
         return 0
     except Exception as exc:

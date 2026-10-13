@@ -164,7 +164,8 @@ class BrowserPreflight:
                 argv = [sys.executable, str(Path(__file__).with_name("browser_preflight.py")),
                         "--html", str(html), "--output", str(output),
                         "--width", str(self.settings.render_width), "--height", str(self.settings.render_height),
-                        "--duration", str(shot.duration_sec), "--min-font", str(style.min_font_size)]
+                        "--duration", str(shot.duration_sec), "--min-font", str(style.min_font_size),
+                        "--fps", str(self.settings.render_fps)]
                 if chrome := os.environ.get("SCID_CHROME"):
                     argv += ["--executable", chrome]
                 if style.presenter_safe_area:
