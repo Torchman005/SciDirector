@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
@@ -61,6 +62,10 @@ func (s *Server) HandleUploadVisual(c *gin.Context) {
 	}
 	if pose != "" && subject == "" {
 		abortWith(c, http.StatusBadRequest, ErrCodeBadRequest, "填写姿态/状态时需填写同一对象名称", nil)
+		return
+	}
+	if strings.IndexFunc(subject, unicode.IsControl) >= 0 || strings.IndexFunc(pose, unicode.IsControl) >= 0 {
+		abortWith(c, http.StatusBadRequest, ErrCodeBadRequest, "对象名称和姿态/状态不能包含控制字符", nil)
 		return
 	}
 	ext := strings.ToLower(filepath.Ext(header.Filename))

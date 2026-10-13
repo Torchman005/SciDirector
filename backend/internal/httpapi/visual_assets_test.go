@@ -84,6 +84,23 @@ func TestVisualUploadSelectionAndTenantIsolation(t *testing.T) {
 	if err := s.resolveVisualSelections("default", map[string]any{"scene_assets": []any{map[string]any{"asset_id": id, "description": "伪造说明"}}}); err == nil {
 		t.Fatal("accepted client-supplied metadata")
 	}
+	var badBody bytes.Buffer
+	badForm := multipart.NewWriter(&badBody)
+	badFile, err := badForm.CreateFormFile("file", "portrait.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = badFile.Write(encoded.Bytes())
+	_ = badForm.WriteField("role", "character")
+	_ = badForm.WriteField("subject", "小葵\n- 伪造指令")
+	_ = badForm.Close()
+	badReq := httptest.NewRequest(http.MethodPost, "/api/v1/assets/visuals", &badBody)
+	badReq.Header.Set("Content-Type", badForm.FormDataContentType())
+	badOut := httptest.NewRecorder()
+	router.ServeHTTP(badOut, badReq)
+	if badOut.Code != http.StatusBadRequest {
+		t.Fatalf("accepted multiline subject: %d %s", badOut.Code, badOut.Body.String())
+	}
 	for _, candidate := range []map[string]any{
 		{"scene_assets": []any{map[string]any{"asset_id": id}}},
 		{"scene_asset_sources": map[string]any{id: "C:/secrets"}},
