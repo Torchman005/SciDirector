@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>先找论点，再下剪刀 | SciDirector 动态样片</title>
+  <style>
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #f5f0e7; }
+    body { display: grid; place-items: center; font-family: "Microsoft YaHei", "Noto Sans CJK SC", sans-serif; }
+    #stage { display: block; width: min(100vw, 177.7778vh); height: min(100vh, 56.25vw); }
+    .controls { position: fixed; left: 20px; bottom: 18px; display: flex; align-items: center; gap: 12px;
+      padding: 7px 11px; border: 1px solid #403b3480; background: #f5f0e7e8; color: #302e2a; }
+    .controls button { width: 32px; height: 32px; border: 0; background: transparent; color: inherit;
+      font-size: 22px; cursor: pointer; }
+    .controls input { width: min(32vw, 220px); accent-color: #bd5548; cursor: pointer; }
+    .controls output { min-width: 43px; font-size: 12px; font-variant-numeric: tabular-nums; }
+    body.capture .controls { display: none; }
+  </style>
+</head>
+<body>
+  <svg id="stage" viewBox="0 0 1600 900" role="img" aria-label="胶片被剪成问题、证据、结论三个片段的动画">
+    <defs>
+      <pattern id="paper" width="26" height="26" patternUnits="userSpaceOnUse">
+        <rect width="26" height="26" fill="#f5f0e7"/>
+        <path d="M2 0v26 M18 0v26" stroke="#887b6c" stroke-opacity=".055" stroke-width="1"/>
+        <path d="M0 8h26" stroke="#887b6c" stroke-opacity=".035" stroke-width="1"/>
+      </pattern>
+      <filter id="film-shadow" x="-15%" y="-35%" width="140%" height="180%">
+        <feDropShadow dx="7" dy="17" stdDeviation="12" flood-color="#33332f" flood-opacity=".23"/>
+      </filter>
+      <filter id="ink-shadow" x="-20%" y="-20%" width="140%" height="150%">
+        <feDropShadow dx="2" dy="5" stdDeviation="3" flood-color="#4c423b" flood-opacity=".25"/>
+      </filter>
+    </defs>
+    <rect width="1600" height="900" fill="url(#paper)"/>
+    <path d="M0 635h1600" stroke="#96877a" stroke-opacity=".22" stroke-width="2"/>
+    <text x="104" y="120" font-size="30" fill="#62574d">一段长视频，怎么讲清楚？</text>
+    <path d="M104 145h326" stroke="#bd5548" stroke-width="5" stroke-linecap="round"/>
+    <text x="1450" y="120" text-anchor="end" font-size="21" fill="#766a5f">剪辑练习 / 01</text>
+
+    <g id="film-layer"></g>
+
+    <g id="cut-guide-one" fill="none" stroke="#bd5548" stroke-width="4" stroke-linecap="round">
+      <path d="M560 242v230" stroke-dasharray="9 12"/>
+      <path d="M544 242h32 M544 472h32"/>
+    </g>
+    <g id="cut-guide-two" fill="none" stroke="#bd5548" stroke-width="4" stroke-linecap="round">
+      <path d="M980 242v230" stroke-dasharray="9 12"/>
+      <path d="M964 242h32 M964 472h32"/>
+    </g>
+    <g id="cut-sparks-one" fill="none" stroke="#bd5548" stroke-linecap="round" stroke-width="5">
+      <path d="M560 305l-17-20 M570 325l26-13 M550 355l-28 10 M578 370l19 18"/>
+    </g>
+    <g id="cut-sparks-two" fill="none" stroke="#bd5548" stroke-linecap="round" stroke-width="5">
+      <path d="M980 305l-17-20 M990 325l26-13 M970 355l-28 10 M998 370l19 18"/>
+    </g>
+
+    <g id="scissors" filter="url(#ink-shadow)">
+      <g id="blade-upper">
+        <path d="M87 117L222 101q11-1 13 5t-8 11L91 126Z" fill="#e8d4b4" stroke="#333b3b" stroke-width="6" stroke-linejoin="round"/>
+        <path d="M111 119l105-12" stroke="#fff9eb" stroke-width="3" stroke-linecap="round"/>
+        <path d="M87 117L47 94" stroke="#333b3b" stroke-width="13" stroke-linecap="round"/>
+        <circle cx="34" cy="86" r="24" fill="#f5f0e7" stroke="#333b3b" stroke-width="10"/>
+      </g>
+      <g id="blade-lower">
+        <path d="M87 117L222 101q11-1 13 5t-8 11L91 126Z" fill="#e8d4b4" stroke="#333b3b" stroke-width="6" stroke-linejoin="round"/>
+        <path d="M111 119l105-12" stroke="#fff9eb" stroke-width="3" stroke-linecap="round"/>
+        <path d="M87 117L47 94" stroke="#333b3b" stroke-width="13" stroke-linecap="round"/>
+        <circle cx="34" cy="86" r="24" fill="#f5f0e7" stroke="#333b3b" stroke-width="10"/>
+      </g>
+      <circle cx="88" cy="118" r="12" fill="#bd5548" stroke="#333b3b" stroke-width="5"/>
+      <circle cx="88" cy="118" r="3" fill="#fff8e9"/>
+    </g>
+
+    <g id="label-one" font-size="38" fill="#303c3d">
+      <text x="175" y="565" font-size="25" fill="#bd5548">01</text>
+      <text x="235" y="565" font-weight="700">问题</text>
+      <path d="M174 582h275" stroke="#303c3d" stroke-width="2" opacity=".35"/>
+    </g>
+    <g id="label-two" font-size="38" fill="#303c3d">
+      <text x="610" y="520" font-size="25" fill="#bd5548">02</text>
+      <text x="670" y="520" font-weight="700">证据</text>
+      <path d="M609 537h275" stroke="#303c3d" stroke-width="2" opacity=".35"/>
+    </g>
+    <g id="label-three" font-size="38" fill="#303c3d">
+      <text x="1030" y="480" font-size="25" fill="#bd5548">03</text>
+      <text x="1090" y="480" font-weight="700">结论</text>
+      <path d="M1029 497h200" stroke="#303c3d" stroke-width="2" opacity=".35"/>
+    </g>
+
+    <g id="closing">
+      <text x="104" y="738" font-size="70" font-weight="700" fill="#282d2d">先找论点，再下剪刀。</text>
+      <path id="underline" d="M105 760q278 14 584 0" fill="none" stroke="#bd5548" stroke-width="8" stroke-linecap="round"/>
+      <text x="108" y="812" font-size="30" fill="#62574d">不是把时间切短，而是让每一段各司其职。</text>
+    </g>
+  </svg>
+
+  <div class="controls" aria-label="预览控制">
+    <button id="play" type="button" title="播放或暂停" aria-label="播放或暂停">▶</button>
+    <input id="scrub" type="range" min="0" max="10" step="0.01" value="0" aria-label="时间轴">
+    <output id="clock">0.0s</output>
+  </div>
+
+  <script>
+    (() => {
+      'use strict';
+      const duration = 10;
+      const ns = 'http://www.w3.org/2000/svg';
+      const byId = id => document.getElementById(id);
+      const make = (parent, tag, attrs) => {
+        const node = document.createElementNS(ns, tag);
+        for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, String(value));
+        parent.appendChild(node);
+        return node;
+      };
+      const clamp = v => Math.max(0, Math.min(1, v));
+      const smooth = v => { const p = clamp(v); return p * p * (3 - 2 * p); };
+      const easeOut = v => 1 - Math.pow(1 - clamp(v), 3);
+      const phase = (t, from, to) => smooth((t - from) / (to - from));
+      const pulse = (t, at, width) => Math.max(0, 1 - Math.abs(t - at) / width);
+
+      const palettes = [
+        { field: '#527984', ink: '#f8efe1' },
+        { field: '#e7bd70', ink: '#303b3b' },
+        { field: '#bf6655', ink: '#fff2db' },
+      ];
+      const film = byId('film-layer');
+      const pieces = palettes.map((palette, index) => {
+        const group = make(film, 'g', { id: `piece-${index + 1}`, filter: 'url(#film-shadow)' });
+        make(group, 'rect', { x: 0, y: 0, width: 420, height: 210, rx: 8, fill: '#283439', stroke: '#1d292e', 'stroke-width': 5 });
+        make(group, 'rect', { x: 23, y: 42, width: 374, height: 126, rx: 3, fill: palette.field });
+        make(group, 'path', { d: 'M23 43h374 M23 168h374', fill: 'none', stroke: '#fff9e8', 'stroke-opacity': .34, 'stroke-width': 2 });
+        for (const y of [14, 186]) for (let x = 32; x < 400; x += 46) {
+          make(group, 'rect', { x, y, width: 22, height: 10, rx: 2, fill: '#f5f0e7', opacity: .92 });
+        }
+        make(group, 'text', { x: 44, y: 67, fill: palette.ink, 'font-size': 20, 'font-weight': 700, opacity: .75 }).textContent = `0${index + 1}`;
+        if (index === 0) {
+          make(group, 'circle', { cx: 209, cy: 108, r: 69, fill: 'none', stroke: '#e6d8bd', 'stroke-width': 3, opacity: .55 });
+          make(group, 'text', { x: 173, y: 153, fill: palette.ink, 'font-size': 117, 'font-weight': 700 }).textContent = '?';
+          make(group, 'path', { d: 'M295 106q33 19 44 48', fill: 'none', stroke: '#e7bd70', 'stroke-width': 8, 'stroke-linecap': 'round' });
+        } else if (index === 1) {
+          for (let row = 0; row < 3; row++) {
+            const y = 77 + row * 29;
+            make(group, 'circle', { cx: 102, cy: y, r: 8, fill: '#bf6655' });
+            make(group, 'path', { d: `M127 ${y}h${row === 2 ? 143 : 188}`, stroke: palette.ink, 'stroke-width': 8, 'stroke-linecap': 'round', opacity: .8 });
+          }
+          make(group, 'path', { d: 'M305 84l15 17 30-40', fill: 'none', stroke: palette.ink, 'stroke-width': 10, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' });
+        } else {
+          make(group, 'path', { d: 'M96 86h110 M96 111h160 M96 136h211', stroke: palette.ink, 'stroke-width': 11, 'stroke-linecap': 'round', opacity: .9 });
+          make(group, 'path', { d: 'M306 82l30 29-30 28', fill: 'none', stroke: '#e7bd70', 'stroke-width': 11, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' });
+        }
+        return group;
+      });
+      const labels = [byId('label-one'), byId('label-two'), byId('label-three')];
+      const scissors = byId('scissors');
+      const upper = byId('blade-upper');
+      const lower = byId('blade-lower');
+      const closing = byId('closing');
+      const underline = byId('underline');
+      const underlineLength = underline.getTotalLength();
+      const scrub = byId('scrub');
+      const clock = byId('clock');
+      let current = 0;
+
+      window.__seek = seconds => {
+        const t = Number.isFinite(seconds) ? Math.max(0, Math.min(duration, seconds)) : 0;
+        current = t;
+        const enter = easeOut(t / .85);
+        const splitOne = phase(t, 2.95, 3.75);
+        const splitRest = phase(t, 4.2, 5.7);
+        const positions = [
+          [140 - 25 * splitOne, 245 + 65 * splitOne, -6 * splitOne],
+          [560 + 5 * splitRest, 245 + 5 * splitRest, 2 * splitRest],
+          [980 + 40 * splitRest, 245 - 30 * splitRest, 7 * splitRest],
+        ];
+        pieces.forEach((piece, i) => {
+          const [x, y, angle] = positions[i];
+          piece.setAttribute('transform', `translate(${x} ${y + (1 - enter) * 20}) rotate(${angle} 210 105)`);
+          piece.style.opacity = String(enter);
+        });
+        byId('cut-guide-one').style.opacity = String(phase(t, 1.9, 2.25) * (1 - phase(t, 2.94, 3.3)));
+        byId('cut-guide-two').style.opacity = String(phase(t, 3.45, 3.8) * (1 - phase(t, 4.18, 4.5)));
+        byId('cut-sparks-one').style.opacity = String(pulse(t, 2.97, .19));
+        byId('cut-sparks-two').style.opacity = String(pulse(t, 4.22, .19));
+
+        const travel = phase(t, 3.2, 4.0);
+        const scissorX = 344 + 420 * travel;
+        const scissorY = 242 - 14 * Math.sin(travel * Math.PI);
+        scissors.setAttribute('transform', `translate(${scissorX} ${scissorY}) rotate(-6 88 118) scale(.9)`);
+        scissors.style.opacity = String(phase(t, 1.25, 1.75) * (1 - phase(t, 4.75, 5.35)));
+        const close = Math.max(pulse(t, 2.97, .24), pulse(t, 4.22, .24));
+        const angle = 24 - 21 * close;
+        upper.setAttribute('transform', `rotate(${-angle} 88 118)`);
+        lower.setAttribute('transform', `rotate(${angle} 88 118)`);
+
+        [5.55, 6.15, 6.75].forEach((at, i) => {
+          const show = phase(t, at, at + .42);
+          labels[i].style.opacity = String(show);
+          labels[i].setAttribute('transform', `translate(0 ${(1 - show) * 19})`);
+        });
+        const finale = phase(t, 7.4, 8.1);
+        closing.style.opacity = String(finale);
+        closing.setAttribute('transform', `translate(0 ${(1 - finale) * 25})`);
+        underline.style.strokeDasharray = `${underlineLength * phase(t, 8.1, 8.85)} ${underlineLength}`;
+        scrub.value = String(t);
+        clock.value = `${t.toFixed(1)}s`;
+        return t;
+      };
+
+      let playing = false;
+      let startTime = 0;
+      let startAt = 0;
+      let frame = 0;
+      const playButton = byId('play');
+      const stop = () => { playing = false; cancelAnimationFrame(frame); playButton.textContent = '▶'; };
+      const tick = now => {
+        if (!playing) return;
+        const t = Math.min(duration, startAt + (now - startTime) / 1000);
+        window.__seek(t);
+        if (t >= duration) stop();
+        else frame = requestAnimationFrame(tick);
+      };
+      playButton.addEventListener('click', () => {
+        if (playing) { stop(); return; }
+        if (current >= duration) window.__seek(0);
+        startAt = current;
+        startTime = performance.now();
+        playing = true;
+        playButton.textContent = 'Ⅱ';
+        frame = requestAnimationFrame(tick);
+      });
+      scrub.addEventListener('input', () => {
+        stop();
+        window.__seek(Number(scrub.value));
+      });
+      document.addEventListener('keydown', event => {
+        if (event.code !== 'Space' || event.target === scrub) return;
+        event.preventDefault();
+        playButton.click();
+      });
+      if (new URLSearchParams(location.search).has('capture')) document.body.classList.add('capture');
+      window.__seek(0);
+      window.__ready = true;
+    })();
+  </script>
+</body>
+</html>
