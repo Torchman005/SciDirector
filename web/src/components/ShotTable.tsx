@@ -4,7 +4,7 @@ import type { ColumnsType } from 'antd/es/table'
 import { engineLabel, formatTime, shotStatus, tagLabel } from '../display'
 import type { Shot } from '../types'
 import { ShotDetail } from './ShotDetail'
-import { useShotActions } from './useShotActions'
+import { needsShotDecision, useShotActions } from './useShotActions'
 
 const { Text } = Typography
 
@@ -18,12 +18,10 @@ const { Text } = Typography
 interface Props {
   jobId: string
   shots: Shot[]
-  /** 任务已进入终态时禁止再操作，避免发出注定被拒的请求。 */
-  disabled: boolean
   onChanged: () => void
 }
 
-export function ShotTable({ jobId, shots, disabled, onChanged }: Props) {
+export function ShotTable({ jobId, shots, onChanged }: Props) {
   const columns: ColumnsType<Shot> = [
     {
       title: '#',
@@ -89,9 +87,9 @@ export function ShotTable({ jobId, shots, disabled, onChanged }: Props) {
       width: 120,
       fixed: 'right',
       render: (_, shot) =>
-        shot.status === 'AWAITING_HUMAN' ? (
-          // 唯一一个不需要读细节就能做的决定，所以给快捷入口。
-          <QuickRepair jobId={jobId} shot={shot} disabled={disabled} onChanged={onChanged} />
+        needsShotDecision(shot.status) ? (
+          // 待人工与历史失败镜头都提供立即重做入口。
+          <QuickRepair jobId={jobId} shot={shot} onChanged={onChanged} />
         ) : (
           <Text type="secondary" style={{ fontSize: 12 }}>
             —
@@ -109,15 +107,14 @@ export function ShotTable({ jobId, shots, disabled, onChanged }: Props) {
       pagination={false}
       // 窄屏时横向滚动，而不是把列挤成一条缝（挤过之后中文列名会竖排）。
       scroll={{ x: 960 }}
-      rowClassName={(shot) => (shot.status === 'AWAITING_HUMAN' ? 'row-actionable' : '')}
+      rowClassName={(shot) => (needsShotDecision(shot.status) ? 'row-actionable' : '')}
       expandable={{
         expandedRowRender: (shot) => (
-          <ShotDetail jobId={jobId} shot={shot} disabled={disabled} onChanged={onChanged} />
+          <ShotDetail jobId={jobId} shot={shot} onChanged={onChanged} />
         ),
-        // 「待人工」的镜头默认展开：它是唯一需要人立刻处理的那一类，
-        // 让用户还要再点一下才看得到操作，是最没必要的摩擦。
+        // 待人工或失败镜头默认展开，让重做与放行入口直接可见。
         defaultExpandedRowKeys: shots
-          .filter((s) => s.status === 'AWAITING_HUMAN')
+          .filter((s) => needsShotDecision(s.status))
           .map((s) => s.shot_id),
       }}
     />
@@ -128,12 +125,10 @@ export function ShotTable({ jobId, shots, disabled, onChanged }: Props) {
 function QuickRepair({
   jobId,
   shot,
-  disabled,
   onChanged,
 }: {
   jobId: string
   shot: Shot
-  disabled: boolean
   onChanged: () => void
 }) {
   const { reject, busy, canRepair } = useShotActions(jobId, shot, onChanged)
@@ -143,7 +138,7 @@ function QuickRepair({
         size="small"
         type="primary"
         loading={busy}
-        disabled={disabled || !canRepair}
+        disabled={!canRepair}
         onClick={() => void reject()}
       >
         自动修复

@@ -17,7 +17,7 @@ import { SHOT_BACKGROUND_OPTIONS, backgroundLabel, shotStatus } from '../display
 import type { Shot } from '../types'
 import { ReviewHistory } from './ReviewHistory'
 import { ShotMedia } from './ShotMedia'
-import { useShotActions } from './useShotActions'
+import { needsShotDecision, useShotActions } from './useShotActions'
 
 const { Text, Paragraph } = Typography
 
@@ -34,13 +34,12 @@ const { Text, Paragraph } = Typography
 interface Props {
   jobId: string
   shot: Shot
-  disabled: boolean
   onChanged: () => void
 }
 
 type Editor = 'none' | 'reject' | 'patch'
 
-export function ShotDetail({ jobId, shot, disabled, onChanged }: Props) {
+export function ShotDetail({ jobId, shot, onChanged }: Props) {
   const { approve, reject, patch, busy, canApprove, canRepair } = useShotActions(jobId, shot, onChanged)
   const [editor, setEditor] = useState<Editor>('none')
   const [comment, setComment] = useState('')
@@ -50,7 +49,7 @@ export function ShotDetail({ jobId, shot, disabled, onChanged }: Props) {
   const [redo, setRedo] = useState(true)
 
   const st = shotStatus(shot.status)
-  const isAwaiting = shot.status === 'AWAITING_HUMAN'
+  const needsDecision = needsShotDecision(shot.status)
 
   function openEditor(kind: Editor) {
     if (kind === 'patch') {
@@ -65,12 +64,14 @@ export function ShotDetail({ jobId, shot, disabled, onChanged }: Props) {
 
   return (
     <Space direction="vertical" size={12} style={{ width: '100%' }}>
-      {isAwaiting && (
+      {needsDecision && (
         <Alert
           type="warning"
           showIcon
-          message="本轮自动处理未完成，可继续诊断修复"
-          description="无需知道如何改代码。自动修复会读取报错和审核记录，尝试修正或重建镜头并复审。只有确认现有视频符合要求时才人工放行。"
+          message="这段镜头需要处理"
+          description={shot.artifact?.video_path
+            ? '可以打回重做；若确认预览中的现有视频可用，也可以人工放行。放行前请核对画面和审核意见。'
+            : '尚无视频可放行。请点击自动诊断修复，系统会读取报错和审核记录并重做镜头。'}
         />
       )}
 
@@ -152,18 +153,18 @@ export function ShotDetail({ jobId, shot, disabled, onChanged }: Props) {
       ]} />
 
       <Space wrap>
-        <Button type="primary" loading={busy} disabled={disabled || !canRepair} onClick={() => void reject()}>
+        <Button type="primary" loading={busy} disabled={!canRepair} onClick={() => void reject()}>
           自动诊断修复
         </Button>
-        {isAwaiting && (
-          <Button loading={busy} disabled={disabled || !canApprove} onClick={() => void approve()}>
+        {needsDecision && (
+          <Button loading={busy} disabled={!canApprove} onClick={() => void approve()}>
             放行并继续
           </Button>
         )}
-        <Button disabled={disabled || busy || !canRepair} onClick={() => openEditor('reject')}>
+        <Button disabled={busy || !canRepair} onClick={() => openEditor('reject')}>
           补充意见并修复
         </Button>
-        <Button disabled={disabled || busy || !canRepair} onClick={() => openEditor('patch')}>
+        <Button disabled={busy || !canRepair} onClick={() => openEditor('patch')}>
           编辑文案
         </Button>
       </Space>
@@ -187,7 +188,7 @@ export function ShotDetail({ jobId, shot, disabled, onChanged }: Props) {
           // 成功后由 hook 弹提示、回源；这里只负责关窗。
           if (await reject(comment)) setEditor('none')
         }}
-        okButtonProps={{ disabled: disabled || !canRepair }}
+        okButtonProps={{ disabled: !canRepair }}
       >
         <Paragraph type="secondary" style={{ fontSize: 13 }}>
           只需描述看到的问题或期望，也可以留空。程序会结合完整报错和 AI 审核记录定位原因，

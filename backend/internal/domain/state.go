@@ -41,6 +41,7 @@ var allowedTransitions = map[ShotStatus]map[ShotStatus]struct{}{
 	StatusRejected: {
 		StatusRetrying:      {},
 		StatusAwaitingHuman: {}, // 重试次数已达上限
+		StatusApproved:      {}, // 人工接受已有视频
 	},
 	StatusRetrying: {
 		StatusGenerating:    {}, // 携带反馈重新生成
@@ -50,6 +51,7 @@ var allowedTransitions = map[ShotStatus]map[ShotStatus]struct{}{
 	StatusFailed: {
 		StatusRetrying:      {}, // Asynq 重试（基础设施层）
 		StatusAwaitingHuman: {}, // 业务层放弃自动重试
+		StatusApproved:      {}, // 旧任务的失败状态可人工接受已有视频
 	},
 	StatusAwaitingHuman: {
 		// 人工审核员给出意见后，重新进入重试流程；

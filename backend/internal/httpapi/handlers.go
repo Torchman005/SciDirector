@@ -463,6 +463,7 @@ func (s *Server) HandleRejectShot(c *gin.Context) {
 		newStatus = shot.Status
 		// 打回后任务整体回到 RENDERING 状态（可能之前是 COMPLETED/PARTIAL）。
 		j.Status = domain.JobRendering
+		j.Error = ""
 		return nil
 	})
 	if err != nil {
@@ -499,6 +500,9 @@ func (s *Server) HandleRejectShot(c *gin.Context) {
 		EnqueuedAt:   time.Now().UTC(),
 	})
 	if err != nil {
+		if restoreErr := s.parkUnqueuedRepair(ctx, jobID, tenantOf(c), shotID, newAttempt, err); restoreErr != nil {
+			logging.FromContext(ctx).Error("修复入队失败且镜头回退失败", "error", restoreErr.Error())
+		}
 		mapError(c, err)
 		return
 	}
@@ -508,7 +512,7 @@ func (s *Server) HandleRejectShot(c *gin.Context) {
 	})
 }
 
-// HandleApproveShot 允许审核员在镜头处于 AWAITING_HUMAN 时直接放行。
+// HandleApproveShot 允许审核员接受待人工或历史失败镜头的现有视频。
 //
 // 这是熔断后的必要出口：自动化重试 N 次仍不合格时，人工必须能
 // 「接受当前效果并继续」，否则整条片子永远无法交付。
@@ -541,6 +545,10 @@ func (s *Server) HandleApproveShot(c *gin.Context) {
 		// 若所有镜头都已通过，任务可以直接进入合成阶段（由 worker 兜底推进）。
 		if st := j.Stat(); st.Approved == st.Total && st.Total > 0 {
 			j.Status = domain.JobComposing
+			j.Error = ""
+		} else if j.Stat().InProgress == 0 {
+			j.Status = domain.JobPartial
+			j.Error = ""
 		}
 		return nil
 	})
@@ -689,6 +697,7 @@ func (s *Server) HandlePatchShot(c *gin.Context) {
 			newAttempt = shot.Attempt
 			newStatus = shot.Status
 			j.Status = domain.JobRendering
+			j.Error = ""
 		}
 
 		shot.UpdatedAt = time.Now().UTC()
@@ -742,6 +751,9 @@ func (s *Server) HandlePatchShot(c *gin.Context) {
 			EnqueuedAt:   time.Now().UTC(),
 		})
 		if qerr != nil {
+			if restoreErr := s.parkUnqueuedRepair(ctx, jobID, tenantOf(c), shotID, newAttempt, qerr); restoreErr != nil {
+				logging.FromContext(ctx).Error("编辑重做入队失败且镜头回退失败", "error", restoreErr.Error())
+			}
 			mapError(c, qerr)
 			return
 		}

@@ -39,7 +39,7 @@ visuals = [dict(asset_id=letter*32,filename=filename,mime_type="image/png",role=
 
 
 def main():
-    pending, generate_calls, errors, repair_calls = [], [], [], []
+    pending, generate_calls, errors, repair_calls, approve_calls = [], [], [], [], []
     state = {"upload":"hold", "generate":"fail", "media_fail":False}
     with sync_playwright() as pw:
         options = {"headless":True}
@@ -61,6 +61,9 @@ def main():
                 if len(repair_calls) == 2:
                     pending.append(route); return
                 route.fulfill(status=202,json={"ok":True,"data":{"status":"RETRYING"}}); return
+            if path.endswith("/approve"):
+                approve_calls.append(path)
+                route.fulfill(json={"ok":True,"data":{"status":"APPROVED","compose_enqueued":True}}); return
             if path.endswith("/assets/portraits"):
                 route.fulfill(json={"ok":True,"data":{"asset_id":"b"*32,"filename":"poses.zip","kind":"portrait","lip_sync":False}}); return
             if "/assets/portraits/" in path:
@@ -180,6 +183,21 @@ def main():
         page.reload()
         expect(page.get_by_text("部分预览无法加载，文件可能已被清理或镜头已更新。",exact=True)).to_be_visible()
         expect(page.get_by_role("button",name="刷新任务",exact=True)).to_be_enabled()
+        state["media_fail"] = False
+        job["status"] = "FAILED"
+        shot["status"] = "FAILED"
+        detail["stat"] = dict(total=1,approved=0,awaiting_human=0,failed=1,in_progress=0)
+        page.reload()
+        expect(page.get_by_role("button",name="自动诊断修复",exact=True)).to_be_enabled()
+        expect(page.get_by_role("button",name="放行并继续",exact=True)).to_be_enabled()
+        page.get_by_role("button",name="放行并继续",exact=True).click()
+        assert len(approve_calls) == 1
+        shot.pop("artifact")
+        page.reload()
+        expect(page.get_by_role("button",name="放行并继续",exact=True)).to_be_disabled()
+        expect(page.get_by_role("button",name="自动诊断修复",exact=True)).to_be_enabled()
+        page.get_by_role("button",name="自动诊断修复",exact=True).click()
+        assert len(repair_calls) == 4
         assert not errors, errors
         browser.close()
     result={"passed":True,"checks":["required validation","keyboard select and Escape","upload busy guard",
@@ -187,6 +205,7 @@ def main():
         "current media and repair ledger","video seeking","390px reflow","modal keyboard","media failure recovery affordance",
         "portrait import and four previews","honest missing mouth feedback",
         "empty-comment automatic repair", "missing video repair without approval", "repair failure preserves input", "repair loading state",
+        "failed job still permits rework and approval", "failed shot without video permits rework only",
         "reduced motion","no browser exceptions"],"api":"isolated fixtures; Go tests verify real HTTP behavior"}
     (OUT/"result.json").write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding="utf-8")
     print(json.dumps(result,ensure_ascii=False))

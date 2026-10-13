@@ -761,8 +761,6 @@ export function App() {
                 <ShotTable
                   jobId={jobId}
                   shots={shots}
-                  // 任务已进入终态时禁止再操作，避免发出注定被拒的请求。
-                  disabled={js.terminal === true}
                   onChanged={() => setRefreshTick((n) => n + 1)}
                 />
               )}

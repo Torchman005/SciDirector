@@ -284,6 +284,7 @@ func (s *Server) applyHumanFeedback(ctx context.Context, jobID, tenant, shotID, 
 		})
 		shot.UpdatedAt = time.Now().UTC()
 		j.Status = domain.JobRendering
+		j.Error = ""
 		return nil
 	})
 	if err != nil {
@@ -312,5 +313,8 @@ func (s *Server) applyHumanFeedback(ctx context.Context, jobID, tenant, shotID, 
 		JobID: jobID, ShotID: shotID, Attempt: attempt,
 		HumanComment: comment, TriggeredBy: "api", EnqueuedAt: time.Now().UTC(),
 	})
+	if err != nil {
+		_ = s.parkUnqueuedRepair(ctx, jobID, tenant, shotID, attempt, err)
+	}
 	return err
 }

@@ -574,7 +574,11 @@ func (p *Processor) HandleRenderShot(ctx context.Context, task RenderShotTask) e
 
 	styleGuide, err := p.resolvedShotStyleGuide(job, shot)
 	if err != nil {
-		return fmt.Errorf("worker: 分镜视觉素材不可用: %w", err)
+		cause := fmt.Errorf("worker: 分镜视觉素材不可用: %w", err)
+		if saveErr := p.parkFailedRevision(ctx, jobID, shotID, task.Payload.Attempt, cause); saveErr != nil {
+			return saveErr
+		}
+		return fmt.Errorf("%w: %w", asynq.SkipRetry, cause)
 	}
 	req := &pb.ReviseShotRequest{
 		JobId:          jobID,
@@ -605,22 +609,11 @@ func (p *Processor) HandleRenderShot(ctx context.Context, task RenderShotTask) e
 	resp, err := p.ai.ReviseShot(ctx, req)
 	if err != nil {
 		lg.Error("镜头重做调用失败", "error", err.Error())
-		if errors.Is(err, ai.ErrRejected) || errors.Is(err, ai.ErrNotImplemented) {
-			if _, saveErr := p.store.UpdateJob(ctx, jobID, func(j *domain.Job) error {
-				if s := j.FindShot(shotID); s != nil {
-					s.Status = domain.StatusAwaitingHuman
-					s.Error = err.Error()
-					s.UpdatedAt = time.Now().UTC()
-				}
-				return nil
-			}); saveErr != nil {
+		if errors.Is(err, ai.ErrRejected) || errors.Is(err, ai.ErrNotImplemented) ||
+			(!errors.Is(err, context.Canceled) && !hasRetryRemaining(ctx)) {
+			if saveErr := p.parkFailedRevision(ctx, jobID, shotID, task.Payload.Attempt, err); saveErr != nil {
 				return saveErr
 			}
-			_, _ = p.emit(ctx, &domain.Event{
-				JobID: jobID, ShotID: shotID, Node: "hitl", Status: domain.StatusAwaitingHuman,
-				Attempt: task.Payload.Attempt, Message: "本次自动修复未完成，已保留原片与具体诊断；可处理依赖问题或再次发起修复。", Error: err.Error(),
-				Timestamp: time.Now().UTC(),
-			})
 			return fmt.Errorf("%w: %w", asynq.SkipRetry, err)
 		}
 		return err
@@ -699,8 +692,11 @@ func (p *Processor) HandleRenderShot(ctx context.Context, task RenderShotTask) e
 		} else if resp.GetSuccess() {
 			s.Status = domain.StatusApproved
 		} else {
-			s.Status = domain.StatusFailed
+			s.Status = domain.StatusAwaitingHuman
 			s.Error = resp.GetError()
+			if s.Error == "" {
+				s.Error = "重做未成功且没有审核结论，请检查现有视频或重新生成"
+			}
 		}
 		if s.Status == domain.StatusApproved {
 			if s.Artifact == nil || s.Artifact.VideoPath == "" {
@@ -713,6 +709,9 @@ func (p *Processor) HandleRenderShot(ctx context.Context, task RenderShotTask) e
 
 		if st := j.Stat(); st.Approved == st.Total && st.Total > 0 {
 			j.Status = domain.JobComposing
+			j.Error = ""
+		} else if j.Stat().InProgress == 0 {
+			j.Status = domain.JobPartial
 		}
 		return nil
 	})
@@ -743,6 +742,35 @@ func (p *Processor) HandleRenderShot(ctx context.Context, task RenderShotTask) e
 		}
 	}
 	success = true
+	return nil
+}
+
+// parkFailedRevision 只在本次修复无法继续重投时使用。保留上一版产物，让审核员
+// 能选择再次打回或核对后放行；不能把镜头留在 GENERATING 形成无队列任务的死局。
+func (p *Processor) parkFailedRevision(ctx context.Context, jobID, shotID string, attempt int, cause error) error {
+	updated := false
+	job, err := p.store.UpdateJob(ctx, jobID, func(j *domain.Job) error {
+		s := j.FindShot(shotID)
+		if s == nil || s.Attempt > attempt {
+			return nil // 旧投递不能覆盖更新的人工决定
+		}
+		s.Status = domain.StatusAwaitingHuman
+		s.Error = cause.Error()
+		s.UpdatedAt = time.Now().UTC()
+		if j.Stat().InProgress == 0 {
+			j.Status = domain.JobPartial
+		}
+		updated = true
+		return nil
+	})
+	if err != nil || !updated {
+		return err
+	}
+	_, _ = p.emit(ctx, &domain.Event{
+		JobID: jobID, ShotID: shotID, Node: "hitl", Status: domain.StatusAwaitingHuman,
+		Attempt: attempt, Message: "自动修复未完成；可再次打回重做，或核对现有视频后放行。", Error: cause.Error(),
+		Progress: job.ProgressRatio(), Timestamp: time.Now().UTC(),
+	})
 	return nil
 }
 

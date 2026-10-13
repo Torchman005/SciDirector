@@ -74,8 +74,9 @@ type fakeAIServer struct {
 	// holdFor 模拟一次真实渲染的耗时，让「第一次还在跑、第二次就到了」这个窗口真实存在。
 	holdFor time.Duration
 	// failFirst 指定前 N 次调用返回 failCode，用于验证失败路径的占位释放。
-	failFirst int32
-	failCode  codes.Code
+	failFirst     int32
+	failCode      codes.Code
+	returnFailure bool
 	// entered 在第一次调用进入时关闭，供测试做确定性同步（不靠 sleep 赌时序）。
 	entered chan struct{}
 	once    sync.Once
@@ -98,6 +99,9 @@ func (f *fakeAIServer) ReviseShot(ctx context.Context, req *pb.ReviseShotRequest
 
 	if n <= f.failFirst {
 		return nil, status.Error(f.failCode, "模拟 AI 侧失败")
+	}
+	if f.returnFailure {
+		return &pb.ReviseShotResponse{Success: false, Error: "模拟自动修复未通过"}, nil
 	}
 
 	shot := req.GetShot()
@@ -424,6 +428,10 @@ func TestB4IdempotencyKeyReleasedOnFailure(t *testing.T) {
 	if got := fake.reviseCalls.Load(); got != 1 {
 		t.Fatalf("首次投递应当调用一次渲染，实际 %d 次", got)
 	}
+	failed := h.shot(t)
+	if failed.Status != domain.StatusAwaitingHuman || failed.Error == "" {
+		t.Fatalf("最后一次修复失败应回到人工可处理状态: %+v", failed)
+	}
 
 	// 同一 attempt 再次投递（Asynq 重试）必须能真正重跑，而不是被自己的占位挡住。
 	if err := h.deliver(ctx, 2); err != nil {
@@ -431,6 +439,24 @@ func TestB4IdempotencyKeyReleasedOnFailure(t *testing.T) {
 	}
 	if got := fake.reviseCalls.Load(); got != 2 {
 		t.Errorf("失败后重试没有重新渲染（共 %d 次）—— 占位未释放，该 attempt 被永久锁死", got)
+	}
+}
+
+func TestRevisionWithoutFeedbackStillLeavesHumanExit(t *testing.T) {
+	fake := &fakeAIServer{returnFailure: true}
+	h := newReviseHarness(t, fake)
+	if _, err := h.store.UpdateJob(context.Background(), h.jobID, func(j *domain.Job) error {
+		j.Shots[0].Artifact = &domain.Artifact{VideoPath: "previous.mp4"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.deliver(context.Background(), 2); err != nil {
+		t.Fatal(err)
+	}
+	shot := h.shot(t)
+	if shot.Status != domain.StatusAwaitingHuman || shot.Artifact == nil || shot.Artifact.VideoPath != "previous.mp4" || shot.Error == "" {
+		t.Fatalf("failed revision lost human exit or old video: %+v", shot)
 	}
 }
 

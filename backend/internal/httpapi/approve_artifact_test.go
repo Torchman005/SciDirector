@@ -48,3 +48,45 @@ func TestApproveRejectsMissingVideo(t *testing.T) {
 		})
 	}
 }
+
+func TestFailedShotCanBeReworkedOrApprovedWithVideo(t *testing.T) {
+	for _, status := range []domain.ShotStatus{domain.StatusFailed, domain.StatusRejected} {
+		t.Run(string(status), func(t *testing.T) {
+			h := newHarness(t)
+			job := h.seedJob(t, "review-"+string(status), status)
+			job.Status = domain.JobFailed
+			job.Error = "旧任务失败"
+			if err := h.store.SaveJob(h.ctx, job); err != nil {
+				t.Fatal(err)
+			}
+			path := "/api/v1/jobs/" + job.JobID + "/shots/" + job.Shots[0].ShotID
+			if w := h.do(t, http.MethodPost, path+"/approve", nil); w.Code != http.StatusConflict {
+				t.Fatalf("无视频不能放行: %d %s", w.Code, w.Body.String())
+			}
+			if w := h.do(t, http.MethodPost, path+"/reject", map[string]string{}); w.Code != http.StatusAccepted {
+				t.Fatalf("失败后应可打回重做: %d %s", w.Code, w.Body.String())
+			}
+			after, err := h.store.GetJob(h.ctx, job.JobID)
+			if err != nil || after.Shots[0].Status != domain.StatusRetrying || after.Status != domain.JobRendering || after.Error != "" {
+				t.Fatalf("打回后状态未恢复: job=%+v err=%v", after, err)
+			}
+			// 模拟这轮重做仍失败，但保留了上一版视频。
+			if _, err := h.store.UpdateJob(h.ctx, job.JobID, func(j *domain.Job) error {
+				j.Status = domain.JobPartial
+				j.FindShot(job.Shots[0].ShotID).Status = status
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			h.seedVideo(t, job.JobID, job.Shots[0].ShotID)
+			w := h.do(t, http.MethodPost, path+"/approve", nil)
+			if w.Code != http.StatusOK {
+				t.Fatalf("有视频应可人工放行: %d %s", w.Code, w.Body.String())
+			}
+			approved, err := h.store.GetJob(h.ctx, job.JobID)
+			if err != nil || approved.Shots[0].Status != domain.StatusApproved || approved.Status != domain.JobComposing {
+				t.Fatalf("放行后未继续合成: job=%+v err=%v", approved, err)
+			}
+		})
+	}
+}

@@ -2,7 +2,12 @@ import { useRef, useState } from 'react'
 import { App } from 'antd'
 
 import { api, errorText } from '../api'
-import type { Shot } from '../types'
+import type { Shot, ShotStatus } from '../types'
+
+/** 审核需要人工决定的状态；失败的旧任务也必须保留恢复入口。 */
+export function needsShotDecision(status: ShotStatus): boolean {
+  return status === 'AWAITING_HUMAN' || status === 'FAILED' || status === 'REJECTED'
+}
 
 /**
  * 一个分镜上的三种人工操作，抽成 hook 供两处复用。
@@ -45,8 +50,8 @@ export function useShotActions(jobId: string, shot: Shot, onChanged: () => void)
 
   return {
     busy,
-    canRepair: ['AWAITING_HUMAN', 'APPROVED', 'FAILED', 'REJECTED'].includes(shot.status),
-    canApprove: shot.status === 'AWAITING_HUMAN' && Boolean(shot.artifact?.video_path),
+    canRepair: needsShotDecision(shot.status) || shot.status === 'APPROVED',
+    canApprove: needsShotDecision(shot.status) && Boolean(shot.artifact?.video_path),
     approve: () =>
       run(async () => {
         const resp = await api.approve(jobId, shot.shot_id)

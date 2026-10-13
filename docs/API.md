@@ -465,6 +465,8 @@ curl -X POST http://localhost:8080/api/v1/assets -F "file=@music.mp3"
 
 > `comment` 可空，最多 2000 字。`{}` 表示自动诊断修复；有意见时只需描述现象或期望。
 > 系统结合已有报错与审核清单决定修法，科学性与视频产物检查仍是通过条件。
+> 若任务无法入队，会返回错误并把镜头恢复为 `AWAITING_HUMAN`，保留当前视频和具体原因；
+> 稍后仍可再次打回。
 
 已定位对象的运维修订可使用 `comment` 协议：
 `SCID_SCENE_REVISION_V1:{"remove":["obsolete_link"],"upsert":[]}`。
@@ -476,8 +478,9 @@ JSON 严格遵循内部 `SceneRevision`（完整元素 upsert、id remove，合�
 
 #### `POST /api/v1/jobs/:jobID/shots/:shotID/approve`
 
-人工放行。用于镜头处于 `AWAITING_HUMAN`（自动重试已熔断）时**接受当前效果并继续** ——
-没有这个出口，整条片子可能永远无法交付。
+人工放行。用于镜头处于 `AWAITING_HUMAN`，或旧任务仍为 `FAILED` / `REJECTED` 时
+**接受已有视频并继续**。请求会再次核实文件存在、是普通文件且非空；缺片返回 409，
+必须先打回重做。正在生成或渲染的镜头不能放行。
 
 ```json
 { "ok": true, "data": { "job_id": "…", "shot_id": "…", "status": "APPROVED", "compose_enqueued": true } }

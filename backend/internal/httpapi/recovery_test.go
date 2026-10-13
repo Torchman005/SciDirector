@@ -27,3 +27,29 @@ func TestAutomaticRepairNeedsNoTechnicalCommentAndRejectsDuplicate(t *testing.T)
 		t.Fatalf("unexpected recovery state: %+v", got.Shots[0])
 	}
 }
+
+func TestRepairQueueFailureReturnsShotToActionableState(t *testing.T) {
+	h := newHarness(t)
+	job := h.seedJob(t, "queue-failure-repair", domain.StatusAwaitingHuman)
+	shotID := job.Shots[0].ShotID
+	h.seedVideo(t, job.JobID, shotID)
+	if err := h.queue.Close(); err != nil {
+		t.Fatal(err)
+	}
+	path := "/api/v1/jobs/" + job.JobID + "/shots/" + shotID + "/reject"
+	w := h.do(t, http.MethodPost, path, map[string]string{})
+	if w.Code == http.StatusAccepted {
+		t.Fatal("closed queue accepted repair")
+	}
+	after, err := h.store.GetJob(h.ctx, job.JobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shot := after.FindShot(shotID)
+	if shot.Status != domain.StatusAwaitingHuman || shot.Error == "" || shot.Artifact == nil || shot.Artifact.VideoPath == "" {
+		t.Fatalf("enqueue failure stranded repair or lost old video: %+v", shot)
+	}
+	if after.Status != domain.JobPartial {
+		t.Fatalf("job remained busy with no queued repair: %s", after.Status)
+	}
+}

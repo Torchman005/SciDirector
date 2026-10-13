@@ -19,6 +19,8 @@ func TestTransitionLegal(t *testing.T) {
 		{StatusRetrying, StatusAwaitingHuman},
 		{StatusAwaitingHuman, StatusRetrying},
 		{StatusAwaitingHuman, StatusApproved},
+		{StatusFailed, StatusApproved},    // 历史失败镜头可人工接受现有视频
+		{StatusRejected, StatusApproved},  // 未通过审核但有旧片时可人工裁决
 		{StatusApproved, StatusRetrying},  // HITL：人工要求重做已通过的镜头
 		{StatusRendering, StatusRetrying}, // 渲染编译失败 -> 带错误回灌重写
 	}
