@@ -82,6 +82,23 @@ def test_review_manifest_exposes_source_geometry_without_runtime_or_self_claims(
     assert review_manifest("legacy HTML") == ""
 
 
+def test_review_manifest_names_anchored_direction_for_scientific_review() -> None:
+    scene = SceneSpec.model_validate({"elements": [
+        {"id": "input", "kind": "icon", "glyph": "phone",
+         "box": {"x": .1, "y": .3, "width": .18, "height": .28}},
+        {"id": "output", "kind": "icon", "glyph": "book",
+         "box": {"x": .65, "y": .3, "width": .18, "height": .28}},
+        {"id": "arrow", "kind": "line", "anchor_from": "input",
+         "anchor_to": "output", "arrow": True},
+    ]})
+    manifest = review_manifest(compile_it(scene))
+    payload = json.loads(manifest.split("\n")[-1])
+    assert payload["relations"] == [
+        {"id": "#arrow", "from": "#input", "to": "#output", "arrow": True, "flow": False}
+    ]
+    assert "不要把无方向的并列示意臆断为因果" in manifest
+
+
 def test_incompatible_old_layout_is_rebuilt_without_wasting_a_patch():
     original = spec(box=dict(x=.6,y=.5,width=.35,height=.3))
     fixed = spec(box=dict(x=.1,y=.1,width=.8,height=.3))

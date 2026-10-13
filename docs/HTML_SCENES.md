@@ -51,6 +51,8 @@ CSS 无自主动画；每次 seek 都重设完整状态，支持倒序、重复�
 
 `icon.glyph` 有计算用 `chip/memory/router/factory/gate/lens`，以及具体叙事道具 `phone/calendar/book/film/scissors/microscope/parcel`。只有剪刀道具可用 `reveal=0→1` 表示一次张开到合拢；其他 icon 的 reveal 仍不受支持。道具是受信任的离线 SVG，不需要图片服务。样片运行 `PYTHONPATH=ai python scripts/render-prop-story-demo.py` 后生成 `.data/prop-story-demo.html`，可在 2、5、9 秒检查动作、关系线和纸纹构图。真实人物质感仍取决于导入的透明立绘/Live2D 素材。
 
+审片清单从结构化规格提取 `relations`（线 id、from、to、arrow、flow），让现有 VLM 在旁白或标签明确方向时核查语义连接，错误修复指向关系线 id。无方向的并列关系不得臆测成因果错误；这一核查不增加模型调用次数。
+
 ## 生成与审核预算
 
 一次场景生成 + 最多一次生成内修复，解析/结构/布局/浏览器缺陷共享此预算。
