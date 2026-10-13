@@ -78,12 +78,17 @@
     root.setAttribute('data-scene-kind',el.kind);
     root.setAttribute('data-overlap-group',el.overlap_group || '');
     root.setAttribute('data-decorative',String(Boolean(el.decorative)));
+    if(el.anchor_from){
+      root.setAttribute('data-anchor-from',el.anchor_from);
+      root.setAttribute('data-anchor-to',el.anchor_to);
+    }
     const material=el.material==='auto'?(style.animationStyle==='anime'?'gradient':'solid'):el.material;
     root.setAttribute('data-material',material);
     root.setAttribute('data-fill-color',color(el.color));
     const b=el.box;
     Object.assign(root.style,{left:b.x*W+'px',top:b.y*H+'px',width:b.width*W+'px',height:b.height*H+'px',
       fontSize:el.font_size+'px',textAlign:el.align,color:color(el.color),zIndex:String(el.layer)});
+    if(el.anchor_from) Object.assign(root.style,{left:'0px',top:'0px',width:W+'px',height:H+'px',pointerEvents:'none'});
     const record={el,root,content:null,bars:[],cells:[],packets:[],stroke:null,strokeLength:0,arrow:null,character:null,images:null};
     if(['text','card','code'].includes(el.kind)) {
       root.className+=' scene-text'+(el.kind==='card'?' scene-card':el.kind==='code'?' scene-code':'');
@@ -144,7 +149,7 @@
     } else if(el.kind==='character') {
       record.character=createScienceCharacter(root,svgNode,color(el.color==='text'?'primary':el.color));
     } else {
-      const w=b.width*W,h=b.height*H;
+      const w=el.anchor_from?W:b.width*W,h=el.anchor_from?H:b.height*H;
       const svg=svgNode('svg',root,{viewBox:`0 0 ${w} ${h}`});
       const tint=color(el.color),outlined=material==='outline';
       if(el.kind==='icon')createScienceIcon(svg,svgNode,el.glyph,w,h,tint,light?'#F0F3FA':'#151E32');
@@ -162,7 +167,8 @@
       if(el.kind==='circle') svgNode('circle',svg,{cx:w/2,cy:h/2,r:Math.max(1,Math.min(w,h)/2-inset),fill,stroke,'stroke-width':sw});
       if(['line','polyline'].includes(el.kind)) {
         const attrs={stroke:color(el.color),'stroke-width':el.stroke_width,fill:'none',pathLength:1,'stroke-linecap':'round','stroke-linejoin':'round'};
-        if(el.kind==='line') Object.assign(attrs,{x1:4,y1:4,x2:Math.max(4,w-8),y2:Math.max(4,h-8)});
+        if(el.kind==='line') Object.assign(attrs,el.anchor_from?{x1:0,y1:0,x2:0,y2:0}:
+          {x1:4,y1:4,x2:Math.max(4,w-8),y2:Math.max(4,h-8)});
         else attrs.points=el.points.map(p=>`${p.x*w},${p.y*h}`).join(' ');
         record.stroke=svgNode(el.kind==='line'?'line':'polyline',svg,attrs);
         record.strokeLength=record.stroke.getTotalLength();
@@ -176,10 +182,37 @@
     }
     return record;
   });
+  const byId=new Map(nodes.map(record=>[record.el.id,record]));
+  const paintStroke=(record,s,t)=>{
+    const {el,stroke,packets,arrow}=record;
+    const strokeLength=stroke.getTotalLength();
+    stroke.style.visibility=s.reveal>0?'visible':'hidden';
+    stroke.setAttribute('stroke-dasharray','1');stroke.setAttribute('stroke-dashoffset',String(1-s.reveal));
+    for(let i=0;i<packets.length;i++){
+      const fraction=(Math.min(t,timelineEnd)*D*.55+i/packets.length)%1;
+      const point=stroke.getPointAtLength(strokeLength*fraction);
+      packets[i].setAttribute('cx',point.x);packets[i].setAttribute('cy',point.y);
+      packets[i].style.visibility=fraction<s.reveal?'visible':'hidden';
+    }
+    if(arrow) {
+      arrow.style.visibility=s.reveal>0?'visible':'hidden';
+      const length=strokeLength*s.reveal, tip=stroke.getPointAtLength(length);
+      const behind=stroke.getPointAtLength(Math.max(0,length-.1));
+      const angle=Math.atan2(tip.y-behind.y,tip.x-behind.x)*180/Math.PI;
+      arrow.setAttribute('transform',`translate(${tip.x} ${tip.y}) rotate(${angle})`);
+    }
+  };
+  const connectionPoint=(rect,toward)=>{
+    const cx=(rect.left+rect.right)/2,cy=(rect.top+rect.bottom)/2;
+    const dx=toward.x-cx,dy=toward.y-cy;
+    const factor=Math.min((rect.width/2)/Math.max(Math.abs(dx),.001),
+      (rect.height/2)/Math.max(Math.abs(dy),.001));
+    return {x:cx+dx*factor,y:cy+dy*factor};
+  };
   window.__seek = seconds => {
     const t=Math.max(0,Math.min(D,Number.isFinite(seconds)?seconds:0))/D;
+    const local=Math.min(1,t/timelineEnd);
     for(const {el,root,content,bars,cells,packets,stroke,strokeLength,arrow,character,images} of nodes) {
-      const local=Math.min(1,t/timelineEnd);
       const s=sample(el.keyframes, local);
       const group=groups.get(el.motion_group);
       if(group){
@@ -213,29 +246,32 @@
         s.gestureMix=frame?Math.min(1,Math.max(0,(local-frame.time)*D/.3)):1;
         character(t*D,s);
       }
-      if(stroke) {
-        stroke.style.visibility=s.reveal>0?'visible':'hidden';
-        stroke.setAttribute('stroke-dasharray','1');stroke.setAttribute('stroke-dashoffset',String(1-s.reveal));
-        for(let i=0;i<packets.length;i++){
-          const fraction=(Math.min(t,timelineEnd)*D*.55+i/packets.length)%1;
-          const point=stroke.getPointAtLength(strokeLength*fraction);
-          packets[i].setAttribute('cx',point.x);packets[i].setAttribute('cy',point.y);
-          packets[i].style.visibility=fraction<s.reveal?'visible':'hidden';
-        }
-        if(arrow) {
-          arrow.style.visibility=s.reveal>0?'visible':'hidden';
-          const length=strokeLength*s.reveal, tip=stroke.getPointAtLength(length);
-          const behind=stroke.getPointAtLength(Math.max(0,length-.1));
-          const angle=Math.atan2(tip.y-behind.y,tip.x-behind.x)*180/Math.PI;
-          arrow.setAttribute('transform',`translate(${tip.x} ${tip.y}) rotate(${angle})`);
-        }
-      }
+      if(stroke && !el.anchor_from) paintStroke(byId.get(el.id),s,t);
       if(el.kind==='code') content.textContent=Array.from(el.text).slice(0,Math.floor(Array.from(el.text).length*s.reveal)).join('');
       for(const bar of bars) bar.style.transform=`scaleX(${s.reveal})`;
       for(let i=0;i<cells.length;i++){
         const progress=Math.max(0,Math.min(1,s.reveal*cells.length-i));
         cells[i].style.opacity=String(progress);cells[i].style.transform=`translateY(${(1-progress)*12}px)`;
       }
+    }
+    // Resolve connectors after all objects have reached their absolute-time
+    // positions. A connector is never animated by guessed local coordinates.
+    const stageRect=nodes.some(record=>record.el.anchor_from)?stage.getBoundingClientRect():null;
+    for(const record of nodes){
+      const {el,root,stroke}=record;
+      if(!el.anchor_from) continue;
+      const source=byId.get(el.anchor_from).root,target=byId.get(el.anchor_to).root;
+      const sourceRect=source.getBoundingClientRect(),targetRect=target.getBoundingClientRect();
+      const aCenter={x:(sourceRect.left+sourceRect.right)/2,y:(sourceRect.top+sourceRect.bottom)/2};
+      const bCenter={x:(targetRect.left+targetRect.right)/2,y:(targetRect.top+targetRect.bottom)/2};
+      const a=connectionPoint(sourceRect,bCenter),b=connectionPoint(targetRect,aCenter);
+      stroke.setAttribute('x1',(a.x-stageRect.left)*W/stageRect.width);
+      stroke.setAttribute('y1',(a.y-stageRect.top)*H/stageRect.height);
+      stroke.setAttribute('x2',(b.x-stageRect.left)*W/stageRect.width);
+      stroke.setAttribute('y2',(b.y-stageRect.top)*H/stageRect.height);
+      const endpointsVisible=Number(getComputedStyle(source).opacity)>.1 && Number(getComputedStyle(target).opacity)>.1;
+      root.style.opacity=endpointsVisible?String(sample(el.keyframes,local).opacity):'0';
+      paintStroke(record,sample(el.keyframes,local),t);
     }
   };
   window.__seek(0);

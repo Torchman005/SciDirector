@@ -24,14 +24,14 @@ MEASURE_JS = r"""({minFont,presenterArea}) => {
   const issues=[], warnings=[], texts=[];
   const selector = el => el.id ? '#'+el.id : el.tagName.toLowerCase()+
     (typeof el.className==='string' && el.className ? '.'+el.className.trim().split(/\s+/).join('.') : '');
-  const visible = el => {
+  const visible = (el,threshold=.9) => {
     let opacity=1;
     for(let p=el; p; p=p.parentElement){
       const s=getComputedStyle(p);
       if(s.display==='none'||s.visibility==='hidden') return false;
       opacity*=Number(s.opacity);
     }
-    return opacity>.9;
+    return opacity>threshold;
   };
   for(const el of document.querySelectorAll('body *')){
     if(['SCRIPT','STYLE','NOSCRIPT'].includes(el.tagName.toUpperCase()) || !visible(el)) continue;
@@ -74,7 +74,7 @@ MEASURE_JS = r"""({minFont,presenterArea}) => {
     const a=presenterArea, safe={left:a.x*innerWidth,right:(a.x+a.width)*innerWidth,top:a.y*innerHeight,bottom:(a.y+a.height)*innerHeight};
     for(const t of texts) if(t.rects.some(r=>overlap(r,safe)>1)) issues.push(`${t.id} 文字进入右下讲解员叠层区域；局部调整布局，保持主画面满幅`);
     for(const el of document.querySelectorAll('[data-scene-kind]'))
-      if(el.dataset.sceneKind!=='image' && el.dataset.decorative!=='true' && visible(el) && overlap(el.getBoundingClientRect(),safe)>4)
+      if(el.dataset.sceneKind!=='image' && !el.dataset.anchorFrom && el.dataset.decorative!=='true' && visible(el) && overlap(el.getBoundingClientRect(),safe)>4)
         issues.push(`#${el.id} 动画进入右下讲解员叠层区域；修正运动路径或局部布局`);
   }
   for(let i=0;i<texts.length;i++) for(let j=i+1;j<texts.length;j++){
@@ -86,7 +86,7 @@ MEASURE_JS = r"""({minFont,presenterArea}) => {
     }
   }
   const shapes=Array.from(document.querySelectorAll('[data-scene-kind]'))
-    .filter(e=>['rect','circle','card','character','icon','grid','image'].includes(e.dataset.sceneKind)&&visible(e));
+    .filter(e=>['rect','circle','card','character','icon','grid','image'].includes(e.dataset.sceneKind)&&visible(e,.35));
   // Imported transparent portraits often contain wide empty margins. Inspect
   // their decoded alpha, then map the painted pixels through object-fit before
   // testing foreground occlusion. Never treat the full <img> box as opaque.
@@ -135,7 +135,7 @@ MEASURE_JS = r"""({minFont,presenterArea}) => {
   const outlined=e=>{const s=e.querySelector('rect,circle')?.getAttribute('stroke');return s&&s!=='none'&&s!==fill(e)};
   for(let i=0;i<shapes.length;i++) for(let j=i+1;j<shapes.length;j++){
     const a=shapes[i],b=shapes[j],ar=paintedBox(a),br=paintedBox(b);
-    if(sameGroup(a,b)||['character'].includes(a.dataset.sceneKind)||b.dataset.sceneKind==='character' ||
+    if(sameGroup(a,b)||a.dataset.decorative==='true'||b.dataset.decorative==='true'||
        a.dataset.sceneAssetRole==='background'||b.dataset.sceneAssetRole==='background') continue;
     if(a.dataset.sceneKind==='image' || b.dataset.sceneKind==='image'){
       if(overlap(ar,br)>Math.min(area(ar),area(br))*.2 && Math.min(area(ar),area(br))>0)
@@ -145,6 +145,49 @@ MEASURE_JS = r"""({minFont,presenterArea}) => {
     const ac=fill(a),bc=fill(b);
     if(ac && ac!=='none' && ac===bc && !outlined(a)&&!outlined(b) && overlap(ar,br)>Math.min(area(ar),area(br))*.12)
       issues.push(`#${a.id} 与 #${b.id} 同色图形重叠，边界无法区分；分离布局、增加不同填色/轮廓，确需叠合的复合图形标记相同 overlap_group`);
+    else if(ac && bc && ac!=='none' && bc!=='none' && overlap(ar,br)>Math.min(area(ar),area(br))*.2)
+      issues.push(`#${a.id} 与 #${b.id} 前景组件重叠；调整布局或出现时间，确有科学含义的复合图形标记相同 overlap_group`);
+  }
+  const segmentCrosses=(a,b,r)=>{
+    // Intersect the line with the interior, ignoring a grazing touch on an edge.
+    const box={left:r.left+6,right:r.right-6,top:r.top+6,bottom:r.bottom-6};
+    if(box.left>=box.right||box.top>=box.bottom) return false;
+    const dx=b.x-a.x,dy=b.y-a.y;
+    let lo=0,hi=1;
+    for(const [p,q] of [[-dx,a.x-box.left],[dx,box.right-a.x],[-dy,a.y-box.top],[dy,box.bottom-a.y]]){
+      if(Math.abs(p)<1e-9){if(q<0)return false;continue;}
+      const t=q/p;
+      if(p<0)lo=Math.max(lo,t);else hi=Math.min(hi,t);
+      if(lo>hi)return false;
+    }
+    return (hi-lo)*Math.hypot(dx,dy)>8;
+  };
+  for(const line of document.querySelectorAll('[data-anchor-from]')){
+    if(!visible(line,.35))continue;
+    const stroke=line.querySelector('svg line'),matrix=stroke?.getScreenCTM();
+    if(!matrix)continue;
+    const a=new DOMPoint(Number(stroke.getAttribute('x1')),Number(stroke.getAttribute('y1'))).matrixTransform(matrix);
+    const b=new DOMPoint(Number(stroke.getAttribute('x2')),Number(stroke.getAttribute('y2'))).matrixTransform(matrix);
+    if(Math.hypot(a.x-b.x,a.y-b.y)<20){
+      issues.push(`#${line.id} 锚定关系线两端距离过短；分开源对象与目标对象`);
+      continue;
+    }
+    if(presenterArea){
+      const p=presenterArea,safe={left:p.x*innerWidth,right:(p.x+p.width)*innerWidth,
+        top:p.y*innerHeight,bottom:(p.y+p.height)*innerHeight};
+      if(segmentCrosses(a,b,safe))issues.push(`#${line.id} 关系线进入右下讲解员区域；重新安排对象位置`);
+    }
+    for(const shape of shapes){
+      if([line.dataset.anchorFrom,line.dataset.anchorTo].includes(shape.id)||shape.dataset.decorative==='true'||
+         shape.dataset.sceneAssetRole==='background')continue;
+      if(segmentCrosses(a,b,paintedBox(shape)))
+        issues.push(`#${line.id} 关系线穿过无关对象 #${shape.id}；移动对象或重新安排流程顺序`);
+    }
+    for(const text of texts){
+      if(!text.owner || [line.dataset.anchorFrom,line.dataset.anchorTo].includes(text.owner.id))continue;
+      if(text.rects.some(rect=>segmentCrosses(a,b,rect)))
+        issues.push(`#${line.id} 关系线穿过无关文字 ${text.id}；移动标签或重新安排流程顺序`);
+    }
   }
   for(const text of texts) if(text.owner) for(const shape of shapes){
     if(text.owner===shape || sameGroup(text.owner,shape) || shape.dataset.material==='outline' || shape.dataset.sceneAssetRole==='background') continue;

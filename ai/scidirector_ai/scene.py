@@ -111,6 +111,8 @@ class Element(SceneModel):
     unit: str = Field(default="", max_length=30)
     keyframes: list[Keyframe] = Field(default_factory=list, max_length=24)
     arrow: bool = False
+    anchor_from: str = Field(default="", pattern=r"^$|^[A-Za-z][A-Za-z0-9_-]{0,47}$")
+    anchor_to: str = Field(default="", pattern=r"^$|^[A-Za-z][A-Za-z0-9_-]{0,47}$")
     points: list[Point] = Field(default_factory=list, max_length=64)
     stroke_width: float = Field(default=4, ge=1, le=20)
     overlap_group: str = Field(default="", pattern=r"^[A-Za-z0-9_-]{0,48}$")
@@ -128,7 +130,10 @@ class Element(SceneModel):
     def explicit_line_path(cls, value: object) -> object:
         # Both represent the same path primitive; do not spend an LLM retry on
         # a line that already supplies valid explicit points.
-        if isinstance(value, dict) and value.get("kind") in {"line", "polyline"} and isinstance(value.get("box"), dict):
+        if isinstance(value, dict) and (value.get("anchor_from") or value.get("anchor_to")):
+            value = dict(value)
+            value.setdefault("box", {"x": 0, "y": 0, "width": 1, "height": 1})
+        if isinstance(value, dict) and value.get("kind") in {"line", "polyline"} and isinstance(value.get("box"), dict) and not (value.get("anchor_from") or value.get("anchor_to")):
             b = value["box"]
             if b.get("width") == 0 and b.get("height") == 0:
                 raise ValueError("关系线必须有非零长度")
@@ -148,6 +153,13 @@ class Element(SceneModel):
 
     @model_validator(mode="after")
     def content_and_time(self) -> Element:
+        if self.anchor_from or self.anchor_to:
+            if self.kind != "line" or not self.anchor_from or not self.anchor_to:
+                raise ValueError(f"#{self.id} 锚定关系必须是 line 且同时提供 anchor_from/anchor_to")
+            if self.points or self.motion_group or self.decorative:
+                raise ValueError(f"#{self.id} 锚定关系线不能使用 points、motion_group 或 decorative")
+            if any(k.dx or k.dy or k.rotation or k.scale != 1 for k in self.keyframes):
+                raise ValueError(f"#{self.id} 锚定关系线只支持 opacity/reveal，不要手动移动或缩放")
         if self.kind == "image" and not self.asset_id:
             raise ValueError(f"#{self.id} 图片必须引用已选择的 asset_id")
         if self.kind != "image" and self.asset_id:
@@ -204,9 +216,17 @@ class SceneSpec(SceneModel):
         groups = [group.id for group in self.motion_groups]
         if len(groups) != len(set(groups)):
             raise ValueError("运动组 id 必须唯一")
+        by_id = {element.id: element for element in self.elements}
         for element in self.elements:
             if element.motion_group and element.motion_group not in groups:
                 raise ValueError(f"#{element.id} 引用了不存在的运动组 {element.motion_group}")
+            if element.anchor_from:
+                if element.anchor_from == element.anchor_to or element.id in {element.anchor_from, element.anchor_to}:
+                    raise ValueError(f"#{element.id} 关系线两端必须是不同对象")
+                for target_id in (element.anchor_from, element.anchor_to):
+                    target = by_id.get(target_id)
+                    if target is None or target.decorative or target.kind in {"line", "polyline"}:
+                        raise ValueError(f"#{element.id} 锚点 {target_id} 必须引用存在的非装饰对象")
         for group in self.motion_groups:
             if sum(element.motion_group == group.id for element in self.elements) < 2:
                 raise ValueError(f"运动组 #{group.id} 至少需要两个元素")
@@ -218,6 +238,10 @@ def validate_layout(scene: SceneSpec, *, width: int, height: int, duration: floa
     """Reject geometric/time defects before launching Chromium; text fit is measured there."""
     allowed_assets = {asset.asset_id: asset for asset in style.scene_assets}
     for el in scene.elements:
+        if el.anchor_from:
+            # Anchored lines use the full-stage SVG at runtime; the placeholder
+            # box is not their painted geometry. Chromium checks the real route.
+            continue
         if el.kind == "image":
             ids = [el.asset_id, *(frame.asset_id for frame in el.keyframes if frame.asset_id)]
             if any(asset_id not in allowed_assets for asset_id in ids):

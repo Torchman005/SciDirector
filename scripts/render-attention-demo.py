@@ -14,14 +14,16 @@ def demo_scene():
         add(id,'text',box,text=label,font_size=size,layer=5,**kw)
     text('chapter','GPU MEMORY / 分块注意力',(.06,.05,.88,.06),32,color='secondary')
     text('title','让数据流动，而不是反复搬运整张矩阵',(.06,.13,.90,.10),46)
-    add('memory','rect',(.06,.30,.34,.42),color='accent',material='glass',layer=-2,stroke_width=2)
-    add('sram','rect',(.55,.30,.39,.42),color='secondary',material='glass',layer=-2,stroke_width=2)
+    add('memory','rect',(.06,.30,.34,.42),color='accent',material='glass',layer=-2,stroke_width=2,
+        overlap_group='memory_device')
+    add('sram','rect',(.55,.30,.39,.42),color='secondary',material='glass',layer=-2,stroke_width=2,
+        overlap_group='sram_device')
     text('memory_label','HBM · 显存',(.085,.33,.28,.075),32,color='accent')
     text('sram_label','SRAM · 片上工作区',(.58,.33,.32,.075),32,color='secondary')
     for row in range(3):
         for col in range(4):
             add(f'cell_{row}_{col}','rect',(.10+col*.066,.45+row*.067,.05,.05),color='accent',corner_radius=5,stroke_width=1,
-                keyframes=[dict(time=0,opacity=0),dict(time=.10+col*.018+row*.022)],overlap_group='tiles')
+                keyframes=[dict(time=0,opacity=0),dict(time=.10+col*.018+row*.022)],overlap_group='memory_device')
     add('transfer','polyline',(.42,.50,.105,.08),points=[dict(x=0,y=.5),dict(x=1,y=.5)],color='secondary',arrow=True,
         keyframes=[dict(time=0,reveal=0),dict(time=.25,reveal=0),dict(time=.36)])
     text('transfer_label','按块加载',(.415,.40,.13,.08),32,align='center',color='secondary')
@@ -29,7 +31,8 @@ def demo_scene():
     for i,(name,tint) in enumerate([('Q','primary'),('K','accent'),('V','secondary')]):
         box=(.59+i*.105,.45,.08,.115)
         frames=[dict(time=0,opacity=0,dx=-.05),dict(time=.29+i*.08,opacity=0,dx=-.05),dict(time=.39+i*.08,easing='spring')]
-        add('tile_'+name,'rect',box,color=tint,material='gradient',corner_radius=10,keyframes=frames)
+        add('tile_'+name,'rect',box,color=tint,material='gradient',corner_radius=10,keyframes=frames,
+            overlap_group='sram_device')
         text('name_'+name,name,box,36,align='center',keyframes=frames)
     text('compute','局部计算 · 在线归一化',(.585,.60,.32,.075),32,
          keyframes=[dict(time=0,opacity=0),dict(time=.62,opacity=0),dict(time=.70)])
