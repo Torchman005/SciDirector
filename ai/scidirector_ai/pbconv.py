@@ -173,6 +173,10 @@ def feedback_to_pb(feedback: CriticFeedback | None) -> Any:
         raw_response=feedback.raw_response,
         model=feedback.model,
         source=SOURCE_TO_PB.get(feedback.source, common.FEEDBACK_SOURCE_UNSPECIFIED),
+        kind=feedback.kind,
+        message=feedback.message,
+        artifact_id=feedback.artifact_id,
+        handoff_reason=feedback.handoff_reason,
         attempt=feedback.attempt,
         logic_score=feedback.logic_score,
         readability_score=feedback.readability_score,
@@ -194,7 +198,9 @@ def feedback_from_pb(message: Any) -> CriticFeedback:
 
     suggestions = list(message.suggestions)
     passed = bool(message.passed)
-    if not passed and not suggestions:
+    if not passed and not suggestions and message.kind not in {
+        "repair_request", "review_unavailable", "system_error",
+    }:
         suggestions = list(message.issues) or ["请根据上述问题调整画面（字号、节奏、元素布局）"]
 
     source = {
@@ -212,12 +218,19 @@ def feedback_from_pb(message: Any) -> CriticFeedback:
             frame_indices=list(task.frame_indices), target=task.target, evidence=task.evidence,
             instruction=task.instruction, acceptance=task.acceptance, region=list(task.region),
             status=task.status or "open", resolution_evidence=task.resolution_evidence,
+            evidence_pairs=[dict(ts=p.ts, before=p.before, after=p.after,
+                                 before_artifact_id=p.before_artifact_id,
+                                 after_artifact_id=p.after_artifact_id) for p in task.evidence_pairs],
         ) for task in message.repair_tasks],
         fatal_issues=list(message.fatal_issues),
         suggestions=suggestions,
         raw_response=message.raw_response,
         model=message.model,
         source=source,
+        kind=message.kind,
+        message=message.message,
+        artifact_id=message.artifact_id,
+        handoff_reason=message.handoff_reason,
         attempt=int(message.attempt),
         logic_score=float(message.logic_score),
         readability_score=float(message.readability_score),

@@ -9,7 +9,8 @@ from .schemas import CriticFeedback, RepairTask
 
 # A small repair batch keeps the coder focused and makes each review measurable.
 MAX_REPAIRS_PER_ROUND = 3
-FAILURES_BEFORE_ESCALATION = 2
+FAILURES_BEFORE_ESCALATION = 1
+FAILURES_BEFORE_HANDOFF = 2
 SEVERITY_ORDER = {"blocking": 0, "major": 1, "advisory": 2}
 REPAIR_STRATEGIES = {
     "logic": "重构解释顺序与图示关系，先呈现前提，再展示推导与结论，逐项核对旁白",
@@ -23,19 +24,25 @@ REPAIR_STRATEGIES = {
 def update_repair_progress(
     feedback: CriticFeedback | None, progress: dict[str, Any], attempt: int, max_attempts: int,
 ) -> tuple[dict[str, Any], list[RepairTask], bool]:
-    """Count once per attempt and grant at most one escalation before human handoff."""
+    """The first sighting is a baseline; stop after two ineffective repairs."""
     updated = {k: dict(v) for k, v in progress.items()}
     selected = active_repairs(feedback)
     escalations = []
     exhausted = False
     for task in selected:
-        row = updated.setdefault(task.task_id, {"failures": 0, "last_attempt": 0, "escalated_at": 0})
+        if task.task_id not in updated:
+            updated[task.task_id] = {"failures": 0, "last_attempt": attempt,
+                                     "last_status": task.status, "escalated_at": 0,
+                                     "partial_seen": task.status == "partial"}
+            continue
+        row = updated[task.task_id]
         if row["last_attempt"] < attempt:
             # A first partial resolution earns time; repeated partial claims are not endless progress.
-            improved = task.status == "partial" and row.get("last_status") != "partial"
+            improved = task.status == "partial" and not row.get("partial_seen", row.get("last_status") == "partial")
+            row["partial_seen"] = row.get("partial_seen", row.get("last_status") == "partial") or task.status == "partial"
             row["failures"] = 0 if improved else row["failures"] + 1
             row["last_attempt"], row["last_status"] = attempt, task.status
-        if row["escalated_at"] and attempt >= row["escalated_at"] and row["failures"] >= FAILURES_BEFORE_ESCALATION:
+        if row["failures"] >= FAILURES_BEFORE_HANDOFF:
             exhausted = True
         elif row["failures"] >= FAILURES_BEFORE_ESCALATION and attempt < max_attempts and not row["escalated_at"]:
             row["escalated_at"] = attempt + 1
@@ -46,6 +53,27 @@ def update_repair_progress(
 def _identity(task: RepairTask) -> tuple[str, str, str]:
     return (task.category, re.sub(r"\s+", "", task.target).casefold(),
             re.sub(r"\s+", "", task.acceptance).casefold())
+
+
+def carry_repairs(previous: CriticFeedback | None, current: CriticFeedback) -> CriticFeedback:
+    """An unavailable review cannot change a previously verified task status."""
+    pairs = {t.task_id: t.evidence_pairs for t in current.repair_tasks if t.evidence_pairs}
+    return current.model_copy(update={
+        "passed": False,
+        "repair_tasks": [t.model_copy(deep=True, update={"evidence_pairs": pairs.get(t.task_id, t.evidence_pairs)})
+                         for t in previous.repair_tasks] if previous else [],
+    })
+
+
+def repair_improved(previous: CriticFeedback | None, current: CriticFeedback) -> bool:
+    """Only task-specific closure or a first partial result earns further repairs."""
+    old = {_identity(t): t.status for t in previous.repair_tasks} if previous else {}
+    return any(
+        _identity(t) in old and (
+            (t.status == "resolved" and old[_identity(t)] != "resolved")
+            or (t.status == "partial" and old[_identity(t)] not in {"partial", "resolved"})
+        ) for t in current.repair_tasks
+    )
 
 
 def merge_repairs(

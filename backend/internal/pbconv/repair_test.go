@@ -9,14 +9,19 @@ import (
 
 func TestRepairTasksRoundTrip(t *testing.T) {
 	feedback := &domain.Feedback{Passed: false, Suggestions: []string{"separate labels"},
+		Kind: domain.FeedbackContentReview, ArtifactID: "v8", HandoffReason: "two repairs without progress",
 		FatalIssues: []string{"formula error"}, RepairTasks: []domain.RepairTask{{
 			TaskID: "r1-01", Category: "logic", Severity: "blocking", StartSec: 1, EndSec: 3,
 			FrameIndices: []int32{2}, Target: "formula", Evidence: "wrong operator",
 			Instruction: "correct operator", Acceptance: "formula matches narration",
 			Region: []float64{0.1, 0.2, 0.3, 0.4}, Status: "open",
+			EvidencePairs: []domain.RepairEvidence{{TS: 1.2, Before: "before.png", After: "after.png", BeforeArtifactID: "v7", AfterArtifactID: "v8"}},
 		}}}
 	back := FeedbackFromPB(FeedbackToPB(feedback))
 	if !reflect.DeepEqual(back.RepairTasks, feedback.RepairTasks) || !reflect.DeepEqual(back.FatalIssues, feedback.FatalIssues) {
 		t.Fatalf("repair evidence lost: %+v", back)
+	}
+	if back.Kind != feedback.Kind || back.ArtifactID != feedback.ArtifactID || back.HandoffReason != feedback.HandoffReason {
+		t.Fatal("review type/version lost")
 	}
 }

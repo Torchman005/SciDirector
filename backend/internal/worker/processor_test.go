@@ -98,6 +98,11 @@ func TestCompositionSnapshotRejectsRerenderAndKeepsCurrentReviewFiles(t *testing
 	if len(plan) != 1 || plan[0] != "old.png" {
 		t.Fatalf("review evidence deleted: %v", plan)
 	}
+	before.Shots[0].RecordFeedback(domain.Feedback{Source: domain.FeedbackVLM, RepairTasks: []domain.RepairTask{{TaskID: "r1", EvidencePairs: []domain.RepairEvidence{{Before: "before.png", After: "after.png"}}}}})
+	plan = protectCurrentArtifacts([]string{"old.png", "before.png", "after.png"}, before)
+	if len(plan) != 1 || plan[0] != "old.png" {
+		t.Fatalf("comparison evidence deleted: %v", plan)
+	}
 }
 
 // pythonPayloadSample 是 **Python 侧真实产出**的 payload_json 样例
@@ -240,12 +245,13 @@ func TestSyncShotsFromPayloadParses(t *testing.T) {
 // 若这里整体覆盖，已经渲染好的镜头会被打回 PENDING，白烧一遍渲染成本。
 func TestSyncShotsFromPayloadPreservesProgress(t *testing.T) {
 	existing := &domain.Shot{
-		ShotID:  "job-x-s000",
-		JobID:   "job-x",
-		Index:   0,
-		Tag:     domain.TagAmbience,
-		Status:  domain.StatusApproved,
-		Attempt: 2,
+		ShotID:      "job-x-s000",
+		JobID:       "job-x",
+		Index:       0,
+		Tag:         domain.TagAmbience,
+		Status:      domain.StatusApproved,
+		Attempt:     2,
+		RepairTasks: []domain.RepairTask{{TaskID: "r1", Status: "resolved", ResolutionEvidence: "current frame"}},
 		Artifact: &domain.Artifact{
 			ArtifactID:  "a1",
 			ShotID:      "job-x-s000",
@@ -271,6 +277,9 @@ func TestSyncShotsFromPayloadPreservesProgress(t *testing.T) {
 	}
 	if kept.Artifact == nil || kept.Artifact.VideoPath == "" {
 		t.Error("渲染产物被清空了")
+	}
+	if len(kept.RepairTasks) != 1 || kept.RepairTasks[0].ResolutionEvidence != "current frame" {
+		t.Error("修复账本被清空了")
 	}
 	// 但叙事元数据应当被更新（导演的产出是权威快照）。
 	if kept.VisualBrief != "标题淡入" {

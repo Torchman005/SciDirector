@@ -65,7 +65,7 @@ def test_later_failures_keep_last_rendered_video_and_never_claim_pass(tmp_path,m
 def test_unchanged_code_has_bounded_retries_and_never_renders(tmp_path,monkeypatch):
     run,calls,renders,_=harness(tmp_path,monkeypatch,iter(['original']*3),iter([]))
     with pytest.raises(RenderFailed,match='未改变实际代码'):run()
-    assert len(calls)==3 and not renders
+    assert len(calls)==2 and not renders
     assert calls[-1]['shot'].meta['repair_strategy'] == 'rebuild'
 
 

@@ -1,5 +1,9 @@
 # SciDirector API 契约
 
+2026-10-20 审核记录：`CriticFeedback` 新增 `kind=16`、`message=17`、`artifact_id=18`、`handoff_reason=19`；kind 为 content_review / science_review / repair_request / human_review / review_unavailable / system_error。空 kind 兼容历史数据。只有 content_review 的总分/四维、science_review 的逻辑分是实际评分；操作与故障的数值缺省值不能解读为零分审查。修复请求的文字写入 message，不再复制到 issues/suggestions。Job 中每个 Shot 的 `repair_tasks` 为独立当前账本，feedbacks 保留历史快照；机器审核降级及后续操作不删除或关闭原任务，旧任务在后续写入时从历史重建。
+
+`RepairTask.evidence_pairs=14` 为可信抽帧器写入的 RepairEvidence 数组：ts、before、after、before_artifact_id、after_artifact_id。路径不可来自模型输出或用户请求。`GET /api/v1/jobs/:jobID/shots/:shotID/reviews/:reviewIndex/tasks/:taskIndex/evidence/:pairIndex/:side` 以零基索引读取历史对照，side 仅 before / after；先检查租户，无效索引或缺文件返回 404，不接收文件路径参数，禁止缓存。追加记录不会改变旧索引。清理保留账本引用的历史对照；它不是完整历史视频归档。
+
 2026-10-12 恢复入口更新：`POST /api/v1/jobs/:jobID/shots/:shotID/reject` 接受 `{}` 或可选 `comment`（最多 2000 字）；WS `feedback` 同样允许空意见。服务端读取现有失败原因、最近机器审核和产物，用户无需给出技术修法。只有 AWAITING_HUMAN / FAILED / REJECTED / APPROVED 可发起；忙碌态返回 409。ReviseShotRequest 增加 `previous_error=9`、`previous_feedback=10`、`previous_artifact=11`。每次完整修订最多三轮，attempt 保持单调版本号；不再以历史次数永久禁止显式重试，不能通过此入口人工批准无片或跳过科学审核。
 
 > 本文档描述三层接口：**Go 网关的 REST**、**反馈闭环的 WebSocket**、**Go ↔ Python 的 gRPC**。

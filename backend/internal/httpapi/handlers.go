@@ -450,13 +450,13 @@ func (s *Server) HandleRejectShot(c *gin.Context) {
 		}
 		shot.Status = next
 		shot.Attempt++ // 人工打回同样消耗一次尝试额度，避免无限返工
-		shot.Feedbacks = append(shot.Feedbacks, domain.Feedback{
-			Passed:      false,
-			Source:      domain.FeedbackHuman,
-			Attempt:     shot.Attempt,
-			Issues:      []string{req.Comment},
-			Suggestions: []string{req.Comment},
-			CreatedAt:   time.Now().UTC(),
+		shot.RecordFeedback(domain.Feedback{
+			Passed:    false,
+			Source:    domain.FeedbackHuman,
+			Kind:      domain.FeedbackRepairRequest,
+			Attempt:   shot.Attempt,
+			Message:   req.Comment,
+			CreatedAt: time.Now().UTC(),
 		})
 		shot.UpdatedAt = time.Now().UTC()
 		newAttempt = shot.Attempt
@@ -685,13 +685,13 @@ func (s *Server) HandlePatchShot(c *gin.Context) {
 			shot.Status = next
 			shot.Attempt++ // 与打回一致：编辑后重做同样消耗一次额度
 			if req.Comment != "" {
-				shot.Feedbacks = append(shot.Feedbacks, domain.Feedback{
-					Passed:      false,
-					Source:      domain.FeedbackHuman,
-					Attempt:     shot.Attempt,
-					Issues:      []string{req.Comment},
-					Suggestions: []string{req.Comment},
-					CreatedAt:   time.Now().UTC(),
+				shot.RecordFeedback(domain.Feedback{
+					Passed:    false,
+					Source:    domain.FeedbackHuman,
+					Kind:      domain.FeedbackRepairRequest,
+					Attempt:   shot.Attempt,
+					Message:   req.Comment,
+					CreatedAt: time.Now().UTC(),
 				})
 			}
 			newAttempt = shot.Attempt

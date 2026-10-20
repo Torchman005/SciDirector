@@ -174,7 +174,7 @@ export function ShotDetail({ jobId, shot, onChanged }: Props) {
       <Divider orientation="left" plain style={{ margin: '4px 0' }}>
         审查依据
       </Divider>
-      <ReviewHistory feedbacks={shot.feedbacks} />
+      <ReviewHistory feedbacks={shot.feedbacks} repairTasks={shot.repair_tasks} jobId={jobId} shotId={shot.shot_id} />
 
       {/* --- 打回：把意见回灌给编码智能体 --- */}
       <Modal

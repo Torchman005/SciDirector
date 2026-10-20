@@ -319,6 +319,7 @@ class AiDirectorServicer(pb_grpc.AiDirectorServiceServicer):
                 # success 表示"重做并复审通过"；未通过也仍是成功的调用，
                 # 由调用方依据 feedback.passed 决定下一步。
                 success=bool(feedback.passed),
+                error=feedback.handoff_reason,
                 total_tokens=self.service.llm.usage.total_tokens,
                 elapsed_sec=time.monotonic() - started,
                 partial_range_honored=honored,

@@ -155,33 +155,47 @@ const (
 
 // RepairTask 是带定位、证据和验收条件的修复任务。
 type RepairTask struct {
-	TaskID             string    `json:"task_id"`
-	Category           string    `json:"category"`
-	Severity           string    `json:"severity"`
-	StartSec           float64   `json:"start_sec"`
-	EndSec             float64   `json:"end_sec"`
-	FrameIndices       []int32   `json:"frame_indices,omitempty"`
-	Target             string    `json:"target"`
-	Evidence           string    `json:"evidence"`
-	Instruction        string    `json:"instruction"`
-	Acceptance         string    `json:"acceptance"`
-	Region             []float64 `json:"region,omitempty"`
-	Status             string    `json:"status"`
-	ResolutionEvidence string    `json:"resolution_evidence,omitempty"`
+	TaskID             string           `json:"task_id"`
+	Category           string           `json:"category"`
+	Severity           string           `json:"severity"`
+	StartSec           float64          `json:"start_sec"`
+	EndSec             float64          `json:"end_sec"`
+	FrameIndices       []int32          `json:"frame_indices,omitempty"`
+	Target             string           `json:"target"`
+	Evidence           string           `json:"evidence"`
+	Instruction        string           `json:"instruction"`
+	Acceptance         string           `json:"acceptance"`
+	Region             []float64        `json:"region,omitempty"`
+	Status             string           `json:"status"`
+	ResolutionEvidence string           `json:"resolution_evidence,omitempty"`
+	EvidencePairs      []RepairEvidence `json:"evidence_pairs,omitempty"`
+}
+
+// RepairEvidence identifies immutable extractor-owned before/after frames.
+type RepairEvidence struct {
+	TS               float64 `json:"ts"`
+	Before           string  `json:"before"`
+	After            string  `json:"after"`
+	BeforeArtifactID string  `json:"before_artifact_id,omitempty"`
+	AfterArtifactID  string  `json:"after_artifact_id,omitempty"`
 }
 
 // Feedback 是一条审查/修改意见。
 type Feedback struct {
-	Passed      bool           `json:"passed"`
-	Score       float64        `json:"score"`
-	Issues      []string       `json:"issues,omitempty"`
-	Suggestions []string       `json:"suggestions,omitempty"` // 必须是可执行的修改指令
-	RepairTasks []RepairTask   `json:"repair_tasks,omitempty"`
-	FatalIssues []string       `json:"fatal_issues,omitempty"`
-	RawResponse string         `json:"raw_response,omitempty"`
-	Model       string         `json:"model,omitempty"`
-	Source      FeedbackSource `json:"source"`
-	Attempt     int            `json:"attempt"`
+	Passed        bool           `json:"passed"`
+	Score         float64        `json:"score"`
+	Issues        []string       `json:"issues,omitempty"`
+	Suggestions   []string       `json:"suggestions,omitempty"` // 必须是可执行的修改指令
+	RepairTasks   []RepairTask   `json:"repair_tasks,omitempty"`
+	FatalIssues   []string       `json:"fatal_issues,omitempty"`
+	RawResponse   string         `json:"raw_response,omitempty"`
+	Model         string         `json:"model,omitempty"`
+	Source        FeedbackSource `json:"source"`
+	Kind          string         `json:"kind,omitempty"`
+	Message       string         `json:"message,omitempty"`
+	ArtifactID    string         `json:"artifact_id,omitempty"`
+	HandoffReason string         `json:"handoff_reason,omitempty"`
+	Attempt       int            `json:"attempt"`
 	// 分维度分数，便于统计「问题主要集中在可读性还是节奏」。
 	LogicScore       float64   `json:"logic_score"`
 	ReadabilityScore float64   `json:"readability_score"`
@@ -211,12 +225,13 @@ type Shot struct {
 	// 放在 Shot 上是免费的（整个 Shot 以 JSON 存 Redis），而渲染时它会被并进
 	// 该镜头的 style_guide_json 传给 AI —— 那条通道本来就有，因此不必改 proto。
 	// 用户此前反馈过"背景不变化"，逐镜头可切换正是为它准备的出口。
-	BackgroundStyle string     `json:"background_style,omitempty"`
-	Attempt         int        `json:"attempt"` // 已尝试次数，熔断依据
-	Artifact        *Artifact  `json:"artifact,omitempty"`
-	Feedbacks       []Feedback `json:"feedbacks,omitempty"`
-	Error           string     `json:"error,omitempty"`
-	UpdatedAt       time.Time  `json:"updated_at"`
+	BackgroundStyle string       `json:"background_style,omitempty"`
+	Attempt         int          `json:"attempt"` // 已尝试次数，熔断依据
+	Artifact        *Artifact    `json:"artifact,omitempty"`
+	Feedbacks       []Feedback   `json:"feedbacks,omitempty"`
+	RepairTasks     []RepairTask `json:"repair_tasks,omitempty"` // 当前账本，独立于操作与故障记录
+	Error           string       `json:"error,omitempty"`
+	UpdatedAt       time.Time    `json:"updated_at"`
 }
 
 // Job 是一次「脚本 -> 成片」的生成请求。

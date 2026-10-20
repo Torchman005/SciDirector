@@ -63,14 +63,22 @@ export interface RepairTask {
   region?: number[]
   status: 'open' | 'partial' | 'resolved' | 'unverified'
   resolution_evidence?: string
+  evidence_pairs?: {
+    ts: number; before: string; after: string
+    before_artifact_id?: string; after_artifact_id?: string
+  }[]
 }
 
 export interface Feedback {
   passed: boolean
-  /** 四维加权总分（人工打回时可能为 0）。 */
+  /** 四维加权总分；仅 content_review 有效，其他类型不显示。 */
   score?: number
-  /** 意见来源：VLM（机器审查）/ HUMAN（人工打回）/ SYSTEM（渲染等技术错误）。 */
+  /** 发送方来源；记录含义由 kind 决定，兼容旧记录时才按来源推断。 */
   source: string
+  kind?: 'content_review' | 'science_review' | 'repair_request' | 'human_review' | 'review_unavailable' | 'system_error' | ''
+  message?: string
+  artifact_id?: string
+  handoff_reason?: string
   attempt: number
   issues?: string[]
   suggestions?: string[]
@@ -100,6 +108,7 @@ export interface Shot {
   language?: string
   artifact?: Artifact | null
   feedbacks?: Feedback[]
+  repair_tasks?: RepairTask[]
   error?: string
   /**
    * 逐镜头的背景样式覆盖（空串 = 跟随全片的 style_guide.preset）。

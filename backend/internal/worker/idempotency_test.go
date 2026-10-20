@@ -309,7 +309,8 @@ func TestRepairForwardsDiagnosticsWithoutRequiringHumanInstructions(t *testing.T
 		s := j.Shots[0]
 		s.Error = "ValueError: wait duration <= 0"
 		s.Feedbacks = []domain.Feedback{{Source: domain.FeedbackVLM, Issues: []string{"错误的函数曲线"}, Suggestions: []string{"核对公式"}},
-			{Source: domain.FeedbackHuman, Issues: []string{"自动修复"}}}
+			{Source: domain.FeedbackHuman, Kind: domain.FeedbackRepairRequest, Message: "自动修复"},
+			{Source: domain.FeedbackSystem, Kind: domain.FeedbackReviewUnavailable, Message: "VLM timeout"}}
 		s.Artifact = &domain.Artifact{VideoPath: "previous.mp4"}
 		return nil
 	})

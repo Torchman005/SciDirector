@@ -44,9 +44,9 @@ from ..media import (
     extract_frames_with_times,
 )
 from ..pbconv import shots_payload_json
-from ..review_tasks import (format_repairs, merge_repairs, active_repairs,
+from ..review_tasks import (format_repairs, carry_repairs, active_repairs,
                             update_repair_progress, REPAIR_STRATEGIES)
-from ..repair_evidence import precheck_repairs, skip_full_review
+from ..repair_evidence import attach_repair_evidence, precheck_repairs, skip_full_review
 from ..renderer import LLM_ENGINES, Renderer, RendererError, RenderRequest, build_renderer
 from ..sandbox.runner import SandboxRunner
 from ..tts.base import synthesize_with_retry, write_marks_sidecar
@@ -575,7 +575,9 @@ class PipelineNodes:
                 )],
             }
 
-        evidence_artifact = RenderArtifact(video_path=str(result.video_path), duration_sec=result.duration_sec)
+        artifact_id = f"{job_id}-{shot.shot_id}-{attempt}-{uuid.uuid4().hex[:6]}"
+        evidence_artifact = RenderArtifact(artifact_id=artifact_id,
+            video_path=str(result.video_path), duration_sec=result.duration_sec)
         prechecks = precheck_repairs(
             previous_feedback, (state.get("artifacts") or {}).get(shot.shot_id), evidence_artifact,
             (state.get("review_samples") or {}).get(shot.shot_id, []), samples,
@@ -583,11 +585,18 @@ class PipelineNodes:
         )
         if skip_full_review(prechecks):
             reason = "本轮修复任务对应的可读性证据帧没有可见变化，需重构指定对象"
+            withheld = carry_repairs(previous_feedback, CriticFeedback(kind="review_unavailable",
+                source=FeedbackSource.SYSTEM, message=reason + "，本轮未重复审查。",
+                attempt=attempt, artifact_id=artifact_id))
+            withheld = attach_repair_evidence(withheld, prechecks,
+                previous_feedback.artifact_id if previous_feedback else "", artifact_id)
             return {
+                "feedback": {**(state.get("feedback") or {}), shot.shot_id: withheld},
                 "repair_prechecks": {**(state.get("repair_prechecks") or {}), shot.shot_id: prechecks},
                 "render_error": reason, "route_hint": HINT_RETRY,
                 "events": [make_event(state, node=NODE_RENDER, shot=shot, attempt=attempt,
                                       message=reason + "，跳过无效完整审核", status="RETRYING",
+                                      feedback=withheld,
                                       payload_json=json.dumps({"repair_prechecks": prechecks}, ensure_ascii=False))],
             }
 
@@ -633,7 +642,7 @@ class PipelineNodes:
             )
 
         artifact = RenderArtifact(
-            artifact_id=f"{job_id}-{shot.shot_id}-{attempt}-{uuid.uuid4().hex[:6]}",
+            artifact_id=artifact_id,
             shot_id=shot.shot_id,
             video_path=result.video_path,
             duration_sec=result.duration_sec,
@@ -856,7 +865,7 @@ class PipelineNodes:
         feedback_map = dict(state.get("feedback") or {})
         previous_feedback = feedback_map.get(shot.shot_id)
         if outcome.degraded:
-            outcome.feedback = merge_repairs(previous_feedback, outcome.feedback, [], set())
+            outcome.feedback = carry_repairs(previous_feedback, outcome.feedback)
         old_ids = {t.task_id for t in previous_feedback.repair_tasks} if previous_feedback else set()
         samples = (state.get("review_samples") or {}).get(shot.shot_id, [])
         for task in outcome.feedback.repair_tasks:
@@ -880,7 +889,8 @@ class PipelineNodes:
         # 只留最后一次的 feedback 不足以判断趋势 —— 而趋势正是"该不该继续重试"
         # 唯一有信息量的依据。
         history_map = {k: list(v) for k, v in (state.get("score_history") or {}).items()}
-        history_map.setdefault(shot.shot_id, []).append(float(outcome.feedback.score))
+        if not outcome.degraded:
+            history_map.setdefault(shot.shot_id, []).append(float(outcome.feedback.score))
 
         if outcome.degraded:
             hint, status = HINT_HUMAN, "AWAITING_HUMAN"
@@ -996,7 +1006,8 @@ class PipelineNodes:
                 feedback, (state.get("repair_progress") or {}).get(shot.shot_id, {}), attempt, max_attempts)
             progress_map = {**(state.get("repair_progress") or {}), shot.shot_id: progress}
             if exhausted or attempt >= max_attempts:
-                reason = "策略升级后问题仍未解决" if exhausted else f"已尝试 {attempt} 次仍未通过"
+                reason = "连续两轮修复没有可验证改善" if exhausted else f"已尝试 {attempt} 次仍未通过"
+                feedback = feedback.model_copy(update={"handoff_reason": reason + "，请核对原任务与对照帧。"})
                 return {
                     "repair_progress": progress_map, "route_hint": HINT_HUMAN,
                     "events": [make_event(state, node=NODE_REVISE, shot=shot, attempt=attempt,

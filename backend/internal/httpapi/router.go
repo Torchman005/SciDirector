@@ -98,6 +98,7 @@ func NewRouter(s *Server, deps Deps) *gin.Engine {
 			jobs.GET("/artifact", s.HandleGetArtifact)
 			jobs.GET("/shots/:shotID/artifact", s.HandleShotMedia)
 			jobs.GET("/shots/:shotID/frames/:frameIndex", s.HandleShotMedia)
+			jobs.GET("/shots/:shotID/reviews/:reviewIndex/tasks/:taskIndex/evidence/:pairIndex/:side", s.HandleRepairEvidence)
 			// 成本单独成端点：审计视角，见 HandleGetJobCost 的说明。
 			jobs.GET("/cost", s.HandleGetJobCost)
 			// 状态对账：默认只读，?repair=true 才改状态（见 HandleReconcileJob）。
@@ -274,13 +275,13 @@ func (s *Server) applyHumanFeedback(ctx context.Context, jobID, tenant, shotID, 
 		shot.Status = next
 		// 人工打回同样消耗一次尝试额度：这是防止「无限返工」的成本闸门。
 		shot.Attempt++
-		shot.Feedbacks = append(shot.Feedbacks, domain.Feedback{
-			Passed:      false,
-			Source:      domain.FeedbackHuman,
-			Attempt:     shot.Attempt,
-			Issues:      []string{comment},
-			Suggestions: []string{comment},
-			CreatedAt:   time.Now().UTC(),
+		shot.RecordFeedback(domain.Feedback{
+			Passed:    false,
+			Source:    domain.FeedbackHuman,
+			Kind:      domain.FeedbackRepairRequest,
+			Attempt:   shot.Attempt,
+			Message:   comment,
+			CreatedAt: time.Now().UTC(),
 		})
 		shot.UpdatedAt = time.Now().UTC()
 		j.Status = domain.JobRendering

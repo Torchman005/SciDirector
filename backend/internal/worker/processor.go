@@ -304,10 +304,22 @@ func (p *Processor) applyPipelineEvent(ctx context.Context, jobID string, ev *pb
 			shot.Artifact = art
 		}
 		if fb := ev.GetFeedback(); fb != nil {
-			shot.Feedbacks = append(shot.Feedbacks, pbconv.FeedbackFromPB(fb))
+			shot.RecordFeedback(pbconv.FeedbackFromPB(fb))
+			if fb.GetKind() == domain.FeedbackReviewUnavailable {
+				shot.Error = "本次未能完成审查：" + fb.GetMessage()
+			}
+			if fb.GetPassed() && !shot.Feedbacks[len(shot.Feedbacks)-1].Passed {
+				shot.Status = domain.StatusAwaitingHuman
+				shot.Error = "仍有未关闭的修复任务，请核对原验收条件"
+				domainEvent.Status, domainEvent.Error = shot.Status, shot.Error
+			}
 		}
 		if e := ev.GetError(); e != "" {
 			shot.Error = e
+			if ev.GetFeedback() == nil && (ev.GetNode() == "code" || ev.GetNode() == "render") {
+				shot.RecordFeedback(domain.Feedback{Kind: domain.FeedbackSystemError, Source: domain.FeedbackSystem,
+					Attempt: int(ev.GetAttempt()), Message: e, CreatedAt: time.Now().UTC()})
+			}
 		}
 		if shot.Status == domain.StatusApproved {
 			if shot.Artifact == nil || shot.Artifact.VideoPath == "" {
@@ -432,6 +444,7 @@ func syncShotsFromPayload(job *domain.Job, payloadJSON string) error {
 			shot.Attempt = old.Attempt
 			shot.Artifact = old.Artifact
 			shot.Feedbacks = old.Feedbacks
+			shot.RepairTasks = old.RepairTasks
 			shot.Error = old.Error
 		}
 		shots = append(shots, shot)
@@ -590,12 +603,7 @@ func (p *Processor) HandleRenderShot(ctx context.Context, task RenderShotTask) e
 	}
 	req.PreviousError = shot.Error
 	req.PreviousArtifact = pbconv.ArtifactToPB(shot.Artifact)
-	for i := len(shot.Feedbacks) - 1; i >= 0; i-- {
-		if shot.Feedbacks[i].Source != domain.FeedbackHuman {
-			req.PreviousFeedback = pbconv.FeedbackToPB(&shot.Feedbacks[i])
-			break
-		}
-	}
+	req.PreviousFeedback = pbconv.FeedbackToPB(shot.RepairFeedback())
 	if partial {
 		req.RangeStartSec = task.Payload.PatchStartSec
 		req.RangeEndSec = task.Payload.PatchEndSec
@@ -681,13 +689,19 @@ func (p *Processor) HandleRenderShot(ctx context.Context, task RenderShotTask) e
 			s.Artifact = art
 		}
 		if fb := resp.GetFeedback(); fb != nil {
-			s.Feedbacks = append(s.Feedbacks, pbconv.FeedbackFromPB(fb))
-			if fb.GetPassed() {
+			s.RecordFeedback(pbconv.FeedbackFromPB(fb))
+			actual := s.Feedbacks[len(s.Feedbacks)-1]
+			if actual.Passed {
 				s.Status = domain.StatusApproved
 			} else {
 				// 重做后仍未通过自动审查 -> 交给人做最终判断，而不是再自动烧一轮。
 				s.Status = domain.StatusAwaitingHuman
 				s.Error = "重做后仍未通过自动审查，请人工确认"
+				if actual.Kind == domain.FeedbackReviewUnavailable {
+					s.Error = "本次未能完成审查：" + actual.Message
+				} else if actual.HandoffReason != "" {
+					s.Error = actual.HandoffReason
+				}
 			}
 		} else if resp.GetSuccess() {
 			s.Status = domain.StatusApproved
@@ -756,6 +770,12 @@ func (p *Processor) parkFailedRevision(ctx context.Context, jobID, shotID string
 		}
 		s.Status = domain.StatusAwaitingHuman
 		s.Error = cause.Error()
+		artifactID := ""
+		if s.Artifact != nil {
+			artifactID = s.Artifact.ArtifactID
+		}
+		s.RecordFeedback(domain.Feedback{Kind: domain.FeedbackSystemError, Source: domain.FeedbackSystem,
+			Attempt: attempt, Message: cause.Error(), ArtifactID: artifactID, CreatedAt: time.Now().UTC()})
 		s.UpdatedAt = time.Now().UTC()
 		if j.Stat().InProgress == 0 {
 			j.Status = domain.JobPartial

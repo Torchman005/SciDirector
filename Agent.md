@@ -5,6 +5,10 @@
 >
 > 版本：v0.6.3 · 阶段：阶段五（生产加固）· 最后更新：见文末「迭代日志」
 
+2026-10-20 审核账本：CriticFeedback.kind 区分 content_review / science_review / repair_request / human_review / review_unavailable / system_error，message 记录操作或故障，artifact_id 标明产物，handoff_reason 说明停机原因。REST/WS 修复请求不再把默认意见写成内容缺陷；审核台只有完整内容审查展示总分和四维，科学核对只展示逻辑分，其他记录不展示评分或“未通过”。Go Shot.repair_tasks 独立保存当前账本，旧任务从历史快照兼容重建；操作、渲染错误和审片中断不得改写原定位、证据、验收条件及已验证状态。下次修复使用最近内容/科学结论加当前账本，不让通用故障覆盖具体任务；遗漏未关闭任务的高分结果不能自动批准。
+
+修复任务的 evidence_pairs 由可信抽帧器保存时间、前后帧路径与产物编号，模型输出中的路径一律清空。租户校验后的 reviews/:reviewIndex/tasks/:taskIndex/evidence/:pairIndex/:side 只按服务端快照的索引读取；清理保留历史对照帧，缺文件显示证据不可用。VLM/科学核对降级保留原任务状态及已有对照，不把故障零值计入评分趋势。首见任务作为基线；首次修复无改善时可调整一次策略，连续两次修复无任务级改善即转人工，首次 partial 可计进展，重复 partial 不延长预算。单镜修订同样有两轮无进展出口；总预算与科学/产物门禁保持原上限。本阶段未实现旁白联动修订或修改 TTS。
+
 2026-10-13 胶片剪辑视觉样片：新增 demos/film-editing.html 作为独立、离线、10 秒手工质量标尺，以连续胶片、两次剪切和三段错层展开取代图标+箭头流程；绝对时间 __seek 与预览播放分离。它不接入 SceneSpec 自动生产，不使用参考片画面或生图素材；设计及能力缺口记录在 docs/FILM_EDITING_MOTION_STUDY.md，浏览器视觉验收仍待实际观看反馈。
 
 2026-10-13 运动期重叠门禁：结构化镜头的浏览器预检先保留关键帧与阅读时刻检查，再按实际成片 FPS 扫描动态元素的候选相交时刻，并用原有 DOM 文字、图片 alpha 与关系线规则复核和回传秒数/元素 id；解决两次稀疏采样之间短暂相撞漏检。显式 overlap_group、有透明留白的图片和旧自由 HTML 仍按原契约处理；不自动挪动对象改变科学表达。
@@ -327,7 +331,7 @@ Manim 路由保留。全局 `code` 或 `shot.meta.generation_mode=code` 为复�
 每次渲染写入独立 `attempt_NN` 目录，checkpoint 按镜头保存实际抽帧时间和修复预验证结果。预验证对齐旧时间点并按可选区域比较；缺失证据为 unverified。仅定位到相同完整帧的可读性问题全部没有变化时跳过完整审核；节奏、逻辑、局部区域变化仍需语义复核，像素变化不能代表修复通过。
 编码智能体在调用 VLM 前必须收到真实画布尺寸、字号下限、安全边距、旁白节拍和播放时长。Few-shot 只能跨同一渲染引擎召回；不相关范例不进入提示词。HTML 首稿可在完整视频前用沙盒浏览器检查 5 个关键时刻的实际文字字号、裁切、JavaScript 异常以及重复/倒序 seek 的确定性；预检失败时只在生成内修复一次，预检不可用要明确记录并继续走完整审查。Manim 首稿至少通过 AST 结构检查（固定场景类、construct、实际显示对象）。
 复审在同一次 VLM 调用中提供当前完整帧与选中问题的前后证据对。内部 `repair_results` 必须引用该问题对应的当前证据图，才允许更新 status；原 task_id、acceptance 和定位不随模型重写。完整 repair_tasks 清单保留已解决及未选中项，未解决的 blocking/major 项禁止放行；VLM 故障也不丢失清单。
-结构化任务按编号记录失败次数与升级轮次（每 attempt 只计一次，checkpoint/并行镜头隔离）。连续两轮无改善且预算有余时升级一次分类策略；升级后仍未解决则提前转人工，保持原重试上限。首次 partial 结论可重置连续失败，重复 partial 不无限续命。事件 payload_json 的 repair_metrics 提供关闭/未关闭编号和进展；repair_handoff 附未解决清单、对比证据和分类建议。旧无清单路径保留原分数熔断。
+结构化任务按编号记录失败次数与升级轮次（每 attempt 只计一次，checkpoint/并行镜头隔离）。首见任务为基线；首次修复无改善且预算有余时升级一次分类策略，连续两次修复无改善即转人工，保持原重试上限。首次 partial 结论可重置连续失败，重复 partial 不无限续命。事件 payload_json 的 repair_metrics 提供关闭/未关闭编号和进展；repair_handoff 附未解决清单、对比证据和分类建议。旧无清单路径保留原分数熔断。
 ```
 plan → for each shot:
          coder → render → critic

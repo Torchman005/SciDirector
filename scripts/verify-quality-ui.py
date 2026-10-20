@@ -29,7 +29,7 @@ artifact = dict(artifact_id="a2",shot_id="s1",video_path="/server/shot.mp4",atte
 shot = dict(shot_id="s1",index=1,tag="ILLUSTRATION",engine="d3",duration_sec=8,
             narration="反射角与入射角相等。角度始终从法线量起。",visual_brief="展示反射定律与角度标注。",
             status="AWAITING_HUMAN",attempt=2,artifact=artifact,
-            feedbacks=[{**feedback,"attempt":1,"score":.58,"repair_tasks":[{**task,"status":"open"}]},feedback])
+            feedbacks=[{**feedback,"attempt":1,"score":.58,"repair_tasks":[{**task,"status":"open","resolution_evidence":""}]},feedback])
 job = dict(job_id="ui-quality",status="RENDERING",raw_script=shot["narration"],target_duration_sec=8,
            shots=[shot],created_at="2026-10-10T10:00:00Z")
 detail = dict(job=job,progress=.5,stat=dict(total=1,approved=0,awaiting_human=1,failed=0,in_progress=0))
@@ -78,7 +78,7 @@ def main():
                 route.fulfill(json={"ok":True,"data":{"job_id":"ui-quality","target_duration_sec":8}}); return
             if path.endswith("/estimate-duration"):
                 route.fulfill(json={"ok":True,"data":{"duration_sec":8,"basis":"fixture"}}); return
-            if "/frames/" in path:
+            if "/frames/" in path or "/evidence/" in path:
                 if state["media_fail"]: route.fulfill(status=404); return
                 route.fulfill(path=str(ROOT/".data/anime-demo/preview.png"),content_type="image/png"); return
             if path.endswith("/artifact"):
@@ -145,7 +145,7 @@ def main():
             raise
         expect(page.get_by_text("镜头预览 · 第 2 版",exact=True)).to_be_visible()
         expect(page.get_by_text("已验证解决 1/1",exact=True)).to_be_visible()
-        expect(page.get_by_text("较上次评分 +0.14",exact=True)).to_be_visible()
+        expect(page.get_by_text("最近内容审查较上次评分 +0.14",exact=True)).to_be_visible()
         assert "job=ui-quality" in page.url
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
         page.screenshot(path=str(OUT/"review-mobile.png"),full_page=True)
@@ -156,6 +156,38 @@ def main():
         preview.evaluate("v => { v.currentTime = 2; }")
         page.wait_for_function("document.querySelector('video').currentTime >= 1.9")
         page.screenshot(path=str(OUT/"review-desktop.png"),full_page=True)
+        task["evidence_pairs"] = [dict(ts=1.2,before="server-before.png",after="server-after.png",
+            before_artifact_id="a1",after_artifact_id="a2")]
+        shot["repair_tasks"] = [task]
+        shot["feedbacks"].extend([
+            dict(passed=False,score=0,logic_score=0,readability_score=0,pacing_score=0,aesthetics_score=0,
+                 source="HUMAN",kind="repair_request",attempt=3,message="已请求自动诊断修复"),
+            dict(passed=False,score=0,logic_score=0,readability_score=0,pacing_score=0,aesthetics_score=0,
+                 source="SYSTEM",kind="review_unavailable",attempt=3,message="VLM 暂不可用，保留原任务。",repair_tasks=[task]),
+            dict(passed=False,score=.2,logic_score=.2,readability_score=0,pacing_score=0,aesthetics_score=0,
+                 source="SYSTEM",kind="science_review",attempt=4,issues=["旁白科学定义需核对"],suggestions=["核对原定义"]),
+        ])
+        page.reload()
+        for label in ["已发起修复","未能审查"]:
+            item = page.locator(".feedback-item").filter(has_text=label)
+            expect(item).to_have_count(1)
+            assert "0.00" not in item.inner_text() and "未通过" not in item.inner_text()
+        science = page.locator(".feedback-item").filter(has_text="科学核对")
+        expect(science).to_contain_text("逻辑 0.20")
+        assert "可读 0.00" not in science.inner_text() and "渲染错误" not in science.inner_text()
+        comparison = page.locator(".repair-comparison").first
+        comparison.scroll_into_view_if_needed()
+        page.wait_for_function("Array.from(document.querySelectorAll('.repair-comparison img')).every(i => i.complete && i.naturalWidth > 0)")
+        page.screenshot(path=str(OUT/"ledger-desktop.png"),full_page=True)
+        page.screenshot(path=str(OUT/"ledger-desktop-section.png"))
+        page.set_viewport_size({"width":390,"height":844})
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
+        comparison.scroll_into_view_if_needed()
+        comparison.locator("a").first.focus()
+        expect(comparison.locator("a").first).to_be_focused()
+        page.screenshot(path=str(OUT/"ledger-mobile.png"),full_page=True)
+        page.screenshot(path=str(OUT/"ledger-mobile-section.png"))
+        page.set_viewport_size({"width":1440,"height":1000})
         page.get_by_role("button",name="补充意见并修复",exact=True).click()
         expect(page.get_by_role("dialog")).to_be_visible()
         page.get_by_label("补充修复意见（可选）").fill("看不清楚")
@@ -206,6 +238,8 @@ def main():
         "portrait import and four previews","honest missing mouth feedback",
         "empty-comment automatic repair", "missing video repair without approval", "repair failure preserves input", "repair loading state",
         "failed job still permits rework and approval", "failed shot without video permits rework only",
+        "repair requests and outages have no content scores", "science checks show only logic scores",
+        "persisted before/after comparison images", "390px comparison reflow and keyboard links",
         "reduced motion","no browser exceptions"],"api":"isolated fixtures; Go tests verify real HTTP behavior"}
     (OUT/"result.json").write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding="utf-8")
     print(json.dumps(result,ensure_ascii=False))

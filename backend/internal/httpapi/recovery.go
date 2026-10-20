@@ -43,6 +43,8 @@ func (s *Server) parkUnqueuedRepair(ctx context.Context, jobID, tenant, shotID s
 		}
 		shot.Status = domain.StatusAwaitingHuman
 		shot.Error = "重做任务入队失败：" + cause.Error()
+		shot.RecordFeedback(domain.Feedback{Kind: domain.FeedbackSystemError, Source: domain.FeedbackSystem,
+			Attempt: attempt, Message: shot.Error, CreatedAt: time.Now().UTC()})
 		shot.UpdatedAt = time.Now().UTC()
 		if j.Stat().InProgress == 0 {
 			j.Status = domain.JobPartial

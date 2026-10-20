@@ -830,6 +830,14 @@ func sameCompositionInputs(before, after *domain.Job) bool {
 func protectCurrentArtifacts(plan []string, job *domain.Job) []string {
 	protected := map[string]bool{}
 	for _, shot := range job.Shots {
+		for _, feedback := range shot.Feedbacks {
+			for _, task := range feedback.RepairTasks {
+				for _, pair := range task.EvidencePairs {
+					protected[filepath.Clean(pair.Before)] = true
+					protected[filepath.Clean(pair.After)] = true
+				}
+			}
+		}
 		if a := shot.Artifact; a != nil {
 			for _, path := range append([]string{a.VideoPath, a.AudioPath, a.AudioPath + ".marks.json"}, a.FrameSamples...) {
 				protected[filepath.Clean(path)] = true

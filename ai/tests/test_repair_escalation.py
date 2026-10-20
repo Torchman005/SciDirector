@@ -49,10 +49,11 @@ def test_partial_progress_is_bounded_and_does_not_mutate_state() -> None:
     feedback.repair_tasks[0].status = "partial"
     second, escalations, _ = update_repair_progress(feedback, first, 2, 6)
     assert second["r1-01"]["failures"] == 0 and not escalations
-    third, _, _ = update_repair_progress(feedback, second, 3, 6)
-    fourth, escalations, _ = update_repair_progress(feedback, third, 4, 6)
-    assert escalations and fourth["r1-01"]["escalated_at"] == 5
-    assert original == {} and first["r1-01"]["failures"] == 1
+    third, escalations, _ = update_repair_progress(feedback, second, 3, 6)
+    assert escalations and third["r1-01"]["escalated_at"] == 4
+    fourth, escalations, exhausted = update_repair_progress(feedback, third, 4, 6)
+    assert not escalations and exhausted and fourth["r1-01"]["failures"] == 2
+    assert original == {} and first["r1-01"]["failures"] == 0
 
 
 def test_budget_never_extends_for_escalation() -> None:

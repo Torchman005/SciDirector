@@ -159,3 +159,17 @@ textarea { resize: none; }
   font-style: normal;
   font-size: 11px;
 }
+.repair-comparison {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 8px;
+}
+.repair-comparison a { min-width: 0; }
+.repair-comparison img { width: 100%; aspect-ratio: 16 / 9; object-fit: contain; display: block; }
+.repair-comparison span { display: block; overflow-wrap: anywhere; }
+.repair-comparison .evidence-version { font-size: 12px; }
+.feedback-item { overflow-wrap: anywhere; }
+@media (max-width: 600px) {
+  .repair-comparison { grid-template-columns: minmax(0, 1fr); }
+}

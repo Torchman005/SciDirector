@@ -23,7 +23,8 @@ func TestAutomaticRepairNeedsNoTechnicalCommentAndRejectsDuplicate(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Shots[0].Attempt != 2 || got.Shots[0].Feedbacks[0].Issues[0] != automaticRepairComment {
+	fb := got.Shots[0].Feedbacks[0]
+	if got.Shots[0].Attempt != 2 || fb.Message != automaticRepairComment || fb.Kind != domain.FeedbackRepairRequest || len(fb.Issues) != 0 || len(fb.Suggestions) != 0 {
 		t.Fatalf("unexpected recovery state: %+v", got.Shots[0])
 	}
 }

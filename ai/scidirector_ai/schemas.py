@@ -172,6 +172,16 @@ class ShotSpec(BaseModel):
         return f"{self.index:03d}"
 
 
+class RepairEvidence(BaseModel):
+    """Trusted frame extractor output, never paths supplied by a model."""
+
+    ts: float = Field(ge=0.0)
+    before: str
+    after: str
+    before_artifact_id: str = ""
+    after_artifact_id: str = ""
+
+
 class RepairTask(BaseModel):
     """问题定位与验收目标；task_id 由程序分配，复审不得改写验收条件。"""
 
@@ -188,6 +198,7 @@ class RepairTask(BaseModel):
     region: list[float] = Field(default_factory=list)
     status: Literal["open", "partial", "resolved", "unverified"] = "open"
     resolution_evidence: str = ""
+    evidence_pairs: list[RepairEvidence] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _validate_location(self) -> RepairTask:
@@ -223,6 +234,11 @@ class CriticFeedback(BaseModel):
     raw_response: str = ""
     model: str = ""
     source: FeedbackSource = FeedbackSource.VLM
+    kind: Literal["", "content_review", "science_review", "repair_request", "human_review",
+                  "review_unavailable", "system_error"] = ""
+    message: str = ""
+    artifact_id: str = ""
+    handoff_reason: str = ""
     attempt: int = 0
     # 分维度得分：便于统计「问题主要集中在可读性还是节奏」。
     logic_score: float = Field(default=0.0, ge=0.0, le=1.0)
@@ -238,7 +254,9 @@ class CriticFeedback(BaseModel):
         无法转换为代码修改，回灌给编码智能体只会得到同样的画面，
         白白烧掉一次渲染 + 一次 VLM 调用。因此在数据层就拦住。
         """
-        if not self.passed and not self.suggestions:
+        if not self.passed and not self.suggestions and self.kind not in {
+            "repair_request", "review_unavailable", "system_error",
+        }:
             raise ValueError(
                 "审查未通过时必须给出至少一条可执行的修改建议（suggestions 不能为空）"
             )

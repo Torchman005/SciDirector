@@ -147,8 +147,22 @@ class RenderArtifact(_message.Message):
     render_cost_sec: float
     def __init__(self, artifact_id: _Optional[str] = ..., shot_id: _Optional[str] = ..., video_path: _Optional[str] = ..., audio_path: _Optional[str] = ..., subtitle_path: _Optional[str] = ..., duration_sec: _Optional[float] = ..., width: _Optional[int] = ..., height: _Optional[int] = ..., fps: _Optional[int] = ..., attempt: _Optional[int] = ..., engine: _Optional[str] = ..., frame_samples: _Optional[_Iterable[str]] = ..., rendered_at_unix_ms: _Optional[int] = ..., render_cost_sec: _Optional[float] = ...) -> None: ...
 
+class RepairEvidence(_message.Message):
+    __slots__ = ("ts", "before", "after", "before_artifact_id", "after_artifact_id")
+    TS_FIELD_NUMBER: _ClassVar[int]
+    BEFORE_FIELD_NUMBER: _ClassVar[int]
+    AFTER_FIELD_NUMBER: _ClassVar[int]
+    BEFORE_ARTIFACT_ID_FIELD_NUMBER: _ClassVar[int]
+    AFTER_ARTIFACT_ID_FIELD_NUMBER: _ClassVar[int]
+    ts: float
+    before: str
+    after: str
+    before_artifact_id: str
+    after_artifact_id: str
+    def __init__(self, ts: _Optional[float] = ..., before: _Optional[str] = ..., after: _Optional[str] = ..., before_artifact_id: _Optional[str] = ..., after_artifact_id: _Optional[str] = ...) -> None: ...
+
 class RepairTask(_message.Message):
-    __slots__ = ("task_id", "category", "severity", "start_sec", "end_sec", "frame_indices", "target", "evidence", "instruction", "acceptance", "region", "status", "resolution_evidence")
+    __slots__ = ("task_id", "category", "severity", "start_sec", "end_sec", "frame_indices", "target", "evidence", "instruction", "acceptance", "region", "status", "resolution_evidence", "evidence_pairs")
     TASK_ID_FIELD_NUMBER: _ClassVar[int]
     CATEGORY_FIELD_NUMBER: _ClassVar[int]
     SEVERITY_FIELD_NUMBER: _ClassVar[int]
@@ -162,6 +176,7 @@ class RepairTask(_message.Message):
     REGION_FIELD_NUMBER: _ClassVar[int]
     STATUS_FIELD_NUMBER: _ClassVar[int]
     RESOLUTION_EVIDENCE_FIELD_NUMBER: _ClassVar[int]
+    EVIDENCE_PAIRS_FIELD_NUMBER: _ClassVar[int]
     task_id: str
     category: str
     severity: str
@@ -175,10 +190,11 @@ class RepairTask(_message.Message):
     region: _containers.RepeatedScalarFieldContainer[float]
     status: str
     resolution_evidence: str
-    def __init__(self, task_id: _Optional[str] = ..., category: _Optional[str] = ..., severity: _Optional[str] = ..., start_sec: _Optional[float] = ..., end_sec: _Optional[float] = ..., frame_indices: _Optional[_Iterable[int]] = ..., target: _Optional[str] = ..., evidence: _Optional[str] = ..., instruction: _Optional[str] = ..., acceptance: _Optional[str] = ..., region: _Optional[_Iterable[float]] = ..., status: _Optional[str] = ..., resolution_evidence: _Optional[str] = ...) -> None: ...
+    evidence_pairs: _containers.RepeatedCompositeFieldContainer[RepairEvidence]
+    def __init__(self, task_id: _Optional[str] = ..., category: _Optional[str] = ..., severity: _Optional[str] = ..., start_sec: _Optional[float] = ..., end_sec: _Optional[float] = ..., frame_indices: _Optional[_Iterable[int]] = ..., target: _Optional[str] = ..., evidence: _Optional[str] = ..., instruction: _Optional[str] = ..., acceptance: _Optional[str] = ..., region: _Optional[_Iterable[float]] = ..., status: _Optional[str] = ..., resolution_evidence: _Optional[str] = ..., evidence_pairs: _Optional[_Iterable[_Union[RepairEvidence, _Mapping]]] = ...) -> None: ...
 
 class CriticFeedback(_message.Message):
-    __slots__ = ("passed", "score", "issues", "suggestions", "raw_response", "model", "source", "attempt", "logic_score", "readability_score", "pacing_score", "aesthetics_score", "created_at_unix_ms", "repair_tasks", "fatal_issues")
+    __slots__ = ("passed", "score", "issues", "suggestions", "raw_response", "model", "source", "attempt", "logic_score", "readability_score", "pacing_score", "aesthetics_score", "created_at_unix_ms", "repair_tasks", "fatal_issues", "kind", "message", "artifact_id", "handoff_reason")
     PASSED_FIELD_NUMBER: _ClassVar[int]
     SCORE_FIELD_NUMBER: _ClassVar[int]
     ISSUES_FIELD_NUMBER: _ClassVar[int]
@@ -194,6 +210,10 @@ class CriticFeedback(_message.Message):
     CREATED_AT_UNIX_MS_FIELD_NUMBER: _ClassVar[int]
     REPAIR_TASKS_FIELD_NUMBER: _ClassVar[int]
     FATAL_ISSUES_FIELD_NUMBER: _ClassVar[int]
+    KIND_FIELD_NUMBER: _ClassVar[int]
+    MESSAGE_FIELD_NUMBER: _ClassVar[int]
+    ARTIFACT_ID_FIELD_NUMBER: _ClassVar[int]
+    HANDOFF_REASON_FIELD_NUMBER: _ClassVar[int]
     passed: bool
     score: float
     issues: _containers.RepeatedScalarFieldContainer[str]
@@ -209,7 +229,11 @@ class CriticFeedback(_message.Message):
     created_at_unix_ms: int
     repair_tasks: _containers.RepeatedCompositeFieldContainer[RepairTask]
     fatal_issues: _containers.RepeatedScalarFieldContainer[str]
-    def __init__(self, passed: bool = ..., score: _Optional[float] = ..., issues: _Optional[_Iterable[str]] = ..., suggestions: _Optional[_Iterable[str]] = ..., raw_response: _Optional[str] = ..., model: _Optional[str] = ..., source: _Optional[_Union[FeedbackSource, str]] = ..., attempt: _Optional[int] = ..., logic_score: _Optional[float] = ..., readability_score: _Optional[float] = ..., pacing_score: _Optional[float] = ..., aesthetics_score: _Optional[float] = ..., created_at_unix_ms: _Optional[int] = ..., repair_tasks: _Optional[_Iterable[_Union[RepairTask, _Mapping]]] = ..., fatal_issues: _Optional[_Iterable[str]] = ...) -> None: ...
+    kind: str
+    message: str
+    artifact_id: str
+    handoff_reason: str
+    def __init__(self, passed: bool = ..., score: _Optional[float] = ..., issues: _Optional[_Iterable[str]] = ..., suggestions: _Optional[_Iterable[str]] = ..., raw_response: _Optional[str] = ..., model: _Optional[str] = ..., source: _Optional[_Union[FeedbackSource, str]] = ..., attempt: _Optional[int] = ..., logic_score: _Optional[float] = ..., readability_score: _Optional[float] = ..., pacing_score: _Optional[float] = ..., aesthetics_score: _Optional[float] = ..., created_at_unix_ms: _Optional[int] = ..., repair_tasks: _Optional[_Iterable[_Union[RepairTask, _Mapping]]] = ..., fatal_issues: _Optional[_Iterable[str]] = ..., kind: _Optional[str] = ..., message: _Optional[str] = ..., artifact_id: _Optional[str] = ..., handoff_reason: _Optional[str] = ...) -> None: ...
 
 class PipelineEvent(_message.Message):
     __slots__ = ("job_id", "shot_id", "node", "status", "message", "attempt", "shot_index", "total_shots", "progress", "artifact", "feedback", "error", "ts_unix_ms", "payload_json")

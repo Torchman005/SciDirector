@@ -156,6 +156,9 @@ export const api = {
   shotMediaUrl: (jobId: string, shotId: string, version: string, frame?: number) =>
     `/api/v1/jobs/${encodeURIComponent(jobId)}/shots/${encodeURIComponent(shotId)}/${frame === undefined ? 'artifact' : `frames/${frame}`}?version=${encodeURIComponent(version)}`,
 
+  repairEvidenceUrl: (jobId: string, shotId: string, review: number, task: number, pair: number, side: 'before' | 'after') =>
+    `/api/v1/jobs/${encodeURIComponent(jobId)}/shots/${encodeURIComponent(shotId)}/reviews/${review}/tasks/${task}/evidence/${pair}/${side}`,
+
   /** 上传素材的试听地址（浏览器直接播，支持 Range）。 */
   assetUrl: (assetId: string) => `/api/v1/assets/${encodeURIComponent(assetId)}`,
 

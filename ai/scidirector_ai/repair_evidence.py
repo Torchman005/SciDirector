@@ -10,7 +10,7 @@ from PIL import Image
 from .media import FrameSample, MediaToolError, extract_frames_with_times
 from .review_tasks import active_repairs
 from .sandbox.runner import SandboxRunner
-from .schemas import CriticFeedback, RenderArtifact, RepairTask
+from .schemas import CriticFeedback, RenderArtifact, RepairEvidence, RepairTask
 
 # Small local evidence images bound storage and decode cost; VLM retains full current frames.
 EVIDENCE_WIDTH = 320
@@ -89,7 +89,9 @@ def precheck_repairs(
         ts = target_times[task.task_id]
         if not ts or any(t not in before or t not in after for t in ts):
             continue
-        row["pairs"] = [{"ts": t, "before": before[t], "after": after[t]} for t in ts]
+        row["pairs"] = [{"ts": t, "before": before[t], "after": after[t],
+                         "before_artifact_id": previous.artifact_id,
+                         "after_artifact_id": current.artifact_id} for t in ts]
         try:
             changed = any(_pixels(before[t], task.region) != _pixels(after[t], task.region) for t in ts)
         except (OSError, ValueError):
@@ -105,3 +107,20 @@ def precheck_repairs(
 
 def skip_full_review(rows: list[dict[str, Any]]) -> bool:
     return bool(rows) and all(row.get("can_skip", False) for row in rows)
+
+
+def attach_repair_evidence(
+    feedback: CriticFeedback, rows: list[dict[str, Any]],
+    before_artifact_id: str, after_artifact_id: str,
+) -> CriticFeedback:
+    """Persist trusted pairs even when semantic review is unavailable."""
+    pairs = {row["task_id"]: [RepairEvidence(
+        ts=p["ts"], before=p["before"], after=p["after"],
+        before_artifact_id=p.get("before_artifact_id", before_artifact_id),
+        after_artifact_id=p.get("after_artifact_id", after_artifact_id),
+    ) for p in row.get("pairs", [])] for row in rows}
+    return feedback.model_copy(update={"repair_tasks": [
+        task.model_copy(update={"evidence_pairs": pairs[task.task_id]})
+        if pairs.get(task.task_id) else task.model_copy(deep=True)
+        for task in feedback.repair_tasks
+    ]})

@@ -258,6 +258,10 @@ func FeedbackFromPB(in *pb.CriticFeedback) domain.Feedback {
 		RawResponse:      in.GetRawResponse(),
 		Model:            in.GetModel(),
 		Source:           src,
+		Kind:             in.GetKind(),
+		Message:          in.GetMessage(),
+		ArtifactID:       in.GetArtifactId(),
+		HandoffReason:    in.GetHandoffReason(),
 		Attempt:          int(in.GetAttempt()),
 		LogicScore:       in.GetLogicScore(),
 		ReadabilityScore: in.GetReadabilityScore(),
@@ -286,6 +290,10 @@ func FeedbackToPB(in *domain.Feedback) *pb.CriticFeedback {
 		RawResponse:      in.RawResponse,
 		Model:            in.Model,
 		Source:           src,
+		Kind:             in.Kind,
+		Message:          in.Message,
+		ArtifactId:       in.ArtifactID,
+		HandoffReason:    in.HandoffReason,
 		Attempt:          int32(in.Attempt),
 		LogicScore:       in.LogicScore,
 		ReadabilityScore: in.ReadabilityScore,
@@ -301,12 +309,20 @@ func repairTasksFromPB(tasks []*pb.RepairTask) []domain.RepairTask {
 		if t == nil {
 			continue
 		}
+		var pairs []domain.RepairEvidence
+		for _, p := range t.EvidencePairs {
+			if p != nil {
+				pairs = append(pairs, domain.RepairEvidence{TS: p.Ts, Before: p.Before, After: p.After,
+					BeforeArtifactID: p.BeforeArtifactId, AfterArtifactID: p.AfterArtifactId})
+			}
+		}
 		result = append(result, domain.RepairTask{
 			TaskID: t.TaskId, Category: t.Category, Severity: t.Severity,
 			StartSec: t.StartSec, EndSec: t.EndSec, FrameIndices: t.FrameIndices,
 			Target: t.Target, Evidence: t.Evidence, Instruction: t.Instruction,
 			Acceptance: t.Acceptance, Region: t.Region, Status: t.Status,
 			ResolutionEvidence: t.ResolutionEvidence,
+			EvidencePairs:      pairs,
 		})
 	}
 	return result
@@ -315,12 +331,18 @@ func repairTasksFromPB(tasks []*pb.RepairTask) []domain.RepairTask {
 func repairTasksToPB(tasks []domain.RepairTask) []*pb.RepairTask {
 	result := make([]*pb.RepairTask, 0, len(tasks))
 	for _, t := range tasks {
+		pairs := make([]*pb.RepairEvidence, 0, len(t.EvidencePairs))
+		for _, p := range t.EvidencePairs {
+			pairs = append(pairs, &pb.RepairEvidence{Ts: p.TS, Before: p.Before, After: p.After,
+				BeforeArtifactId: p.BeforeArtifactID, AfterArtifactId: p.AfterArtifactID})
+		}
 		result = append(result, &pb.RepairTask{
 			TaskId: t.TaskID, Category: t.Category, Severity: t.Severity,
 			StartSec: t.StartSec, EndSec: t.EndSec, FrameIndices: t.FrameIndices,
 			Target: t.Target, Evidence: t.Evidence, Instruction: t.Instruction,
 			Acceptance: t.Acceptance, Region: t.Region, Status: t.Status,
 			ResolutionEvidence: t.ResolutionEvidence,
+			EvidencePairs:      pairs,
 		})
 	}
 	return result

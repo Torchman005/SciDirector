@@ -129,6 +129,15 @@ message RenderArtifact {
   double render_cost_sec = 14;        // 渲染耗时，用于指标
 }
 
+// 修复前后对照。路径只由抽帧器写入，客户端通过租户校验的索引接口读取。
+message RepairEvidence {
+  double ts = 1;
+  string before = 2;
+  string after = 3;
+  string before_artifact_id = 4;
+  string after_artifact_id = 5;
+}
+
 // 可验收的修复任务。时间与帧号均针对当前镜头；帧号从 1 开始。
 message RepairTask {
   string task_id = 1;
@@ -144,6 +153,7 @@ message RepairTask {
   repeated double region = 11;     // 可选：归一化 x/y/width/height
   string status = 12;              // open / partial / resolved / unverified
   string resolution_evidence = 13;
+  repeated RepairEvidence evidence_pairs = 14;
 }
 
 // 审查意见：VLM 与人类共用。
@@ -163,6 +173,11 @@ message CriticFeedback {
   int64 created_at_unix_ms = 13;
   repeated RepairTask repair_tasks = 14;
   repeated string fatal_issues = 15;
+  // 空值兼容历史记录；新记录必须区分内容审查、修复请求和系统故障。
+  string kind = 16; // content_review / science_review / repair_request / human_review / review_unavailable / system_error
+  string message = 17; // 操作或故障说明，不作为内容缺陷
+  string artifact_id = 18; // 本次审查或操作对应的产物版本
+  string handoff_reason = 19; // 有界修复停止的具体原因
 }
 
 // 流水线事件：Python -> Go 的实时事件，Go 转发给 WebSocket 与 Redis 事件流。

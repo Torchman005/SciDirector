@@ -1,6 +1,9 @@
+import { useState } from 'react'
 import { Alert, Space, Tag, Tooltip, Typography } from 'antd'
 
 import type { Feedback, RepairTask } from '../types'
+import { api } from '../api'
+import { isContentReview, reviewKind } from '../review'
 
 const { Text, Paragraph } = Typography
 
@@ -33,23 +36,28 @@ const REPAIR_STATUS: Record<RepairTask['status'], string> = {
 }
 const SEVERITY: Record<RepairTask['severity'], string> = { blocking: '阻断', major: '主要', advisory: '建议' }
 
-const SOURCE: Record<string, { label: string; color: string }> = {
-  VLM: { label: '机器审查', color: 'blue' },
-  HUMAN: { label: '人工打回', color: 'orange' },
-  SYSTEM: { label: '渲染错误', color: 'red' },
+const KINDS: Record<string, { label: string; color: string }> = {
+  content_review: { label: '机器审查', color: 'blue' },
+  science_review: { label: '科学核对', color: 'blue' },
+  human_review: { label: '人工审核', color: 'orange' },
+  repair_request: { label: '已发起修复', color: 'blue' },
+  review_unavailable: { label: '未能审查', color: 'orange' },
+  system_error: { label: '处理失败', color: 'red' },
 }
 
-export function ReviewHistory({ feedbacks }: { feedbacks?: Feedback[] }) {
+export function ReviewHistory({ feedbacks, repairTasks, jobId, shotId }: {
+  feedbacks?: Feedback[]; repairTasks?: RepairTask[]; jobId: string; shotId: string
+}) {
   const list = feedbacks ?? []
   if (list.length === 0) {
     return <Text type="secondary">还没有审查记录（该镜头尚未经过审查）。</Text>
   }
 
   const repeated = detectRepeatedIssue(list)
-  const reviews = list.filter(f => f.source === 'VLM')
+  const reviews = list.filter(isContentReview)
   const latest = reviews[reviews.length - 1]
   const previous = reviews[reviews.length - 2]
-  const tasks = latest?.repair_tasks ?? []
+  const tasks = repairTasks ?? [...list].reverse().find(f => f.repair_tasks?.length)?.repair_tasks ?? []
   const closed = tasks.filter(t => t.status === 'resolved').length
   const blockers = tasks.filter(t => t.severity !== 'advisory' && t.status !== 'resolved').length
   const delta = typeof latest?.score === 'number' && typeof previous?.score === 'number'
@@ -62,14 +70,14 @@ export function ReviewHistory({ feedbacks }: { feedbacks?: Feedback[] }) {
           title="默认通过线为 0.70（部署可配置），逻辑 ≥ 0.70，可读 ≥ 0.60。致命问题和未解决的阻断/主要问题仍会拦截；以服务端最终结论为准。"
         >
           <Text type="secondary" style={{ cursor: 'help' }}>
-            审查记录（共 {list.length} 次）
+            审查与处理记录（共 {list.length} 条）
           </Text>
         </Tooltip>
         {list.length > 1 && <Text type="secondary" style={{ fontSize: 12 }}>最新在上</Text>}
       </Space>
 
-      {latest && <Space wrap>
-        {delta !== null && <Text>较上次评分 {delta >= 0 ? '+' : ''}{delta.toFixed(2)}</Text>}
+      {(latest || tasks.length > 0) && <Space wrap>
+        {delta !== null && <Text>最近内容审查较上次评分 {delta >= 0 ? '+' : ''}{delta.toFixed(2)}</Text>}
         {tasks.length > 0 && <>
           <Tag color="success">已验证解决 {closed}/{tasks.length}</Tag>
           <Tag color={blockers ? 'error' : 'default'}>待解决的阻断/主要问题 {blockers}</Tag>
@@ -90,27 +98,32 @@ export function ReviewHistory({ feedbacks }: { feedbacks?: Feedback[] }) {
       )}
 
       {[...list].reverse().map((fb, i) => (
-        <FeedbackItem key={`${fb.attempt}-${i}`} fb={fb} />
+        <FeedbackItem key={`${fb.attempt}-${i}`} fb={fb} jobId={jobId} shotId={shotId} reviewIndex={list.length - 1 - i} />
       ))}
     </Space>
   )
 }
 
-function FeedbackItem({ fb }: { fb: Feedback }) {
-  const src = SOURCE[fb.source] ?? { label: fb.source || '未知来源', color: 'default' }
-  const dims = DIMENSIONS.filter((d) => typeof fb[d.key] === 'number')
+function FeedbackItem({ fb, jobId, shotId, reviewIndex }: {
+  fb: Feedback; jobId: string; shotId: string; reviewIndex: number
+}) {
+  const kind = reviewKind(fb)
+  const src = KINDS[kind] ?? { label: fb.source || '未知来源', color: 'default' }
+  const assessed = kind === 'content_review' || kind === 'science_review' || kind === 'human_review'
+  const dims = DIMENSIONS.filter((d) => typeof fb[d.key] === 'number'
+    && (kind === 'content_review' || (kind === 'science_review' && d.key === 'logic_score')))
 
   return (
     <div className="feedback-item">
       <Space size={8} wrap>
-        <Tag color={fb.passed ? 'success' : 'error'} bordered={false}>
+        {assessed && <Tag color={fb.passed ? 'success' : 'error'} bordered={false}>
           {fb.passed ? '通过' : '未通过'}
-        </Tag>
-        <Text type="secondary">第 {fb.attempt} 次</Text>
+        </Tag>}
+        <Text type="secondary">第 {fb.attempt} 版</Text>
         <Tag color={src.color} bordered={false}>
           {src.label}
         </Tag>
-        {typeof fb.score === 'number' && fb.source === 'VLM' && (
+        {typeof fb.score === 'number' && isContentReview(fb) && (
           <Text>
             总分{' '}
             <Text strong>
@@ -146,21 +159,25 @@ function FeedbackItem({ fb }: { fb: Feedback }) {
         </div>
       )}
 
-      {(fb.issues?.length ?? 0) > 0 && (
+      {!assessed && <Paragraph style={{ margin: '6px 0 0', fontSize: 13 }}>
+        {fb.message || fb.issues?.join('；') || src.label}
+      </Paragraph>}
+      {assessed && (fb.issues?.length ?? 0) > 0 && (
         <Paragraph style={{ margin: '6px 0 0', fontSize: 13 }}>
           <Text type="danger">问题：</Text>
           {fb.issues!.join('；')}
         </Paragraph>
       )}
-      {(fb.suggestions?.length ?? 0) > 0 && (
+      {assessed && (fb.suggestions?.length ?? 0) > 0 && (
         <Paragraph style={{ margin: '2px 0 0', fontSize: 13 }}>
           <Text type="secondary">建议：</Text>
           {fb.suggestions!.join('；')}
         </Paragraph>
       )}
       {!!fb.fatal_issues?.length && <Alert type="error" showIcon message="致命问题" description={fb.fatal_issues.join('；')} />}
+      {fb.handoff_reason && <Alert type="warning" showIcon message={fb.handoff_reason} />}
       {!!fb.repair_tasks?.length && <ul className="repair-ledger" aria-label={`第 ${fb.attempt} 次修复任务`}>
-        {fb.repair_tasks.map(task => <li key={task.task_id}>
+        {fb.repair_tasks.map((task, taskIndex) => <li key={task.task_id}>
           <Space wrap size={6}>
             <Text strong>{task.target || task.task_id}</Text>
             <Tag color={task.status === 'resolved' ? 'success' : task.severity === 'advisory' ? 'default' : 'warning'}>
@@ -172,10 +189,34 @@ function FeedbackItem({ fb }: { fb: Feedback }) {
           <Paragraph style={{ margin: '4px 0' }}>修改：{task.instruction}</Paragraph>
           <Paragraph style={{ margin: '4px 0' }}>验收：{task.acceptance}</Paragraph>
           {task.resolution_evidence && <Paragraph style={{ margin: '4px 0' }}>复核：{task.resolution_evidence}</Paragraph>}
+          {!!task.evidence_pairs?.length && <EvidenceComparison task={task} jobId={jobId} shotId={shotId}
+            reviewIndex={reviewIndex} taskIndex={taskIndex} />}
         </li>)}
       </ul>}
     </div>
   )
+}
+
+function EvidenceComparison({ task, jobId, shotId, reviewIndex, taskIndex }: {
+  task: RepairTask; jobId: string; shotId: string; reviewIndex: number; taskIndex: number
+}) {
+  const [failed, setFailed] = useState(false)
+  return <>
+    {failed && <Alert type="warning" showIcon message="部分对照帧无法加载，原任务和验收条件仍保留。" />}
+    {task.evidence_pairs?.map((pair, pairIndex) => <div className="repair-comparison" key={pairIndex}>
+      {(['before', 'after'] as const).map(side => {
+        const label = `${side === 'before' ? '修复前' : '修复后'} · ${pair.ts.toFixed(2)} 秒`
+        const url = api.repairEvidenceUrl(jobId, shotId, reviewIndex, taskIndex, pairIndex, side)
+        return <a key={side} href={url} target="_blank" rel="noreferrer">
+          <img loading="lazy" src={url} alt={`${task.target} ${label}`} onError={() => setFailed(true)} />
+          <span>{label}</span>
+          <Text type="secondary" className="evidence-version">
+            {pair[`${side}_artifact_id`] ? `产物 ${pair[`${side}_artifact_id`]}` : '历史产物（未记录编号）'}
+          </Text>
+        </a>
+      })}
+    </div>)}
+  </>
 }
 
 /**
@@ -185,7 +226,7 @@ function FeedbackItem({ fb }: { fb: Feedback }) {
  * 空意见之间"相同"没有意义。
  */
 function detectRepeatedIssue(list: Feedback[]): boolean {
-  const vlm = list.filter((f) => f.source === 'VLM' && (f.issues?.length ?? 0) > 0)
+  const vlm = list.filter((f) => isContentReview(f) && (f.issues?.length ?? 0) > 0)
   if (vlm.length < 2) return false
   const a = vlm[vlm.length - 1].issues!.join('|')
   const b = vlm[vlm.length - 2].issues!.join('|')

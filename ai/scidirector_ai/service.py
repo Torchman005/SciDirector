@@ -32,8 +32,8 @@ from .graph.builder import PipelineRunner
 from .llm import LLMClient, LLMError
 from .logging import get_logger
 from .media import MediaToolError, FrameSample, extract_frames, frame_sample_times
-from .repair_evidence import precheck_repairs, skip_full_review
-from .review_tasks import active_repairs
+from .repair_evidence import attach_repair_evidence, precheck_repairs, skip_full_review
+from .review_tasks import active_repairs, carry_repairs, repair_improved, FAILURES_BEFORE_HANDOFF
 from .scene_revision import parse_exact_revision
 from .renderer import RendererError, RenderRequest, build_renderer, renderer_availability
 from .sandbox.runner import SandboxRunner
@@ -432,6 +432,7 @@ class PipelineService:
         previous_review = previous_feedback
         evidence_before = previous_artifact
         technical_failures = 0
+        stalled_repairs = 0
         failure = "修订未产出可用视频"
         # Partial patches cannot be reviewed as complete scenes until Go splices
         # them. Full-shot edits get the same bounded repair opportunity as initial generation.
@@ -480,6 +481,8 @@ class PipelineService:
                 feedback_text += "\n本轮失败，必须修复后重新输出：" + failure[:2000]
                 if isinstance(exc, RenderFailed) and not exc.retryable:
                     break
+                if technical_failures >= FAILURES_BEFORE_HANDOFF:
+                    break
                 continue
 
             rows = []
@@ -492,6 +495,17 @@ class PipelineService:
                     Path(artifact.video_path).parent / "repair_evidence", self.runner)
                 if skip_full_review(rows):
                     feedback_text += "\n对应问题的证据帧没有可见变化，请重构实际对象；跳过重复审核。"
+                    stalled_repairs += 1
+                    withheld = carry_repairs(previous_review, CriticFeedback(
+                        kind="review_unavailable", source=FeedbackSource.SYSTEM,
+                        message="目标证据帧没有可见变化，本轮未重复调用视觉审查。",
+                        attempt=round_attempt, artifact_id=artifact.artifact_id,
+                    ))
+                    withheld = attach_repair_evidence(withheld, rows, before.artifact_id, artifact.artifact_id)
+                    last_valid = (updated, artifact, withheld, honored)
+                    if stalled_repairs >= FAILURES_BEFORE_HANDOFF:
+                        withheld.handoff_reason = "连续两轮修复的目标证据没有变化，已停止自动重做，请人工核对原任务与对照帧。"
+                        return last_valid
                     continue
             outcome = self.critic.review(
                 shot=updated, artifact=artifact, style_guide=style_guide,
@@ -499,14 +513,29 @@ class PipelineService:
                 previous_review=previous_review, repair_prechecks=rows,
                 user_intent=human_comment,
             )
+            if outcome.degraded:
+                outcome.feedback = carry_repairs(previous_review, outcome.feedback).model_copy(update={
+                    "kind": "review_unavailable", "artifact_id": artifact.artifact_id,
+                })
+            outcome.feedback = attach_repair_evidence(outcome.feedback, rows,
+                evidence_before.artifact_id if evidence_before else "", artifact.artifact_id)
             last_valid = (updated, artifact, outcome.feedback, honored)
             if outcome.feedback.passed or outcome.degraded or not active_repairs(outcome.feedback):
+                return last_valid
+            if previous_review and active_repairs(previous_review):
+                stalled_repairs = 0 if repair_improved(previous_review, outcome.feedback) else stalled_repairs + 1
+            if stalled_repairs >= FAILURES_BEFORE_HANDOFF:
+                outcome.feedback.handoff_reason = "连续两轮修复没有任务级的可验证改善，已停止自动重做，请人工核对原验收条件与对照帧。"
                 return last_valid
             current, previous_review = updated, outcome.feedback
             evidence_before = artifact
             feedback_text = request_context + preserved_science(previous_review) + "\n" + _feedback_to_text(previous_review)
 
         if last_valid:
+            last_valid[2].handoff_reason = (
+                f"自动修复停止：{failure}" if technical_failures
+                else "本次自动修复预算已用完，仍有未关闭任务，请人工核对验收条件。"
+            )
             return last_valid
         raise RenderFailed(f"自动诊断修复在第 {revision_round + 1}/{rounds} 轮停止：{failure}。"
                            "未能生成通过门禁的新版本，已保留原产物与诊断；"

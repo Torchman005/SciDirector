@@ -53,3 +53,45 @@ func TestShotMediaRangeVersionAndMissingArtifacts(t *testing.T) {
 		t.Fatalf("cleaned frame: %d", w.Code)
 	}
 }
+
+func TestRepairEvidenceUsesStoredIndicesAndTenantOwnership(t *testing.T) {
+	h := newHarness(t)
+	job := h.seedTenantJob(t, "job-repair-evidence", tenantA)
+	before, after := filepath.Join(t.TempDir(), "before.png"), filepath.Join(t.TempDir(), "after.png")
+	for path, body := range map[string]string{before: "old frame", after: "new frame"} {
+		if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	job.Shots[0].RecordFeedback(domain.Feedback{Kind: domain.FeedbackContentReview, Source: domain.FeedbackVLM,
+		RepairTasks: []domain.RepairTask{{TaskID: "token", Status: "open", Severity: "major", EvidencePairs: []domain.RepairEvidence{
+			{TS: 1, Before: before, After: after, BeforeArtifactID: "v7", AfterArtifactID: "v8"},
+		}}}})
+	if err := h.store.SaveJob(h.ctx, job); err != nil {
+		t.Fatal(err)
+	}
+	base := "/api/v1/jobs/" + job.JobID + "/shots/" + job.Shots[0].ShotID + "/reviews/"
+	for _, tc := range []struct {
+		path, body string
+		code       int
+	}{
+		{"0/tasks/0/evidence/0/before", "old frame", 200}, {"0/tasks/0/evidence/0/after", "new frame", 200},
+		{"-1/tasks/0/evidence/0/after", "", 404}, {"1/tasks/0/evidence/0/after", "", 404},
+		{"0/tasks/-1/evidence/0/after", "", 404}, {"0/tasks/0/evidence/9/after", "", 404},
+		{"0/tasks/0/evidence/0/unknown", "", 404}, {"x/tasks/0/evidence/0/after", "", 404},
+	} {
+		w := h.asTenant(http.MethodGet, base+tc.path, tenantA, "")
+		if w.Code != tc.code || (tc.code == 200 && w.Body.String() != tc.body) {
+			t.Errorf("%s: %d %s", tc.path, w.Code, w.Body.String())
+		}
+	}
+	if w := h.asTenant(http.MethodGet, base+"0/tasks/0/evidence/0/before", tenantB, ""); w.Code != 404 {
+		t.Fatal("cross-tenant evidence leaked")
+	}
+	if err := os.Remove(after); err != nil {
+		t.Fatal(err)
+	}
+	if w := h.asTenant(http.MethodGet, base+"0/tasks/0/evidence/0/after", tenantA, ""); w.Code != 404 {
+		t.Fatal("missing evidence not reported")
+	}
+}

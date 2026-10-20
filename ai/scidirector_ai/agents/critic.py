@@ -149,6 +149,27 @@ class CriticAgent(Agent):
     # ------------------------------------------------------------------
 
     def review(
+        self, *, shot: ShotSpec, artifact: RenderArtifact, style_guide: StyleGuide,
+        attempt: int, previous_feedback: str = "", previous_review: CriticFeedback | None = None,
+        repair_prechecks: list[dict[str, Any]] | None = None, user_intent: str = "",
+    ) -> CritiqueOutcome:
+        from ..repair_evidence import attach_repair_evidence
+        from ..review_tasks import carry_repairs
+
+        outcome = self._review(
+            shot=shot, artifact=artifact, style_guide=style_guide, attempt=attempt,
+            previous_feedback=previous_feedback, previous_review=previous_review,
+            repair_prechecks=repair_prechecks, user_intent=user_intent,
+        )
+        if outcome.degraded:
+            outcome.feedback = carry_repairs(previous_review, outcome.feedback)
+        outcome.feedback = attach_repair_evidence(
+            outcome.feedback, repair_prechecks or [],
+            previous_review.artifact_id if previous_review else "", artifact.artifact_id,
+        ).model_copy(update={"artifact_id": artifact.artifact_id})
+        return outcome
+
+    def _review(
         self,
         *,
         shot: ShotSpec,
@@ -203,7 +224,7 @@ class CriticAgent(Agent):
                     scientific_feedback = CriticFeedback(passed=False, score=0.2,
                         logic_score=0.2, issues=[t.evidence for t in tasks],
                         suggestions=[t.instruction for t in tasks], repair_tasks=tasks,
-                        source=FeedbackSource.SYSTEM, model='science:'+self.settings.text_target().model,
+                        source=FeedbackSource.SYSTEM, kind="science_review", model='science:'+self.settings.text_target().model,
                         attempt=attempt)
                     scientific_feedback = merge_repairs(previous_review, scientific_feedback, [], set())
                     return CritiqueOutcome(feedback=scientific_feedback, frames_reviewed=0,
@@ -524,6 +545,7 @@ class CriticAgent(Agent):
             repair_tasks=repair_tasks,
             model=self.settings.vision_target().model,
             source=FeedbackSource.VLM,
+            kind="content_review",
             attempt=attempt,
             **dims,
         )
@@ -550,6 +572,8 @@ class CriticAgent(Agent):
             suggestions=[f"请人工复核该镜头：{reason}"],
             model=self.settings.vision_target().model,
             source=FeedbackSource.SYSTEM,
+            kind="review_unavailable",
+            message=reason,
             attempt=attempt,
         )
         return CritiqueOutcome(
@@ -600,6 +624,7 @@ def _normalize_repair_tasks(
     return [task.model_copy(update={
         "task_id": f"r{attempt}-{index + 1:02d}", "status": "open",
         "resolution_evidence": "",
+        "evidence_pairs": [],
     }) for index, task in enumerate(tasks) if task.actionable]
 
 
