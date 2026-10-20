@@ -150,18 +150,19 @@ func ShotToPB(s *domain.Shot) *pb.ShotSpec {
 		return nil
 	}
 	return &pb.ShotSpec{
-		ShotId:      s.ShotID,
-		Index:       int32(s.Index),
-		Narration:   s.Narration,
-		VisualBrief: s.VisualBrief,
-		Tag:         TagToPB(s.Tag),
-		Engine:      EngineToPB(s.Engine),
-		DurationSec: s.DurationSec,
-		Keywords:    s.Keywords,
-		Beats:       s.Beats,
-		Code:        s.Code,
-		Language:    s.Language,
-		Meta:        map[string]string{},
+		ShotId:             s.ShotID,
+		Index:              int32(s.Index),
+		Narration:          s.Narration,
+		VisualBrief:        s.VisualBrief,
+		Tag:                TagToPB(s.Tag),
+		Engine:             EngineToPB(s.Engine),
+		DurationSec:        s.DurationSec,
+		Keywords:           s.Keywords,
+		Beats:              s.Beats,
+		Code:               s.Code,
+		Language:           s.Language,
+		Meta:               map[string]string{},
+		NarrationRevisions: narrationRevisionsToPB(s.NarrationRevisions),
 	}
 }
 
@@ -172,19 +173,20 @@ func ShotFromPB(in *pb.ShotSpec) *domain.Shot {
 		return nil
 	}
 	return &domain.Shot{
-		ShotID:      in.GetShotId(),
-		Index:       int(in.GetIndex()),
-		Narration:   in.GetNarration(),
-		VisualBrief: in.GetVisualBrief(),
-		Tag:         TagFromPB(in.GetTag()),
-		Engine:      EngineFromPB(in.GetEngine()),
-		DurationSec: in.GetDurationSec(),
-		Keywords:    in.GetKeywords(),
-		Beats:       in.GetBeats(),
-		Code:        in.GetCode(),
-		Language:    in.GetLanguage(),
-		Status:      domain.StatusPending,
-		UpdatedAt:   time.Now().UTC(),
+		ShotID:             in.GetShotId(),
+		Index:              int(in.GetIndex()),
+		Narration:          in.GetNarration(),
+		VisualBrief:        in.GetVisualBrief(),
+		Tag:                TagFromPB(in.GetTag()),
+		Engine:             EngineFromPB(in.GetEngine()),
+		DurationSec:        in.GetDurationSec(),
+		Keywords:           in.GetKeywords(),
+		Beats:              in.GetBeats(),
+		Code:               in.GetCode(),
+		Language:           in.GetLanguage(),
+		NarrationRevisions: narrationRevisionsFromPB(in.GetNarrationRevisions()),
+		Status:             domain.StatusPending,
+		UpdatedAt:          time.Now().UTC(),
 	}
 }
 
@@ -322,6 +324,7 @@ func repairTasksFromPB(tasks []*pb.RepairTask) []domain.RepairTask {
 			Target: t.Target, Evidence: t.Evidence, Instruction: t.Instruction,
 			Acceptance: t.Acceptance, Region: t.Region, Status: t.Status,
 			ResolutionEvidence: t.ResolutionEvidence,
+			RepairScope:        t.RepairScope,
 			EvidencePairs:      pairs,
 		})
 	}
@@ -342,6 +345,7 @@ func repairTasksToPB(tasks []domain.RepairTask) []*pb.RepairTask {
 			Target: t.Target, Evidence: t.Evidence, Instruction: t.Instruction,
 			Acceptance: t.Acceptance, Region: t.Region, Status: t.Status,
 			ResolutionEvidence: t.ResolutionEvidence,
+			RepairScope:        t.RepairScope,
 			EvidencePairs:      pairs,
 		})
 	}

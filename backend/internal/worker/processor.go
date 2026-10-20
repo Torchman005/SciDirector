@@ -301,6 +301,9 @@ func (p *Processor) applyPipelineEvent(ctx context.Context, jobID string, ev *pb
 			shot.Attempt = int(a)
 		}
 		if art := pbconv.ArtifactFromPB(ev.GetArtifact()); art != nil {
+			if err := applyNarrationArtifact(shot, ev.GetNarrationPatch(), art, false); err != nil {
+				return err
+			}
 			shot.Artifact = art
 		}
 		if fb := ev.GetFeedback(); fb != nil {
@@ -445,6 +448,11 @@ func syncShotsFromPayload(job *domain.Job, payloadJSON string) error {
 			shot.Artifact = old.Artifact
 			shot.Feedbacks = old.Feedbacks
 			shot.RepairTasks = old.RepairTasks
+			if len(old.NarrationRevisions) > 0 {
+				shot.Narration, shot.VisualBrief = old.Narration, old.VisualBrief
+				shot.Beats, shot.Keywords = old.Beats, old.Keywords
+				shot.NarrationRevisions = old.NarrationRevisions
+			}
 			shot.Error = old.Error
 		}
 		shots = append(shots, shot)
@@ -626,6 +634,13 @@ func (p *Processor) HandleRenderShot(ctx context.Context, task RenderShotTask) e
 		}
 		return err
 	}
+	preview := *shot
+	if err := applyNarrationArtifact(&preview, resp.GetShot(), pbconv.ArtifactFromPB(resp.GetArtifact()), resp.GetPartialRangeHonored()); err != nil {
+		if saveErr := p.parkFailedRevision(ctx, jobID, shotID, task.Payload.Attempt, err); saveErr != nil {
+			return saveErr
+		}
+		return fmt.Errorf("%w: %w", asynq.SkipRetry, err)
+	}
 
 	// 局部重渲的结果只是原片的一小段，必须拼回去才是完整镜头。
 	// 服务端会如实告知是否真的只渲了该区间 —— 猜错的后果是把只渲了 2 秒的
@@ -672,6 +687,9 @@ func (p *Processor) HandleRenderShot(ctx context.Context, task RenderShotTask) e
 			return nil
 		}
 		if resp.GetShot() != nil {
+			if err := applyNarrationArtifact(s, resp.GetShot(), pbconv.ArtifactFromPB(resp.GetArtifact()), resp.GetPartialRangeHonored()); err != nil {
+				return err
+			}
 			s.Code = resp.GetShot().GetCode()
 			s.Language = resp.GetShot().GetLanguage()
 		}

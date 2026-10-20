@@ -17,6 +17,7 @@ class ScienceFinding(BaseModel):
     evidence: str
     instruction: str = ""
     acceptance: str = ""
+    repair_scope: Literal["visual", "narration", "both"] = "visual"
 
 
 class ScienceResolution(BaseModel):
@@ -40,7 +41,7 @@ def science_request(shot: ShotSpec, previous: CriticFeedback | None) -> str:
     # The previous diagnosis describes an OLD source. Passing its quoted wrong
     # formula/"missing label" as current evidence made the auditor repeat a
     # disproven finding. Retain obligations, not stale observations.
-    old = [{'task_id': t.task_id, 'target': t.target, 'acceptance': t.acceptance}
+    old = [{'task_id': t.task_id, 'target': t.target, 'acceptance': t.acceptance, 'repair_scope': t.repair_scope}
            for t in (previous.repair_tasks if previous else [])
            if t.task_id.startswith('science-') and t.status != 'resolved']
     if not old and not data['mathematical_source'] and not any(t['kind'] in {'Tex', 'MathTex'} for t in data['literal_text']):
@@ -65,7 +66,8 @@ def science_tasks(audit: ScienceAudit, *, attempt: int, duration: float) -> list
             raise ValueError('科学核对指出错误但缺少对象、证据或验收条件')
         tasks.append(RepairTask(task_id=f'science-{attempt}-{len(tasks)+1:02}', category='logic',
             severity='blocking', start_sec=0, end_sec=duration, target=finding.target,
-            evidence='源码定义核对：'+finding.evidence, instruction=finding.instruction, acceptance=finding.acceptance))
+            evidence='源码定义核对：'+finding.evidence, instruction=finding.instruction, acceptance=finding.acceptance,
+            repair_scope=finding.repair_scope))
     return tasks[:3]
 
 

@@ -99,6 +99,9 @@ func mergeRepairLedger(old, incoming []RepairTask, canResolve bool) []RepairTask
 			continue
 		}
 		// Original location, evidence, target and acceptance are permanent.
+		if canResolve && ledger[index].RepairScope == "" {
+			ledger[index].RepairScope = task.RepairScope
+		}
 		if canResolve && (task.Status != "resolved" || task.ResolutionEvidence != "") {
 			ledger[index].Status = task.Status
 			ledger[index].ResolutionEvidence = task.ResolutionEvidence

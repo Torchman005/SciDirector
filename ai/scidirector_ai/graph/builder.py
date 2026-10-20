@@ -108,7 +108,7 @@ def build_graph(deps: PipelineDeps, checkpointer: Any = None) -> Any:
     # 显式的路径映射（而不是只给函数）：让"这个 hint 会去哪"在图定义里一眼可见，
     # 也避免函数返回了未声明的节点名时框架给出晦涩的错误。
     graph.add_conditional_edges(
-        NODE_CODE, route_after_code, {NODE_RENDER: NODE_RENDER, NODE_REVISE: NODE_REVISE}
+        NODE_CODE, route_after_code, {NODE_RENDER: NODE_RENDER, NODE_REVISE: NODE_REVISE, NODE_ADVANCE: NODE_ADVANCE}
     )
     graph.add_conditional_edges(
         NODE_RENDER,
@@ -141,7 +141,7 @@ def build_parallel_graph(deps: PipelineDeps, checkpointer: Any = None, paralleli
     shot_graph.add_node(NODE_REVISE, nodes.revise)
     shot_graph.add_edge(START, NODE_CODE)
     shot_graph.add_conditional_edges(
-        NODE_CODE, route_after_code, {NODE_RENDER: NODE_RENDER, NODE_REVISE: NODE_REVISE}
+        NODE_CODE, route_after_code, {NODE_RENDER: NODE_RENDER, NODE_REVISE: NODE_REVISE, NODE_ADVANCE: END}
     )
     shot_graph.add_conditional_edges(
         NODE_RENDER, route_after_render,

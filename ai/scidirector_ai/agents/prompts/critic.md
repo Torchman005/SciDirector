@@ -317,6 +317,9 @@ score = logic_score × 0.35
   severity（blocking/major/advisory）、frame_indices（1 开始的真实抽帧号）或 start_sec/end_sec、
   target（具体元素/阶段）、evidence（当前可见证据）、instruction（具体修改）、acceptance（复审条件）。
   能明确定位元素时可补 region=[x,y,width,height]（各值归一化到 0～1）。不能猜测位置或编造证据。
+  repair_scope 必须区分 visual（只改画面）、narration（旁白本身有科学错误）、both（两者都错）。
+  原旁白不是科学真值；旁白确有错误时引用其原句与正确定义，target 使用 narration。
+  不要把正确旁白与错误图示的矛盾归咎于旁白，也不能为了匹配错误旁白而要求改坏正确图示。
 - blocking 仅用于有证据的科学错误、关键内容缺失或无法阅读/交付的画面。
   科学解释错误和整段结构失效可以要求重构；其它问题按元素定向修复。
   可选审美建议标为 advisory，不得单凭个人审美升级为 blocking。

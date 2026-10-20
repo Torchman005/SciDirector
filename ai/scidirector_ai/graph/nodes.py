@@ -35,6 +35,7 @@ from ..agents.director import DirectorAgent
 from ..agents.base import render_prompt
 from ..config import Settings, browser_ready
 from ..llm import LLMClient, LLMError
+from ..narration_repair import NarrationRepairError, repair_narration
 from ..logging import get_logger
 from ..media import (
     FrameSample,
@@ -337,6 +338,9 @@ class PipelineNodes:
 
         started = time.monotonic()
         try:
+            original_narration = shot.narration
+            shot = repair_narration(self.deps.llm, shot,
+                (state.get("feedback") or {}).get(shot.shot_id), attempt=attempt)
             result = self.deps.coder.generate(
                 shot=shot,
                 style_guide=style,
@@ -344,6 +348,14 @@ class PipelineNodes:
                 feedback_text=feedback_text,
                 previous_code=state.get("current_code", ""),
             )
+        except NarrationRepairError as exc:
+            reason = "旁白联动修订已停止，需人工核对：" + str(exc)
+            return {
+                "attempts": {**(state.get("attempts") or {}), shot.shot_id: attempt},
+                "render_error": reason, "route_hint": HINT_HUMAN,
+                "events": [make_event(state, node=NODE_CODE, shot=shot, attempt=attempt,
+                    message=reason, error=reason, status="AWAITING_HUMAN")],
+            }
         except LLMError as exc:
             # 模型调用失败属于可重试错误：交给 revise 决定是再试还是转人工。
             logger.warning(
@@ -373,6 +385,7 @@ class PipelineNodes:
             and result.policy_ok
             and state.get("current_code", "").strip()
             and result.code.strip() == state.get("current_code", "").strip()
+            and shot.narration == original_narration
             and isinstance(prior_feedback, CriticFeedback)
             and not prior_feedback.passed
             and prior_feedback.source is FeedbackSource.VLM
@@ -663,6 +676,11 @@ class PipelineNodes:
         # 但**必须留痕**：不配音是可见的质量差异（成片没声音），
         # 静默降级会让人以为「TTS 接好了但没生效」，方向完全错。
         audio_path, tts_error = self._synthesize_narration(shot, out_dir)
+        if tts_error and shot.narration_revisions:
+            reason = "修订后配音失败，保留原片与旁白，需人工处理：" + tts_error
+            return {"render_error": reason, "route_hint": HINT_HUMAN,
+                "events": [make_event(state, node=NODE_RENDER, shot=shot, attempt=attempt,
+                    message=reason, error=reason, status="AWAITING_HUMAN")]}
         artifact.audio_path = audio_path
 
         artifacts = dict(state.get("artifacts") or {})
@@ -685,6 +703,7 @@ class PipelineNodes:
                     f"{result.width}x{result.height} / {len(frames)} 帧抽帧"
                 ),
                 status="CRITIQUING", shot=shot, attempt=attempt, artifact=artifact,
+                narration_patch=shot if shot.narration_revisions else None,
             )
         ]
         # 配音失败**单独上报**，不能只写服务端日志。
@@ -812,6 +831,8 @@ class PipelineNodes:
                 "时间戳 sidecar 写入失败，字幕将回退到按镜头时长对齐",
                 extra={"shot_id": shot.shot_id, "error": str(exc)[:200]},
             )
+            if shot.narration_revisions:
+                return "", "修订后的配音时间戳写入失败：" + str(exc)[:200]
 
         logger.info(
             "配音已合成",
@@ -1169,7 +1190,7 @@ def _route(state: PipelineState, allowed: dict[str, str], default: str) -> str:
 
 def route_after_code(state: PipelineState) -> str:
     """code -> render（成功）或 revise（静态检查失败 / 模型调用失败）。"""
-    return _route(state, {HINT_RENDER: NODE_RENDER, HINT_RETRY: NODE_REVISE}, NODE_RENDER)
+    return _route(state, {HINT_RENDER: NODE_RENDER, HINT_RETRY: NODE_REVISE, HINT_HUMAN: NODE_ADVANCE}, NODE_RENDER)
 
 
 def route_after_render(state: PipelineState) -> str:

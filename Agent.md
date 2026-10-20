@@ -5,9 +5,13 @@
 >
 > 版本：v0.6.3 · 阶段：阶段五（生产加固）· 最后更新：见文末「迭代日志」
 
+2026-10-20 第2项旁白联动：RepairTask.repair_scope=15 区分 visual/narration/both，科学核对和视觉审核都必须区分原旁白错误与错误图示；空值兼容旧任务，旧 narration/旁白/画外音 logic 定位可进入修订。只有未关闭、非 advisory 的有定位科学任务触发最小原句替换；编辑与独立文本核对各一次解析，依据不足/相矛盾/调用失败即转人工，不靠改写原验收条件过审。此独立核对是一次分离调用，不保证与编辑使用不同模型，也不替代源码科学检查或 VLM。
+
+ShotSpec.narration_revisions=13 保存完整 before/after、reason、task_ids、attempt，Python 检查原句唯一定位、非空替换和不重叠；修稿不关闭账本。修订清除旧 beats/keywords/overlay，整镜重新生成并经原门禁，局部修补不能改旁白。单镜音轨仅在文本逐字一致时跨轮复用；新旁白重做配音及 marks，非重试型 TTS 失败保留根因。Go 只在新产物就绪时同步旁白、画面草案及追加历史，旧配音/旧视频/缺视频/历史冲突不发布；主链路使用 render 事件类型化 PipelineEvent.narration_patch=15，而非 code 事件提前覆盖文案，可选 payload_json 损坏不阻断正常产物事件；导演快照重放也不能恢复旧文案。Job.raw_script 不被改写。已有后台需协调重启，本阶段没有改音色、TTS 模型或自然度参数。
+
 2026-10-20 审核账本：CriticFeedback.kind 区分 content_review / science_review / repair_request / human_review / review_unavailable / system_error，message 记录操作或故障，artifact_id 标明产物，handoff_reason 说明停机原因。REST/WS 修复请求不再把默认意见写成内容缺陷；审核台只有完整内容审查展示总分和四维，科学核对只展示逻辑分，其他记录不展示评分或“未通过”。Go Shot.repair_tasks 独立保存当前账本，旧任务从历史快照兼容重建；操作、渲染错误和审片中断不得改写原定位、证据、验收条件及已验证状态。下次修复使用最近内容/科学结论加当前账本，不让通用故障覆盖具体任务；遗漏未关闭任务的高分结果不能自动批准。
 
-修复任务的 evidence_pairs 由可信抽帧器保存时间、前后帧路径与产物编号，模型输出中的路径一律清空。租户校验后的 reviews/:reviewIndex/tasks/:taskIndex/evidence/:pairIndex/:side 只按服务端快照的索引读取；清理保留历史对照帧，缺文件显示证据不可用。VLM/科学核对降级保留原任务状态及已有对照，不把故障零值计入评分趋势。首见任务作为基线；首次修复无改善时可调整一次策略，连续两次修复无任务级改善即转人工，首次 partial 可计进展，重复 partial 不延长预算。单镜修订同样有两轮无进展出口；总预算与科学/产物门禁保持原上限。本阶段未实现旁白联动修订或修改 TTS。
+修复任务的 evidence_pairs 由可信抽帧器保存时间、前后帧路径与产物编号，模型输出中的路径一律清空。租户校验后的 reviews/:reviewIndex/tasks/:taskIndex/evidence/:pairIndex/:side 只按服务端快照的索引读取；清理保留历史对照帧，缺文件显示证据不可用。VLM/科学核对降级保留原任务状态及已有对照，不把故障零值计入评分趋势。首见任务作为基线；首次修复无改善时可调整一次策略，连续两次修复无任务级改善即转人工，首次 partial 可计进展，重复 partial 不延长预算。单镜修订同样有两轮无进展出口；总预算与科学/产物门禁保持原上限。本条对应第1项账本修复，第2项旁白联动见上文。
 
 2026-10-13 胶片剪辑视觉样片：新增 demos/film-editing.html 作为独立、离线、10 秒手工质量标尺，以连续胶片、两次剪切和三段错层展开取代图标+箭头流程；绝对时间 __seek 与预览播放分离。它不接入 SceneSpec 自动生产，不使用参考片画面或生图素材；设计及能力缺口记录在 docs/FILM_EDITING_MOTION_STUDY.md，浏览器视觉验收仍待实际观看反馈。
 

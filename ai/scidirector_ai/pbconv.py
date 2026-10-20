@@ -138,6 +138,8 @@ def shot_from_pb(message: Any) -> ShotSpec:
         code=message.code,
         language=message.language,
         meta=dict(message.meta),
+        narration_revisions=[dict(before=r.before, after=r.after, reason=r.reason,
+                                 task_ids=list(r.task_ids), attempt=r.attempt) for r in message.narration_revisions],
     )
 
 
@@ -156,6 +158,7 @@ def shot_to_pb(shot: ShotSpec) -> Any:
         code=shot.code,
         language=shot.language,
         meta=dict(shot.meta),
+        narration_revisions=[common.NarrationRevision(**r.model_dump()) for r in shot.narration_revisions],
     )
 
 
@@ -218,6 +221,7 @@ def feedback_from_pb(message: Any) -> CriticFeedback:
             frame_indices=list(task.frame_indices), target=task.target, evidence=task.evidence,
             instruction=task.instruction, acceptance=task.acceptance, region=list(task.region),
             status=task.status or "open", resolution_evidence=task.resolution_evidence,
+            repair_scope=task.repair_scope,
             evidence_pairs=[dict(ts=p.ts, before=p.before, after=p.after,
                                  before_artifact_id=p.before_artifact_id,
                                  after_artifact_id=p.after_artifact_id) for p in task.evidence_pairs],
@@ -361,4 +365,5 @@ def event_to_pb(event: dict[str, Any]) -> Any:
         error=event.get("error", "") or "",
         ts_unix_ms=int(event.get("ts_unix_ms", 0) or 0) or int(time.time() * 1000),
         payload_json=event.get("payload_json", "") or "",
+        narration_patch=shot_to_pb(event["narration_patch"]) if event.get("narration_patch") is not None else None,
     )

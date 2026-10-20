@@ -118,6 +118,16 @@ class FeedbackSource(str, Enum):
 # ===========================================================================
 
 
+class NarrationRevision(BaseModel):
+    """A minimal script correction verified before code/audio regeneration."""
+
+    before: str
+    after: str
+    reason: str
+    task_ids: list[str]
+    attempt: int = Field(ge=0)
+
+
 class ShotSpec(BaseModel):
     """一个分镜规格。既是渲染指令，也是审查对象。"""
 
@@ -136,6 +146,7 @@ class ShotSpec(BaseModel):
     code: str = Field(default="", description="当前版本的渲染源码")
     language: str = Field(default="", description="源码语言：python / html+js")
     meta: dict[str, str] = Field(default_factory=dict, description="扩展位，禁止放二进制")
+    narration_revisions: list[NarrationRevision] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _apply_engine_routing(self) -> ShotSpec:
@@ -199,6 +210,7 @@ class RepairTask(BaseModel):
     status: Literal["open", "partial", "resolved", "unverified"] = "open"
     resolution_evidence: str = ""
     evidence_pairs: list[RepairEvidence] = Field(default_factory=list)
+    repair_scope: Literal["", "visual", "narration", "both"] = ""
 
     @model_validator(mode="after")
     def _validate_location(self) -> RepairTask:

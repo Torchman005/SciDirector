@@ -15,6 +15,7 @@ func TestRepairTasksRoundTrip(t *testing.T) {
 			FrameIndices: []int32{2}, Target: "formula", Evidence: "wrong operator",
 			Instruction: "correct operator", Acceptance: "formula matches narration",
 			Region: []float64{0.1, 0.2, 0.3, 0.4}, Status: "open",
+			RepairScope:   "both",
 			EvidencePairs: []domain.RepairEvidence{{TS: 1.2, Before: "before.png", After: "after.png", BeforeArtifactID: "v7", AfterArtifactID: "v8"}},
 		}}}
 	back := FeedbackFromPB(FeedbackToPB(feedback))
@@ -23,5 +24,14 @@ func TestRepairTasksRoundTrip(t *testing.T) {
 	}
 	if back.Kind != feedback.Kind || back.ArtifactID != feedback.ArtifactID || back.HandoffReason != feedback.HandoffReason {
 		t.Fatal("review type/version lost")
+	}
+}
+
+func TestNarrationHistoryRoundTrip(t *testing.T) {
+	shot := &domain.Shot{ShotID: "s", Narration: "corrected", NarrationRevisions: []domain.NarrationRevision{{
+		Before: "original", After: "corrected", Reason: "verified", TaskIDs: []string{"r1"}, Attempt: 8}}}
+	back := ShotFromPB(ShotToPB(shot))
+	if !reflect.DeepEqual(back.NarrationRevisions, shot.NarrationRevisions) || back.Narration != shot.Narration {
+		t.Fatal("narration history lost", back)
 	}
 }

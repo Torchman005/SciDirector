@@ -95,6 +95,8 @@ class Task:
     CRITIQUE = "critique"  # 审查：抽帧 -> 评审意见
     SCIENCE = "science"   # 独立核对绘图表达式与科学定义
     REVIEW_REASONING = "review_reasoning"  # 复核判负依据，不替代画面审核
+    NARRATION_REPAIR = "narration_repair"
+    NARRATION_VERIFY = "narration_verify"
     FREE = "free"          # 自由文本
 
 
@@ -620,6 +622,10 @@ def _mock_response(messages: list[Message], *, json_mode: bool, task: str) -> st
 
     if task == Task.REVIEW_REASONING:
         return {"disputes": []}
+    if task == Task.NARRATION_REPAIR:
+        return json.dumps({"verdict": "uncertain", "reason": "mock 不执行真实旁白科学修订", "edits": []})
+    if task == Task.NARRATION_VERIFY:
+        return json.dumps({"verdict": "uncertain", "reason": "mock 不执行真实旁白科学核对"})
     if task == Task.SCIENCE:
         return json.dumps({"findings": [{"verdict": "correct", "target": "mock",
                           "evidence": "mock 模式占位核对，不代表真实科学验收"}], "resolutions": []})

@@ -1,5 +1,11 @@
 # SciDirector API 契约
 
+2026-10-20 旁白联动：`RepairTask.repair_scope=15` 为 visual / narration / both，空值兼容旧数据。只有有定位且未关闭的非 advisory 科学任务可触发旁白修订；旧 target=narration/旁白/画外音 的 logic 任务保留入口。纯画面任务不额外调用修稿模型。修订不能修改原任务验收条件或直接关闭任务，仍需实际科学/视觉复审。
+
+`ShotSpec.narration_revisions=13` 和 REST Shot 同名数组保存完整 before/after、reason、task_ids、attempt（不是模型自报的路径/审批）。Go/Python protobuf、检查点和 Redis 持久化均保留。修订响应同现有 ReviseShotResponse.shot 返回当前 narration/visual_brief/beats/keywords 与历史；worker 校验追加历史的一致性，与新产物原子写入，不改 Job.raw_script。新旁白必须整镜重做，拒绝搭配旧音轨、旧视频或缺失视频的修订；失败保留原片及原文案。
+
+主链路只在含新 artifact 的 render 事件中提交类型化 `PipelineEvent.narration_patch=15`（ShotSpec），Go 仅同步其中的 shot_id、narration、visual_brief、beats、keywords、narration_revisions；code 事件仍只同步源码。可选 `payload_json` 解析故障不影响正常产物事件。导演快照重放不覆盖已修订的语义字段。后续同文修图可以复用该音轨，文本变更必须生成新的配音及时间戳；独立文本核对不可用或不确定时停止自动修订，不增加原渲染预算。音色、模型与自然度参数不属于本契约更新。
+
 2026-10-20 审核记录：`CriticFeedback` 新增 `kind=16`、`message=17`、`artifact_id=18`、`handoff_reason=19`；kind 为 content_review / science_review / repair_request / human_review / review_unavailable / system_error。空 kind 兼容历史数据。只有 content_review 的总分/四维、science_review 的逻辑分是实际评分；操作与故障的数值缺省值不能解读为零分审查。修复请求的文字写入 message，不再复制到 issues/suggestions。Job 中每个 Shot 的 `repair_tasks` 为独立当前账本，feedbacks 保留历史快照；机器审核降级及后续操作不删除或关闭原任务，旧任务在后续写入时从历史重建。
 
 `RepairTask.evidence_pairs=14` 为可信抽帧器写入的 RepairEvidence 数组：ts、before、after、before_artifact_id、after_artifact_id。路径不可来自模型输出或用户请求。`GET /api/v1/jobs/:jobID/shots/:shotID/reviews/:reviewIndex/tasks/:taskIndex/evidence/:pairIndex/:side` 以零基索引读取历史对照，side 仅 before / after；先检查租户，无效索引或缺文件返回 404，不接收文件路径参数，禁止缓存。追加记录不会改变旧索引。清理保留账本引用的历史对照；它不是完整历史视频归档。

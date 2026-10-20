@@ -97,6 +97,8 @@ def merge_repairs(
     for new in current.repair_tasks:
         match = next((t for t in ledger if _identity(t) == _identity(new)), None)
         if match:
+            if not match.repair_scope:
+                match.repair_scope = new.repair_scope
             # A current witnessed defect overrides a conflicting claim of resolution.
             if match.status == "resolved":
                 match.status = "open"

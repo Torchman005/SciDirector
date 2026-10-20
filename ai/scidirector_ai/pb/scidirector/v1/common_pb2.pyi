@@ -81,7 +81,7 @@ class TimeRange(_message.Message):
     def __init__(self, start_sec: _Optional[float] = ..., end_sec: _Optional[float] = ...) -> None: ...
 
 class ShotSpec(_message.Message):
-    __slots__ = ("shot_id", "index", "narration", "visual_brief", "tag", "engine", "duration_sec", "keywords", "code", "language", "meta", "beats")
+    __slots__ = ("shot_id", "index", "narration", "visual_brief", "tag", "engine", "duration_sec", "keywords", "code", "language", "meta", "beats", "narration_revisions")
     class MetaEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -101,6 +101,7 @@ class ShotSpec(_message.Message):
     LANGUAGE_FIELD_NUMBER: _ClassVar[int]
     META_FIELD_NUMBER: _ClassVar[int]
     BEATS_FIELD_NUMBER: _ClassVar[int]
+    NARRATION_REVISIONS_FIELD_NUMBER: _ClassVar[int]
     shot_id: str
     index: int
     narration: str
@@ -113,7 +114,22 @@ class ShotSpec(_message.Message):
     language: str
     meta: _containers.ScalarMap[str, str]
     beats: _containers.RepeatedScalarFieldContainer[str]
-    def __init__(self, shot_id: _Optional[str] = ..., index: _Optional[int] = ..., narration: _Optional[str] = ..., visual_brief: _Optional[str] = ..., tag: _Optional[_Union[SceneTag, str]] = ..., engine: _Optional[_Union[RenderEngine, str]] = ..., duration_sec: _Optional[float] = ..., keywords: _Optional[_Iterable[str]] = ..., code: _Optional[str] = ..., language: _Optional[str] = ..., meta: _Optional[_Mapping[str, str]] = ..., beats: _Optional[_Iterable[str]] = ...) -> None: ...
+    narration_revisions: _containers.RepeatedCompositeFieldContainer[NarrationRevision]
+    def __init__(self, shot_id: _Optional[str] = ..., index: _Optional[int] = ..., narration: _Optional[str] = ..., visual_brief: _Optional[str] = ..., tag: _Optional[_Union[SceneTag, str]] = ..., engine: _Optional[_Union[RenderEngine, str]] = ..., duration_sec: _Optional[float] = ..., keywords: _Optional[_Iterable[str]] = ..., code: _Optional[str] = ..., language: _Optional[str] = ..., meta: _Optional[_Mapping[str, str]] = ..., beats: _Optional[_Iterable[str]] = ..., narration_revisions: _Optional[_Iterable[_Union[NarrationRevision, _Mapping]]] = ...) -> None: ...
+
+class NarrationRevision(_message.Message):
+    __slots__ = ("before", "after", "reason", "task_ids", "attempt")
+    BEFORE_FIELD_NUMBER: _ClassVar[int]
+    AFTER_FIELD_NUMBER: _ClassVar[int]
+    REASON_FIELD_NUMBER: _ClassVar[int]
+    TASK_IDS_FIELD_NUMBER: _ClassVar[int]
+    ATTEMPT_FIELD_NUMBER: _ClassVar[int]
+    before: str
+    after: str
+    reason: str
+    task_ids: _containers.RepeatedScalarFieldContainer[str]
+    attempt: int
+    def __init__(self, before: _Optional[str] = ..., after: _Optional[str] = ..., reason: _Optional[str] = ..., task_ids: _Optional[_Iterable[str]] = ..., attempt: _Optional[int] = ...) -> None: ...
 
 class RenderArtifact(_message.Message):
     __slots__ = ("artifact_id", "shot_id", "video_path", "audio_path", "subtitle_path", "duration_sec", "width", "height", "fps", "attempt", "engine", "frame_samples", "rendered_at_unix_ms", "render_cost_sec")
@@ -162,7 +178,7 @@ class RepairEvidence(_message.Message):
     def __init__(self, ts: _Optional[float] = ..., before: _Optional[str] = ..., after: _Optional[str] = ..., before_artifact_id: _Optional[str] = ..., after_artifact_id: _Optional[str] = ...) -> None: ...
 
 class RepairTask(_message.Message):
-    __slots__ = ("task_id", "category", "severity", "start_sec", "end_sec", "frame_indices", "target", "evidence", "instruction", "acceptance", "region", "status", "resolution_evidence", "evidence_pairs")
+    __slots__ = ("task_id", "category", "severity", "start_sec", "end_sec", "frame_indices", "target", "evidence", "instruction", "acceptance", "region", "status", "resolution_evidence", "evidence_pairs", "repair_scope")
     TASK_ID_FIELD_NUMBER: _ClassVar[int]
     CATEGORY_FIELD_NUMBER: _ClassVar[int]
     SEVERITY_FIELD_NUMBER: _ClassVar[int]
@@ -177,6 +193,7 @@ class RepairTask(_message.Message):
     STATUS_FIELD_NUMBER: _ClassVar[int]
     RESOLUTION_EVIDENCE_FIELD_NUMBER: _ClassVar[int]
     EVIDENCE_PAIRS_FIELD_NUMBER: _ClassVar[int]
+    REPAIR_SCOPE_FIELD_NUMBER: _ClassVar[int]
     task_id: str
     category: str
     severity: str
@@ -191,7 +208,8 @@ class RepairTask(_message.Message):
     status: str
     resolution_evidence: str
     evidence_pairs: _containers.RepeatedCompositeFieldContainer[RepairEvidence]
-    def __init__(self, task_id: _Optional[str] = ..., category: _Optional[str] = ..., severity: _Optional[str] = ..., start_sec: _Optional[float] = ..., end_sec: _Optional[float] = ..., frame_indices: _Optional[_Iterable[int]] = ..., target: _Optional[str] = ..., evidence: _Optional[str] = ..., instruction: _Optional[str] = ..., acceptance: _Optional[str] = ..., region: _Optional[_Iterable[float]] = ..., status: _Optional[str] = ..., resolution_evidence: _Optional[str] = ..., evidence_pairs: _Optional[_Iterable[_Union[RepairEvidence, _Mapping]]] = ...) -> None: ...
+    repair_scope: str
+    def __init__(self, task_id: _Optional[str] = ..., category: _Optional[str] = ..., severity: _Optional[str] = ..., start_sec: _Optional[float] = ..., end_sec: _Optional[float] = ..., frame_indices: _Optional[_Iterable[int]] = ..., target: _Optional[str] = ..., evidence: _Optional[str] = ..., instruction: _Optional[str] = ..., acceptance: _Optional[str] = ..., region: _Optional[_Iterable[float]] = ..., status: _Optional[str] = ..., resolution_evidence: _Optional[str] = ..., evidence_pairs: _Optional[_Iterable[_Union[RepairEvidence, _Mapping]]] = ..., repair_scope: _Optional[str] = ...) -> None: ...
 
 class CriticFeedback(_message.Message):
     __slots__ = ("passed", "score", "issues", "suggestions", "raw_response", "model", "source", "attempt", "logic_score", "readability_score", "pacing_score", "aesthetics_score", "created_at_unix_ms", "repair_tasks", "fatal_issues", "kind", "message", "artifact_id", "handoff_reason")
@@ -236,7 +254,7 @@ class CriticFeedback(_message.Message):
     def __init__(self, passed: bool = ..., score: _Optional[float] = ..., issues: _Optional[_Iterable[str]] = ..., suggestions: _Optional[_Iterable[str]] = ..., raw_response: _Optional[str] = ..., model: _Optional[str] = ..., source: _Optional[_Union[FeedbackSource, str]] = ..., attempt: _Optional[int] = ..., logic_score: _Optional[float] = ..., readability_score: _Optional[float] = ..., pacing_score: _Optional[float] = ..., aesthetics_score: _Optional[float] = ..., created_at_unix_ms: _Optional[int] = ..., repair_tasks: _Optional[_Iterable[_Union[RepairTask, _Mapping]]] = ..., fatal_issues: _Optional[_Iterable[str]] = ..., kind: _Optional[str] = ..., message: _Optional[str] = ..., artifact_id: _Optional[str] = ..., handoff_reason: _Optional[str] = ...) -> None: ...
 
 class PipelineEvent(_message.Message):
-    __slots__ = ("job_id", "shot_id", "node", "status", "message", "attempt", "shot_index", "total_shots", "progress", "artifact", "feedback", "error", "ts_unix_ms", "payload_json")
+    __slots__ = ("job_id", "shot_id", "node", "status", "message", "attempt", "shot_index", "total_shots", "progress", "artifact", "feedback", "error", "ts_unix_ms", "payload_json", "narration_patch")
     JOB_ID_FIELD_NUMBER: _ClassVar[int]
     SHOT_ID_FIELD_NUMBER: _ClassVar[int]
     NODE_FIELD_NUMBER: _ClassVar[int]
@@ -251,6 +269,7 @@ class PipelineEvent(_message.Message):
     ERROR_FIELD_NUMBER: _ClassVar[int]
     TS_UNIX_MS_FIELD_NUMBER: _ClassVar[int]
     PAYLOAD_JSON_FIELD_NUMBER: _ClassVar[int]
+    NARRATION_PATCH_FIELD_NUMBER: _ClassVar[int]
     job_id: str
     shot_id: str
     node: str
@@ -265,7 +284,8 @@ class PipelineEvent(_message.Message):
     error: str
     ts_unix_ms: int
     payload_json: str
-    def __init__(self, job_id: _Optional[str] = ..., shot_id: _Optional[str] = ..., node: _Optional[str] = ..., status: _Optional[_Union[ShotStatus, str]] = ..., message: _Optional[str] = ..., attempt: _Optional[int] = ..., shot_index: _Optional[int] = ..., total_shots: _Optional[int] = ..., progress: _Optional[float] = ..., artifact: _Optional[_Union[RenderArtifact, _Mapping]] = ..., feedback: _Optional[_Union[CriticFeedback, _Mapping]] = ..., error: _Optional[str] = ..., ts_unix_ms: _Optional[int] = ..., payload_json: _Optional[str] = ...) -> None: ...
+    narration_patch: ShotSpec
+    def __init__(self, job_id: _Optional[str] = ..., shot_id: _Optional[str] = ..., node: _Optional[str] = ..., status: _Optional[_Union[ShotStatus, str]] = ..., message: _Optional[str] = ..., attempt: _Optional[int] = ..., shot_index: _Optional[int] = ..., total_shots: _Optional[int] = ..., progress: _Optional[float] = ..., artifact: _Optional[_Union[RenderArtifact, _Mapping]] = ..., feedback: _Optional[_Union[CriticFeedback, _Mapping]] = ..., error: _Optional[str] = ..., ts_unix_ms: _Optional[int] = ..., payload_json: _Optional[str] = ..., narration_patch: _Optional[_Union[ShotSpec, _Mapping]] = ...) -> None: ...
 
 class JobProgress(_message.Message):
     __slots__ = ("job_id", "total_shots", "approved_shots", "failed_shots", "awaiting_human_shots", "progress", "started_at_unix_ms", "updated_at_unix_ms")

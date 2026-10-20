@@ -28,6 +28,7 @@ from .agents.director import DirectorAgent
 from .config import Settings, engine_availability, get_settings
 from .diagnostics import error_evidence
 from .recovery import recovery_instruction, preserved_science
+from .narration_repair import NarrationRepairError, repair_narration
 from .graph.builder import PipelineRunner
 from .llm import LLMClient, LLMError
 from .logging import get_logger
@@ -434,6 +435,7 @@ class PipelineService:
         technical_failures = 0
         stalled_repairs = 0
         failure = "修订未产出可用视频"
+        failure_retryable = True
         # Partial patches cannot be reviewed as complete scenes until Go splices
         # them. Full-shot edits get the same bounded repair opportunity as initial generation.
         rounds = 1 if range_end_sec > range_start_sec else min(3, self.settings.shot_max_attempts)
@@ -441,7 +443,11 @@ class PipelineService:
             round_attempt = attempt + revision_round
             logger.info("单镜修订轮次", extra={"shot_id": shot.shot_id, "round": revision_round+1, "limit": rounds})
             try:
+                if exact_result is None:
+                    current = repair_narration(self.llm, current, previous_review, attempt=round_attempt,
+                        partial=range_end_sec > range_start_sec)
                 rebuild = (not current.code or technical_failures > 0 or
+                           current.meta.get("repair_strategy") == "rebuild" or
                            (rounds > 1 and revision_round == rounds - 1))
                 generation_shot = current.model_copy(update={"meta": {
                     **current.meta, "repair_strategy": "rebuild" if rebuild else "targeted"}})
@@ -462,7 +468,9 @@ class PipelineService:
                 )
                 if not result.policy_ok:
                     raise RenderFailed(f"重写后的代码未通过安全/质量检查：{result.policy_summary}")
-                if current.code and result.code.strip() == current.code.strip():
+                published_narration = last_valid[0].narration if last_valid else shot.narration
+                narration_changed = current.narration != published_narration
+                if current.code and result.code.strip() == current.code.strip() and not narration_changed:
                     raise RenderFailed("修订未改变实际代码，请重构反馈中的对象，不能只改说明")
                 updated = current.model_copy(update={"code": result.code, "language": result.artifact.language})
                 if result.overlay_text:
@@ -473,11 +481,18 @@ class PipelineService:
                     job_id=job_id, shot=updated, code=result.code, style_guide=style_guide,
                     attempt=round_attempt, output_dir=output_dir, draft_only=False,
                     range_start_sec=range_start_sec, range_end_sec=range_end_sec,
-                    speech_path=last_valid[1].audio_path if last_valid else "",
+                    speech_path=last_valid[1].audio_path if last_valid and last_valid[0].narration == updated.narration else "",
                 )
+            except NarrationRepairError as exc:
+                failure = "旁白联动修订已停止，需人工核对：" + str(exc)
+                if last_valid is None:
+                    raise RenderFailed(failure, retryable=False) from exc
+                last_valid[2].handoff_reason = failure
+                return last_valid
             except (RenderFailed, LLMError, ValueError) as exc:
                 technical_failures += 1
                 failure = str(exc)
+                failure_retryable = not isinstance(exc, RenderFailed) or exc.retryable
                 feedback_text += "\n本轮失败，必须修复后重新输出：" + failure[:2000]
                 if isinstance(exc, RenderFailed) and not exc.retryable:
                     break
@@ -539,7 +554,7 @@ class PipelineService:
             return last_valid
         raise RenderFailed(f"自动诊断修复在第 {revision_round + 1}/{rounds} 轮停止：{failure}。"
                            "未能生成通过门禁的新版本，已保留原产物与诊断；"
-                           "仍可直接发起自动修复，无需填写技术修复方案。")
+                           "仍可直接发起自动修复，无需填写技术修复方案。", retryable=failure_retryable)
 
     # ------------------------------------------------------------------
     # 内部：渲染
@@ -627,7 +642,8 @@ class PipelineService:
                     write_marks_sidecar(speech.audio_path, speech)
                     audio_path = str(speech.audio_path)
                 except Exception as exc:
-                    raise RenderFailed(f"重做配音失败，保留原片，请重试：{str(exc)[:300]}") from exc
+                    raise RenderFailed(f"重做配音失败，保留原片，请重试：{str(exc)[:300]}",
+                        retryable=getattr(exc, "retryable", True)) from exc
 
         return RenderArtifact(
             artifact_id=f"{job_id}-{shot.shot_id}-{attempt}-{uuid.uuid4().hex[:6]}",

@@ -169,6 +169,7 @@ type RepairTask struct {
 	Status             string           `json:"status"`
 	ResolutionEvidence string           `json:"resolution_evidence,omitempty"`
 	EvidencePairs      []RepairEvidence `json:"evidence_pairs,omitempty"`
+	RepairScope        string           `json:"repair_scope,omitempty"`
 }
 
 // RepairEvidence identifies immutable extractor-owned before/after frames.
@@ -206,18 +207,19 @@ type Feedback struct {
 
 // Shot 是一个分镜。它同时是「渲染指令」「状态载体」与「审查对象」。
 type Shot struct {
-	ShotID      string   `json:"shot_id"`
-	JobID       string   `json:"job_id"`
-	Index       int      `json:"index"`
-	Narration   string   `json:"narration"`    // 画外音 / 字幕
-	VisualBrief string   `json:"visual_brief"` // 视觉意图
-	Tag         Tag      `json:"tag"`
-	Engine      Engine   `json:"engine"`
-	DurationSec float64  `json:"duration_sec"`
-	Keywords    []string `json:"keywords,omitempty"`
-	Beats       []string `json:"beats,omitempty"` // 画面阶段的顺序描述，不含绝对时间
-	Code        string   `json:"code,omitempty"`
-	Language    string   `json:"language,omitempty"` // python / html+js
+	ShotID             string              `json:"shot_id"`
+	JobID              string              `json:"job_id"`
+	Index              int                 `json:"index"`
+	Narration          string              `json:"narration"`    // 画外音 / 字幕
+	VisualBrief        string              `json:"visual_brief"` // 视觉意图
+	Tag                Tag                 `json:"tag"`
+	Engine             Engine              `json:"engine"`
+	DurationSec        float64             `json:"duration_sec"`
+	Keywords           []string            `json:"keywords,omitempty"`
+	Beats              []string            `json:"beats,omitempty"` // 画面阶段的顺序描述，不含绝对时间
+	Code               string              `json:"code,omitempty"`
+	Language           string              `json:"language,omitempty"` // python / html+js
+	NarrationRevisions []NarrationRevision `json:"narration_revisions,omitempty"`
 
 	Status ShotStatus `json:"status"`
 	// BackgroundStyle 是**逐镜头**的背景样式覆盖（空串 = 用全片统一设置）。

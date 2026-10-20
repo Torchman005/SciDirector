@@ -345,7 +345,7 @@ class CriticAgent(Agent):
             if pairs:
                 paired_ids.add(task.task_id)
             repair_context.append({"task": task.model_dump(include={
-                'task_id', 'category', 'severity', 'target', 'acceptance', 'start_sec', 'end_sec'}),
+                'task_id', 'category', 'severity', 'target', 'acceptance', 'start_sec', 'end_sec', 'repair_scope'}),
                                    "precheck": row.get("status", "unverified"),
                                    "evidence_pairs": pairs})
         if repair_context:

@@ -355,21 +355,22 @@ func (x *TimeRange) GetEndSec() float64 {
 
 // 分镜规格：导演智能体的产出，也是全流程的输入。
 type ShotSpec struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	ShotId        string                 `protobuf:"bytes,1,opt,name=shot_id,json=shotId,proto3" json:"shot_id,omitempty"`                                                          // 稳定 ID（由 job_id + index 派生），HITL 重做时按它定位
-	Index         int32                  `protobuf:"varint,2,opt,name=index,proto3" json:"index,omitempty"`                                                                         // 在全片中的序号，从 0 开始
-	Narration     string                 `protobuf:"bytes,3,opt,name=narration,proto3" json:"narration,omitempty"`                                                                  // 画外音 / 字幕文本
-	VisualBrief   string                 `protobuf:"bytes,4,opt,name=visual_brief,json=visualBrief,proto3" json:"visual_brief,omitempty"`                                           // 视觉意图的自然语言描述（送给 Coder 与 Critic）
-	Tag           SceneTag               `protobuf:"varint,5,opt,name=tag,proto3,enum=scidirector.v1.SceneTag" json:"tag,omitempty"`                                                // 场景标签（路由依据）
-	Engine        RenderEngine           `protobuf:"varint,6,opt,name=engine,proto3,enum=scidirector.v1.RenderEngine" json:"engine,omitempty"`                                      // 目标渲染引擎
-	DurationSec   float64                `protobuf:"fixed64,7,opt,name=duration_sec,json=durationSec,proto3" json:"duration_sec,omitempty"`                                         // 目标时长
-	Keywords      []string               `protobuf:"bytes,8,rep,name=keywords,proto3" json:"keywords,omitempty"`                                                                    // 检索关键词（RAG few-shot / 素材检索）
-	Code          string                 `protobuf:"bytes,9,opt,name=code,proto3" json:"code,omitempty"`                                                                            // 当前版本的渲染源码
-	Language      string                 `protobuf:"bytes,10,opt,name=language,proto3" json:"language,omitempty"`                                                                   // 源码语言：python / html+js
-	Meta          map[string]string      `protobuf:"bytes,11,rep,name=meta,proto3" json:"meta,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // 扩展位，禁止放二进制
-	Beats         []string               `protobuf:"bytes,12,rep,name=beats,proto3" json:"beats,omitempty"`                                                                         // 画面阶段的顺序描述，不含绝对时间
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	ShotId             string                 `protobuf:"bytes,1,opt,name=shot_id,json=shotId,proto3" json:"shot_id,omitempty"`                                                          // 稳定 ID（由 job_id + index 派生），HITL 重做时按它定位
+	Index              int32                  `protobuf:"varint,2,opt,name=index,proto3" json:"index,omitempty"`                                                                         // 在全片中的序号，从 0 开始
+	Narration          string                 `protobuf:"bytes,3,opt,name=narration,proto3" json:"narration,omitempty"`                                                                  // 画外音 / 字幕文本
+	VisualBrief        string                 `protobuf:"bytes,4,opt,name=visual_brief,json=visualBrief,proto3" json:"visual_brief,omitempty"`                                           // 视觉意图的自然语言描述（送给 Coder 与 Critic）
+	Tag                SceneTag               `protobuf:"varint,5,opt,name=tag,proto3,enum=scidirector.v1.SceneTag" json:"tag,omitempty"`                                                // 场景标签（路由依据）
+	Engine             RenderEngine           `protobuf:"varint,6,opt,name=engine,proto3,enum=scidirector.v1.RenderEngine" json:"engine,omitempty"`                                      // 目标渲染引擎
+	DurationSec        float64                `protobuf:"fixed64,7,opt,name=duration_sec,json=durationSec,proto3" json:"duration_sec,omitempty"`                                         // 目标时长
+	Keywords           []string               `protobuf:"bytes,8,rep,name=keywords,proto3" json:"keywords,omitempty"`                                                                    // 检索关键词（RAG few-shot / 素材检索）
+	Code               string                 `protobuf:"bytes,9,opt,name=code,proto3" json:"code,omitempty"`                                                                            // 当前版本的渲染源码
+	Language           string                 `protobuf:"bytes,10,opt,name=language,proto3" json:"language,omitempty"`                                                                   // 源码语言：python / html+js
+	Meta               map[string]string      `protobuf:"bytes,11,rep,name=meta,proto3" json:"meta,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // 扩展位，禁止放二进制
+	Beats              []string               `protobuf:"bytes,12,rep,name=beats,proto3" json:"beats,omitempty"`                                                                         // 画面阶段的顺序描述，不含绝对时间
+	NarrationRevisions []*NarrationRevision   `protobuf:"bytes,13,rep,name=narration_revisions,json=narrationRevisions,proto3" json:"narration_revisions,omitempty"`                     // 已核对的旁白最小修订，不改 raw_script
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *ShotSpec) Reset() {
@@ -486,6 +487,89 @@ func (x *ShotSpec) GetBeats() []string {
 	return nil
 }
 
+func (x *ShotSpec) GetNarrationRevisions() []*NarrationRevision {
+	if x != nil {
+		return x.NarrationRevisions
+	}
+	return nil
+}
+
+type NarrationRevision struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Before        string                 `protobuf:"bytes,1,opt,name=before,proto3" json:"before,omitempty"`
+	After         string                 `protobuf:"bytes,2,opt,name=after,proto3" json:"after,omitempty"`
+	Reason        string                 `protobuf:"bytes,3,opt,name=reason,proto3" json:"reason,omitempty"`
+	TaskIds       []string               `protobuf:"bytes,4,rep,name=task_ids,json=taskIds,proto3" json:"task_ids,omitempty"`
+	Attempt       int32                  `protobuf:"varint,5,opt,name=attempt,proto3" json:"attempt,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *NarrationRevision) Reset() {
+	*x = NarrationRevision{}
+	mi := &file_scidirector_v1_common_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *NarrationRevision) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*NarrationRevision) ProtoMessage() {}
+
+func (x *NarrationRevision) ProtoReflect() protoreflect.Message {
+	mi := &file_scidirector_v1_common_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use NarrationRevision.ProtoReflect.Descriptor instead.
+func (*NarrationRevision) Descriptor() ([]byte, []int) {
+	return file_scidirector_v1_common_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *NarrationRevision) GetBefore() string {
+	if x != nil {
+		return x.Before
+	}
+	return ""
+}
+
+func (x *NarrationRevision) GetAfter() string {
+	if x != nil {
+		return x.After
+	}
+	return ""
+}
+
+func (x *NarrationRevision) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+func (x *NarrationRevision) GetTaskIds() []string {
+	if x != nil {
+		return x.TaskIds
+	}
+	return nil
+}
+
+func (x *NarrationRevision) GetAttempt() int32 {
+	if x != nil {
+		return x.Attempt
+	}
+	return 0
+}
+
 // 渲染产物：只传「路径与元数据」，视频二进制永远不走 gRPC。
 type RenderArtifact struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
@@ -509,7 +593,7 @@ type RenderArtifact struct {
 
 func (x *RenderArtifact) Reset() {
 	*x = RenderArtifact{}
-	mi := &file_scidirector_v1_common_proto_msgTypes[2]
+	mi := &file_scidirector_v1_common_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -521,7 +605,7 @@ func (x *RenderArtifact) String() string {
 func (*RenderArtifact) ProtoMessage() {}
 
 func (x *RenderArtifact) ProtoReflect() protoreflect.Message {
-	mi := &file_scidirector_v1_common_proto_msgTypes[2]
+	mi := &file_scidirector_v1_common_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -534,7 +618,7 @@ func (x *RenderArtifact) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RenderArtifact.ProtoReflect.Descriptor instead.
 func (*RenderArtifact) Descriptor() ([]byte, []int) {
-	return file_scidirector_v1_common_proto_rawDescGZIP(), []int{2}
+	return file_scidirector_v1_common_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *RenderArtifact) GetArtifactId() string {
@@ -649,7 +733,7 @@ type RepairEvidence struct {
 
 func (x *RepairEvidence) Reset() {
 	*x = RepairEvidence{}
-	mi := &file_scidirector_v1_common_proto_msgTypes[3]
+	mi := &file_scidirector_v1_common_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -661,7 +745,7 @@ func (x *RepairEvidence) String() string {
 func (*RepairEvidence) ProtoMessage() {}
 
 func (x *RepairEvidence) ProtoReflect() protoreflect.Message {
-	mi := &file_scidirector_v1_common_proto_msgTypes[3]
+	mi := &file_scidirector_v1_common_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -674,7 +758,7 @@ func (x *RepairEvidence) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RepairEvidence.ProtoReflect.Descriptor instead.
 func (*RepairEvidence) Descriptor() ([]byte, []int) {
-	return file_scidirector_v1_common_proto_rawDescGZIP(), []int{3}
+	return file_scidirector_v1_common_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *RepairEvidence) GetTs() float64 {
@@ -729,13 +813,14 @@ type RepairTask struct {
 	Status             string                 `protobuf:"bytes,12,opt,name=status,proto3" json:"status,omitempty"`          // open / partial / resolved / unverified
 	ResolutionEvidence string                 `protobuf:"bytes,13,opt,name=resolution_evidence,json=resolutionEvidence,proto3" json:"resolution_evidence,omitempty"`
 	EvidencePairs      []*RepairEvidence      `protobuf:"bytes,14,rep,name=evidence_pairs,json=evidencePairs,proto3" json:"evidence_pairs,omitempty"`
+	RepairScope        string                 `protobuf:"bytes,15,opt,name=repair_scope,json=repairScope,proto3" json:"repair_scope,omitempty"` // visual / narration / both；空值兼容历史任务
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
 
 func (x *RepairTask) Reset() {
 	*x = RepairTask{}
-	mi := &file_scidirector_v1_common_proto_msgTypes[4]
+	mi := &file_scidirector_v1_common_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -747,7 +832,7 @@ func (x *RepairTask) String() string {
 func (*RepairTask) ProtoMessage() {}
 
 func (x *RepairTask) ProtoReflect() protoreflect.Message {
-	mi := &file_scidirector_v1_common_proto_msgTypes[4]
+	mi := &file_scidirector_v1_common_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -760,7 +845,7 @@ func (x *RepairTask) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RepairTask.ProtoReflect.Descriptor instead.
 func (*RepairTask) Descriptor() ([]byte, []int) {
-	return file_scidirector_v1_common_proto_rawDescGZIP(), []int{4}
+	return file_scidirector_v1_common_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *RepairTask) GetTaskId() string {
@@ -861,6 +946,13 @@ func (x *RepairTask) GetEvidencePairs() []*RepairEvidence {
 	return nil
 }
 
+func (x *RepairTask) GetRepairScope() string {
+	if x != nil {
+		return x.RepairScope
+	}
+	return ""
+}
+
 // 审查意见：VLM 与人类共用。
 type CriticFeedback struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
@@ -890,7 +982,7 @@ type CriticFeedback struct {
 
 func (x *CriticFeedback) Reset() {
 	*x = CriticFeedback{}
-	mi := &file_scidirector_v1_common_proto_msgTypes[5]
+	mi := &file_scidirector_v1_common_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -902,7 +994,7 @@ func (x *CriticFeedback) String() string {
 func (*CriticFeedback) ProtoMessage() {}
 
 func (x *CriticFeedback) ProtoReflect() protoreflect.Message {
-	mi := &file_scidirector_v1_common_proto_msgTypes[5]
+	mi := &file_scidirector_v1_common_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -915,7 +1007,7 @@ func (x *CriticFeedback) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CriticFeedback.ProtoReflect.Descriptor instead.
 func (*CriticFeedback) Descriptor() ([]byte, []int) {
-	return file_scidirector_v1_common_proto_rawDescGZIP(), []int{5}
+	return file_scidirector_v1_common_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *CriticFeedback) GetPassed() bool {
@@ -1053,28 +1145,29 @@ func (x *CriticFeedback) GetHandoffReason() string {
 
 // 流水线事件：Python -> Go 的实时事件，Go 转发给 WebSocket 与 Redis 事件流。
 type PipelineEvent struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	JobId         string                 `protobuf:"bytes,1,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
-	ShotId        string                 `protobuf:"bytes,2,opt,name=shot_id,json=shotId,proto3" json:"shot_id,omitempty"`
-	Node          string                 `protobuf:"bytes,3,opt,name=node,proto3" json:"node,omitempty"`                                     // LangGraph 节点名：plan / code / render / critique / revise
-	Status        ShotStatus             `protobuf:"varint,4,opt,name=status,proto3,enum=scidirector.v1.ShotStatus" json:"status,omitempty"` // 该 shot 迁移到的状态
-	Message       string                 `protobuf:"bytes,5,opt,name=message,proto3" json:"message,omitempty"`                               // 人类可读的说明，直接展示在 UI 时间线
-	Attempt       int32                  `protobuf:"varint,6,opt,name=attempt,proto3" json:"attempt,omitempty"`
-	ShotIndex     int32                  `protobuf:"varint,7,opt,name=shot_index,json=shotIndex,proto3" json:"shot_index,omitempty"`
-	TotalShots    int32                  `protobuf:"varint,8,opt,name=total_shots,json=totalShots,proto3" json:"total_shots,omitempty"`
-	Progress      float64                `protobuf:"fixed64,9,opt,name=progress,proto3" json:"progress,omitempty"` // 0.0 ~ 1.0 全任务进度
-	Artifact      *RenderArtifact        `protobuf:"bytes,10,opt,name=artifact,proto3" json:"artifact,omitempty"`
-	Feedback      *CriticFeedback        `protobuf:"bytes,11,opt,name=feedback,proto3" json:"feedback,omitempty"`
-	Error         string                 `protobuf:"bytes,12,opt,name=error,proto3" json:"error,omitempty"` // 技术性错误信息（非空时 status 通常为 FAILED）
-	TsUnixMs      int64                  `protobuf:"varint,13,opt,name=ts_unix_ms,json=tsUnixMs,proto3" json:"ts_unix_ms,omitempty"`
-	PayloadJson   string                 `protobuf:"bytes,14,opt,name=payload_json,json=payloadJson,proto3" json:"payload_json,omitempty"` // 结构化扩展负载（如分镜表快照），保持向后兼容
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	JobId          string                 `protobuf:"bytes,1,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
+	ShotId         string                 `protobuf:"bytes,2,opt,name=shot_id,json=shotId,proto3" json:"shot_id,omitempty"`
+	Node           string                 `protobuf:"bytes,3,opt,name=node,proto3" json:"node,omitempty"`                                     // LangGraph 节点名：plan / code / render / critique / revise
+	Status         ShotStatus             `protobuf:"varint,4,opt,name=status,proto3,enum=scidirector.v1.ShotStatus" json:"status,omitempty"` // 该 shot 迁移到的状态
+	Message        string                 `protobuf:"bytes,5,opt,name=message,proto3" json:"message,omitempty"`                               // 人类可读的说明，直接展示在 UI 时间线
+	Attempt        int32                  `protobuf:"varint,6,opt,name=attempt,proto3" json:"attempt,omitempty"`
+	ShotIndex      int32                  `protobuf:"varint,7,opt,name=shot_index,json=shotIndex,proto3" json:"shot_index,omitempty"`
+	TotalShots     int32                  `protobuf:"varint,8,opt,name=total_shots,json=totalShots,proto3" json:"total_shots,omitempty"`
+	Progress       float64                `protobuf:"fixed64,9,opt,name=progress,proto3" json:"progress,omitempty"` // 0.0 ~ 1.0 全任务进度
+	Artifact       *RenderArtifact        `protobuf:"bytes,10,opt,name=artifact,proto3" json:"artifact,omitempty"`
+	Feedback       *CriticFeedback        `protobuf:"bytes,11,opt,name=feedback,proto3" json:"feedback,omitempty"`
+	Error          string                 `protobuf:"bytes,12,opt,name=error,proto3" json:"error,omitempty"` // 技术性错误信息（非空时 status 通常为 FAILED）
+	TsUnixMs       int64                  `protobuf:"varint,13,opt,name=ts_unix_ms,json=tsUnixMs,proto3" json:"ts_unix_ms,omitempty"`
+	PayloadJson    string                 `protobuf:"bytes,14,opt,name=payload_json,json=payloadJson,proto3" json:"payload_json,omitempty"`          // 结构化扩展负载（如分镜表快照），保持向后兼容
+	NarrationPatch *ShotSpec              `protobuf:"bytes,15,opt,name=narration_patch,json=narrationPatch,proto3" json:"narration_patch,omitempty"` // 仅与新 artifact 一起提交的旁白及修订历史
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *PipelineEvent) Reset() {
 	*x = PipelineEvent{}
-	mi := &file_scidirector_v1_common_proto_msgTypes[6]
+	mi := &file_scidirector_v1_common_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1086,7 +1179,7 @@ func (x *PipelineEvent) String() string {
 func (*PipelineEvent) ProtoMessage() {}
 
 func (x *PipelineEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_scidirector_v1_common_proto_msgTypes[6]
+	mi := &file_scidirector_v1_common_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1099,7 +1192,7 @@ func (x *PipelineEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PipelineEvent.ProtoReflect.Descriptor instead.
 func (*PipelineEvent) Descriptor() ([]byte, []int) {
-	return file_scidirector_v1_common_proto_rawDescGZIP(), []int{6}
+	return file_scidirector_v1_common_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *PipelineEvent) GetJobId() string {
@@ -1200,6 +1293,13 @@ func (x *PipelineEvent) GetPayloadJson() string {
 	return ""
 }
 
+func (x *PipelineEvent) GetNarrationPatch() *ShotSpec {
+	if x != nil {
+		return x.NarrationPatch
+	}
+	return nil
+}
+
 // 任务级元信息：用于 REST 查询与前端展示。
 type JobProgress struct {
 	state              protoimpl.MessageState `protogen:"open.v1"`
@@ -1217,7 +1317,7 @@ type JobProgress struct {
 
 func (x *JobProgress) Reset() {
 	*x = JobProgress{}
-	mi := &file_scidirector_v1_common_proto_msgTypes[7]
+	mi := &file_scidirector_v1_common_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1229,7 +1329,7 @@ func (x *JobProgress) String() string {
 func (*JobProgress) ProtoMessage() {}
 
 func (x *JobProgress) ProtoReflect() protoreflect.Message {
-	mi := &file_scidirector_v1_common_proto_msgTypes[7]
+	mi := &file_scidirector_v1_common_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1242,7 +1342,7 @@ func (x *JobProgress) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JobProgress.ProtoReflect.Descriptor instead.
 func (*JobProgress) Descriptor() ([]byte, []int) {
-	return file_scidirector_v1_common_proto_rawDescGZIP(), []int{7}
+	return file_scidirector_v1_common_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *JobProgress) GetJobId() string {
@@ -1310,7 +1410,7 @@ type HealthRequest struct {
 
 func (x *HealthRequest) Reset() {
 	*x = HealthRequest{}
-	mi := &file_scidirector_v1_common_proto_msgTypes[8]
+	mi := &file_scidirector_v1_common_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1322,7 +1422,7 @@ func (x *HealthRequest) String() string {
 func (*HealthRequest) ProtoMessage() {}
 
 func (x *HealthRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_scidirector_v1_common_proto_msgTypes[8]
+	mi := &file_scidirector_v1_common_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1335,7 +1435,7 @@ func (x *HealthRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthRequest.ProtoReflect.Descriptor instead.
 func (*HealthRequest) Descriptor() ([]byte, []int) {
-	return file_scidirector_v1_common_proto_rawDescGZIP(), []int{8}
+	return file_scidirector_v1_common_proto_rawDescGZIP(), []int{9}
 }
 
 type HealthResponse struct {
@@ -1353,7 +1453,7 @@ type HealthResponse struct {
 
 func (x *HealthResponse) Reset() {
 	*x = HealthResponse{}
-	mi := &file_scidirector_v1_common_proto_msgTypes[9]
+	mi := &file_scidirector_v1_common_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1365,7 +1465,7 @@ func (x *HealthResponse) String() string {
 func (*HealthResponse) ProtoMessage() {}
 
 func (x *HealthResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_scidirector_v1_common_proto_msgTypes[9]
+	mi := &file_scidirector_v1_common_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1378,7 +1478,7 @@ func (x *HealthResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthResponse.ProtoReflect.Descriptor instead.
 func (*HealthResponse) Descriptor() ([]byte, []int) {
-	return file_scidirector_v1_common_proto_rawDescGZIP(), []int{9}
+	return file_scidirector_v1_common_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *HealthResponse) GetHealthy() bool {
@@ -1437,7 +1537,7 @@ const file_scidirector_v1_common_proto_rawDesc = "" +
 	"\x1bscidirector/v1/common.proto\x12\x0escidirector.v1\"A\n" +
 	"\tTimeRange\x12\x1b\n" +
 	"\tstart_sec\x18\x01 \x01(\x01R\bstartSec\x12\x17\n" +
-	"\aend_sec\x18\x02 \x01(\x01R\x06endSec\"\xd2\x03\n" +
+	"\aend_sec\x18\x02 \x01(\x01R\x06endSec\"\xa6\x04\n" +
 	"\bShotSpec\x12\x17\n" +
 	"\ashot_id\x18\x01 \x01(\tR\x06shotId\x12\x14\n" +
 	"\x05index\x18\x02 \x01(\x05R\x05index\x12\x1c\n" +
@@ -1451,10 +1551,17 @@ const file_scidirector_v1_common_proto_rawDesc = "" +
 	"\blanguage\x18\n" +
 	" \x01(\tR\blanguage\x126\n" +
 	"\x04meta\x18\v \x03(\v2\".scidirector.v1.ShotSpec.MetaEntryR\x04meta\x12\x14\n" +
-	"\x05beats\x18\f \x03(\tR\x05beats\x1a7\n" +
+	"\x05beats\x18\f \x03(\tR\x05beats\x12R\n" +
+	"\x13narration_revisions\x18\r \x03(\v2!.scidirector.v1.NarrationRevisionR\x12narrationRevisions\x1a7\n" +
 	"\tMetaEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xbe\x03\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x8e\x01\n" +
+	"\x11NarrationRevision\x12\x16\n" +
+	"\x06before\x18\x01 \x01(\tR\x06before\x12\x14\n" +
+	"\x05after\x18\x02 \x01(\tR\x05after\x12\x16\n" +
+	"\x06reason\x18\x03 \x01(\tR\x06reason\x12\x19\n" +
+	"\btask_ids\x18\x04 \x03(\tR\ataskIds\x12\x18\n" +
+	"\aattempt\x18\x05 \x01(\x05R\aattempt\"\xbe\x03\n" +
 	"\x0eRenderArtifact\x12\x1f\n" +
 	"\vartifact_id\x18\x01 \x01(\tR\n" +
 	"artifactId\x12\x17\n" +
@@ -1479,7 +1586,7 @@ const file_scidirector_v1_common_proto_rawDesc = "" +
 	"\x06before\x18\x02 \x01(\tR\x06before\x12\x14\n" +
 	"\x05after\x18\x03 \x01(\tR\x05after\x12,\n" +
 	"\x12before_artifact_id\x18\x04 \x01(\tR\x10beforeArtifactId\x12*\n" +
-	"\x11after_artifact_id\x18\x05 \x01(\tR\x0fafterArtifactId\"\xd6\x03\n" +
+	"\x11after_artifact_id\x18\x05 \x01(\tR\x0fafterArtifactId\"\xf9\x03\n" +
 	"\n" +
 	"RepairTask\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x1a\n" +
@@ -1498,7 +1605,8 @@ const file_scidirector_v1_common_proto_rawDesc = "" +
 	"\x06region\x18\v \x03(\x01R\x06region\x12\x16\n" +
 	"\x06status\x18\f \x01(\tR\x06status\x12/\n" +
 	"\x13resolution_evidence\x18\r \x01(\tR\x12resolutionEvidence\x12E\n" +
-	"\x0eevidence_pairs\x18\x0e \x03(\v2\x1e.scidirector.v1.RepairEvidenceR\revidencePairs\"\xa4\x05\n" +
+	"\x0eevidence_pairs\x18\x0e \x03(\v2\x1e.scidirector.v1.RepairEvidenceR\revidencePairs\x12!\n" +
+	"\frepair_scope\x18\x0f \x01(\tR\vrepairScope\"\xa4\x05\n" +
 	"\x0eCriticFeedback\x12\x16\n" +
 	"\x06passed\x18\x01 \x01(\bR\x06passed\x12\x14\n" +
 	"\x05score\x18\x02 \x01(\x01R\x05score\x12\x16\n" +
@@ -1521,7 +1629,7 @@ const file_scidirector_v1_common_proto_rawDesc = "" +
 	"\amessage\x18\x11 \x01(\tR\amessage\x12\x1f\n" +
 	"\vartifact_id\x18\x12 \x01(\tR\n" +
 	"artifactId\x12%\n" +
-	"\x0ehandoff_reason\x18\x13 \x01(\tR\rhandoffReason\"\xe6\x03\n" +
+	"\x0ehandoff_reason\x18\x13 \x01(\tR\rhandoffReason\"\xa9\x04\n" +
 	"\rPipelineEvent\x12\x15\n" +
 	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12\x17\n" +
 	"\ashot_id\x18\x02 \x01(\tR\x06shotId\x12\x12\n" +
@@ -1540,7 +1648,8 @@ const file_scidirector_v1_common_proto_rawDesc = "" +
 	"\x05error\x18\f \x01(\tR\x05error\x12\x1c\n" +
 	"\n" +
 	"ts_unix_ms\x18\r \x01(\x03R\btsUnixMs\x12!\n" +
-	"\fpayload_json\x18\x0e \x01(\tR\vpayloadJson\"\xb7\x02\n" +
+	"\fpayload_json\x18\x0e \x01(\tR\vpayloadJson\x12A\n" +
+	"\x0fnarration_patch\x18\x0f \x01(\v2\x18.scidirector.v1.ShotSpecR\x0enarrationPatch\"\xb7\x02\n" +
 	"\vJobProgress\x12\x15\n" +
 	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12\x1f\n" +
 	"\vtotal_shots\x18\x02 \x01(\x05R\n" +
@@ -1607,39 +1716,42 @@ func file_scidirector_v1_common_proto_rawDescGZIP() []byte {
 }
 
 var file_scidirector_v1_common_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
-var file_scidirector_v1_common_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
+var file_scidirector_v1_common_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
 var file_scidirector_v1_common_proto_goTypes = []any{
-	(SceneTag)(0),          // 0: scidirector.v1.SceneTag
-	(RenderEngine)(0),      // 1: scidirector.v1.RenderEngine
-	(ShotStatus)(0),        // 2: scidirector.v1.ShotStatus
-	(FeedbackSource)(0),    // 3: scidirector.v1.FeedbackSource
-	(*TimeRange)(nil),      // 4: scidirector.v1.TimeRange
-	(*ShotSpec)(nil),       // 5: scidirector.v1.ShotSpec
-	(*RenderArtifact)(nil), // 6: scidirector.v1.RenderArtifact
-	(*RepairEvidence)(nil), // 7: scidirector.v1.RepairEvidence
-	(*RepairTask)(nil),     // 8: scidirector.v1.RepairTask
-	(*CriticFeedback)(nil), // 9: scidirector.v1.CriticFeedback
-	(*PipelineEvent)(nil),  // 10: scidirector.v1.PipelineEvent
-	(*JobProgress)(nil),    // 11: scidirector.v1.JobProgress
-	(*HealthRequest)(nil),  // 12: scidirector.v1.HealthRequest
-	(*HealthResponse)(nil), // 13: scidirector.v1.HealthResponse
-	nil,                    // 14: scidirector.v1.ShotSpec.MetaEntry
+	(SceneTag)(0),             // 0: scidirector.v1.SceneTag
+	(RenderEngine)(0),         // 1: scidirector.v1.RenderEngine
+	(ShotStatus)(0),           // 2: scidirector.v1.ShotStatus
+	(FeedbackSource)(0),       // 3: scidirector.v1.FeedbackSource
+	(*TimeRange)(nil),         // 4: scidirector.v1.TimeRange
+	(*ShotSpec)(nil),          // 5: scidirector.v1.ShotSpec
+	(*NarrationRevision)(nil), // 6: scidirector.v1.NarrationRevision
+	(*RenderArtifact)(nil),    // 7: scidirector.v1.RenderArtifact
+	(*RepairEvidence)(nil),    // 8: scidirector.v1.RepairEvidence
+	(*RepairTask)(nil),        // 9: scidirector.v1.RepairTask
+	(*CriticFeedback)(nil),    // 10: scidirector.v1.CriticFeedback
+	(*PipelineEvent)(nil),     // 11: scidirector.v1.PipelineEvent
+	(*JobProgress)(nil),       // 12: scidirector.v1.JobProgress
+	(*HealthRequest)(nil),     // 13: scidirector.v1.HealthRequest
+	(*HealthResponse)(nil),    // 14: scidirector.v1.HealthResponse
+	nil,                       // 15: scidirector.v1.ShotSpec.MetaEntry
 }
 var file_scidirector_v1_common_proto_depIdxs = []int32{
 	0,  // 0: scidirector.v1.ShotSpec.tag:type_name -> scidirector.v1.SceneTag
 	1,  // 1: scidirector.v1.ShotSpec.engine:type_name -> scidirector.v1.RenderEngine
-	14, // 2: scidirector.v1.ShotSpec.meta:type_name -> scidirector.v1.ShotSpec.MetaEntry
-	7,  // 3: scidirector.v1.RepairTask.evidence_pairs:type_name -> scidirector.v1.RepairEvidence
-	3,  // 4: scidirector.v1.CriticFeedback.source:type_name -> scidirector.v1.FeedbackSource
-	8,  // 5: scidirector.v1.CriticFeedback.repair_tasks:type_name -> scidirector.v1.RepairTask
-	2,  // 6: scidirector.v1.PipelineEvent.status:type_name -> scidirector.v1.ShotStatus
-	6,  // 7: scidirector.v1.PipelineEvent.artifact:type_name -> scidirector.v1.RenderArtifact
-	9,  // 8: scidirector.v1.PipelineEvent.feedback:type_name -> scidirector.v1.CriticFeedback
-	9,  // [9:9] is the sub-list for method output_type
-	9,  // [9:9] is the sub-list for method input_type
-	9,  // [9:9] is the sub-list for extension type_name
-	9,  // [9:9] is the sub-list for extension extendee
-	0,  // [0:9] is the sub-list for field type_name
+	15, // 2: scidirector.v1.ShotSpec.meta:type_name -> scidirector.v1.ShotSpec.MetaEntry
+	6,  // 3: scidirector.v1.ShotSpec.narration_revisions:type_name -> scidirector.v1.NarrationRevision
+	8,  // 4: scidirector.v1.RepairTask.evidence_pairs:type_name -> scidirector.v1.RepairEvidence
+	3,  // 5: scidirector.v1.CriticFeedback.source:type_name -> scidirector.v1.FeedbackSource
+	9,  // 6: scidirector.v1.CriticFeedback.repair_tasks:type_name -> scidirector.v1.RepairTask
+	2,  // 7: scidirector.v1.PipelineEvent.status:type_name -> scidirector.v1.ShotStatus
+	7,  // 8: scidirector.v1.PipelineEvent.artifact:type_name -> scidirector.v1.RenderArtifact
+	10, // 9: scidirector.v1.PipelineEvent.feedback:type_name -> scidirector.v1.CriticFeedback
+	5,  // 10: scidirector.v1.PipelineEvent.narration_patch:type_name -> scidirector.v1.ShotSpec
+	11, // [11:11] is the sub-list for method output_type
+	11, // [11:11] is the sub-list for method input_type
+	11, // [11:11] is the sub-list for extension type_name
+	11, // [11:11] is the sub-list for extension extendee
+	0,  // [0:11] is the sub-list for field type_name
 }
 
 func init() { file_scidirector_v1_common_proto_init() }
@@ -1653,7 +1765,7 @@ func file_scidirector_v1_common_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_scidirector_v1_common_proto_rawDesc), len(file_scidirector_v1_common_proto_rawDesc)),
 			NumEnums:      4,
-			NumMessages:   11,
+			NumMessages:   12,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

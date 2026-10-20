@@ -14,6 +14,9 @@
 
 每个 incorrect 必须给出 target（原变量名/文字对象）、evidence（实际表达式与正确含义的对比）、
 instruction（修正公式或改为正确机制图的具体办法）、acceptance（可验证的科学条件）。
+同时给 repair_scope：visual 表示只有图示/源码错误，narration 表示原旁白本身错误，both 表示两者都错。
+旁白不是科学真值；若错误在旁白，target 使用 narration，证据必须逐字引用当前旁白的错误原句并对比正确含义。
+不能要求画面对齐错误旁白，也不能把正确旁白与错误画面的冲突误判成旁白错误。
 不要要求用户提供修复方案。最多报告三项关键错误，不能捏造帧号或像素证据。
 acceptance 应描述应被保留的科学含义；若 instruction 允许“正确切片或机制图”两种修法，
 验收条件必须兼容两者，不能仍强制保留原来的曲线表现形式。
@@ -24,5 +27,5 @@ acceptance 应描述应被保留的科学含义；若 instruction 允许“正�
 仅删除错误标签但丢失应解释的机制，不算解决；没有证据不能关闭。
 
 只输出 JSON：
-{"findings":[{"verdict":"correct|incorrect|uncertain","target":"变量名","evidence":"定义核对依据","instruction":"错误时必填","acceptance":"错误时必填"}],
+{"findings":[{"verdict":"correct|incorrect|uncertain","target":"变量名或 narration","evidence":"定义核对依据","instruction":"错误时必填","acceptance":"错误时必填","repair_scope":"visual|narration|both"}],
  "resolutions":[{"task_id":"已有编号","resolved":false,"evidence":"当前源码核对依据"}]}

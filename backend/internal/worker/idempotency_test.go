@@ -77,6 +77,7 @@ type fakeAIServer struct {
 	failFirst     int32
 	failCode      codes.Code
 	returnFailure bool
+	revisionReply *pb.ReviseShotResponse
 	// entered 在第一次调用进入时关闭，供测试做确定性同步（不靠 sleep 赌时序）。
 	entered chan struct{}
 	once    sync.Once
@@ -102,6 +103,9 @@ func (f *fakeAIServer) ReviseShot(ctx context.Context, req *pb.ReviseShotRequest
 	}
 	if f.returnFailure {
 		return &pb.ReviseShotResponse{Success: false, Error: "模拟自动修复未通过"}, nil
+	}
+	if f.revisionReply != nil {
+		return f.revisionReply, nil
 	}
 
 	shot := req.GetShot()

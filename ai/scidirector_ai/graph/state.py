@@ -245,6 +245,7 @@ def make_event(
     artifact: RenderArtifact | None = None,
     feedback: CriticFeedback | None = None,
     payload_json: str = "",
+    narration_patch: ShotSpec | None = None,
 ) -> dict[str, Any]:
     """构造一条待推送的流水线事件。
 
@@ -277,4 +278,5 @@ def make_event(
         "feedback": feedback,
         "ts_unix_ms": int(time.time() * 1000),
         "payload_json": payload_json,
+        "narration_patch": narration_patch,
     }

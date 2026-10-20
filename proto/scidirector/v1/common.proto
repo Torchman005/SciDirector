@@ -109,6 +109,15 @@ message ShotSpec {
   string language = 10;       // 源码语言：python / html+js
   map<string, string> meta = 11; // 扩展位，禁止放二进制
   repeated string beats = 12;  // 画面阶段的顺序描述，不含绝对时间
+  repeated NarrationRevision narration_revisions = 13; // 已核对的旁白最小修订，不改 raw_script
+}
+
+message NarrationRevision {
+  string before = 1;
+  string after = 2;
+  string reason = 3;
+  repeated string task_ids = 4;
+  int32 attempt = 5;
 }
 
 // 渲染产物：只传「路径与元数据」，视频二进制永远不走 gRPC。
@@ -154,6 +163,7 @@ message RepairTask {
   string status = 12;              // open / partial / resolved / unverified
   string resolution_evidence = 13;
   repeated RepairEvidence evidence_pairs = 14;
+  string repair_scope = 15; // visual / narration / both；空值兼容历史任务
 }
 
 // 审查意见：VLM 与人类共用。
@@ -196,6 +206,7 @@ message PipelineEvent {
   string error = 12;                // 技术性错误信息（非空时 status 通常为 FAILED）
   int64 ts_unix_ms = 13;
   string payload_json = 14;         // 结构化扩展负载（如分镜表快照），保持向后兼容
+  ShotSpec narration_patch = 15;    // 仅与新 artifact 一起提交的旁白及修订历史
 }
 
 // 任务级元信息：用于 REST 查询与前端展示。

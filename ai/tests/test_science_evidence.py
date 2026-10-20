@@ -82,11 +82,11 @@ def test_reaudit_keeps_acceptance_but_excludes_stale_claims_and_director_draft()
         code='curve=ax.plot(lambda x:x*x/(1+np.exp(-x)))\nlabel=Text("W=V=1,b=c=0 切片")')
     old=CriticFeedback(passed=False,suggestions=['旧代码缺少参数'],repair_tasks=[
         RepairTask(task_id='science-1-01',category='logic',severity='blocking',target='curve',
-            evidence='旧代码缺少参数',instruction='旧修法',acceptance='须明确参数和切片含义')])
+            evidence='旧代码缺少参数',instruction='旧修法',acceptance='须明确参数和切片含义',repair_scope='both')])
     request=science_request(shot,old)
     data=json.loads(request)
     assert '旧错误' not in request and '旧代码' not in request and '旧修法' not in request
-    assert data['previous_science_tasks']==[{'task_id':'science-1-01','target':'curve','acceptance':'须明确参数和切片含义'}]
+    assert data['previous_science_tasks']==[{'task_id':'science-1-01','target':'curve','acceptance':'须明确参数和切片含义','repair_scope':'both'}]
     assert 'W=V=1,b=c=0' in request
 
 
