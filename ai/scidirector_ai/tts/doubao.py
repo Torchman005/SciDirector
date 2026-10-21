@@ -30,8 +30,11 @@
 
 ## 时间戳
 
-两代接口能否返回时间信息取决于参数与版本，这里**不臆造字段**：`marks` 恒为空，
-字幕回退到「按镜头真实音频时长对齐」（Go 侧已实现并验证）。
+V3 请求带 `audio_params.enable_timestamp`（TTS 1.0）与 `enable_subtitle`（TTS 2.0），
+响应里的 `sentence.words[{word,startTime,endTime}]`（秒）解析为逐字 marks，
+章节模式与字幕对齐都依赖它。1.0 的字词按文本规范化后的形式返回（"2019"→二/零/一/九），
+章节对齐用序列比对兼容。若某句的时间从 0 重新起算，按上一句结束时刻顺延。
+V1 不返回时间戳，`marks` 为空。
 """
 
 from __future__ import annotations
@@ -43,7 +46,7 @@ from pathlib import Path
 
 import httpx
 
-from .base import SynthesisResult, TTSError, write_audio
+from .base import SentenceMark, SynthesisResult, TTSError, write_audio
 
 DEFAULT_ENDPOINT = "https://openspeech.bytedance.com/api/v1/tts"
 #: 新版（V3）单向流式端点。可用 SCID_DOUBAO_ENDPOINT 覆盖。
@@ -62,6 +65,8 @@ API_STYLE_V3 = "v3"  # user / req_params，分块或 SSE
 #: 两代各自的成功码。
 SUCCESS_CODE_V1 = 3000
 SUCCESS_CODE_V3 = 0
+#: V3 流的结束包（实测）。
+SUCCESS_CODE_V3_DONE = 20000000
 #: 兼容旧名（等于老版成功码）。
 #: 保留它是因为改名曾经**打断了既有调用方**（`test_tts.py` 就此收集失败）——
 #: 一个仍在使用的公开名字不该无声消失。
@@ -79,6 +84,10 @@ KNOWN_ERROR_HINTS: dict[int, str] = {
     45000292: (
         "并发配额不足。到火山引擎控制台确认「声音复刻 / 语音合成大模型」的**并发数**"
         "是否已开通 —— 并发为 0 或已用满都会报这个；它与「音色数量」是两项不同的额度"
+    ),
+    45000030: (
+        "该 API Key 没有开通请求的资源（X-Api-Resource-Id）。到火山引擎控制台开通"
+        "「豆包语音合成大模型」或在 SCID_DOUBAO_RESOURCE_ID 填已开通的资源"
     ),
     45000000: (
         "请求被网关拒绝，通常是**端点与请求体形态不匹配** ——"
@@ -198,6 +207,9 @@ class DoubaoTTSProvider:
         audio_params: dict[str, object] = {
             "format": self.encoding,
             "sample_rate": self.sample_rate,
+            # 逐字时间戳：1.0 用 enable_timestamp，2.0 用 enable_subtitle；不支持的一方会忽略。
+            "enable_timestamp": True,
+            "enable_subtitle": True,
         }
         if speed is not None and speed > 0:
             # 1.0 倍速 -> 0；1.5 -> +50；0.8 -> -20。
@@ -210,6 +222,29 @@ class DoubaoTTSProvider:
     # ------------------------------------------------------------------
     # 响应解析
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _marks_from_sentences(sentences: list[dict]) -> tuple[SentenceMark, ...]:
+        marks: list[SentenceMark] = []
+        offset, last_end = 0.0, 0.0
+        for sentence in sentences:
+            words = [w for w in sentence.get("words") or [] if isinstance(w, dict) and w.get("word")]
+            try:
+                spans = [(str(w["word"]), float(w["startTime"]), float(w["endTime"])) for w in words]
+            except (KeyError, TypeError, ValueError):
+                return ()
+            if not spans:
+                continue
+            # 句内时间若从 0 重新起算，顺延到上一句之后。
+            if marks and spans[0][1] + offset < last_end - .05:
+                offset = last_end
+            for word, start, end in spans:
+                start, end = start + offset, max(end + offset, start + offset + .01)
+                if start < last_end - .05:
+                    return ()  # 不单调就不给，宁可回退到按时长对齐，也不给错位时间
+                marks.append(SentenceMark(text=word, start_sec=start, duration_sec=end - start))
+                last_end = end
+        return tuple(marks)
 
     def _parse_response_body(self, raw: str) -> tuple[int | None, str, bytes]:
         """解析响应体，返回 (code, message, 音频字节)。
@@ -226,6 +261,7 @@ class DoubaoTTSProvider:
         code: int | None = None
         message = ""
         chunks: list[bytes] = []
+        self._sentences: list[dict] = []
         parsed_any = False
 
         for line in raw.splitlines():
@@ -250,6 +286,8 @@ class DoubaoTTSProvider:
                 code = obj["code"]
             if obj.get("message"):
                 message = str(obj["message"])
+            if isinstance(obj.get("sentence"), dict):
+                self._sentences.append(obj["sentence"])
             data = obj.get("data")
             if isinstance(data, str) and data:
                 try:
@@ -279,7 +317,8 @@ class DoubaoTTSProvider:
             # 此时以"有没有音频"为准（由调用方判断）。
             return True
         if self.api_style == API_STYLE_V3:
-            return code == SUCCESS_CODE_V3
+            # 实测 V3 流以 {"code":20000000,"message":"OK"} 收尾，表示整次合成结束。
+            return code in (SUCCESS_CODE_V3, SUCCESS_CODE_V3_DONE)
         return code == SUCCESS_CODE_V1
 
     # ------------------------------------------------------------------
@@ -361,6 +400,8 @@ class DoubaoTTSProvider:
         # 统一走 write_audio：它会 resolve 并返回绝对路径，
         # 跨进程交给 Go worker 时相对路径必然失效。
         written = write_audio(out_path, audio)
+        marks = self._marks_from_sentences(getattr(self, "_sentences", []))
         return SynthesisResult(
-            audio_path=written, duration_sec=0.0, marks=(), provider=self.name
+            audio_path=written, duration_sec=max((m.end_sec for m in marks), default=0.0),
+            marks=marks, provider=self.name,
         )

@@ -204,3 +204,29 @@ def test_empty_audio_reports_the_server_message(monkeypatch, tmp_path: Path) -> 
     with pytest.raises(Exception) as exc:
         p.synthesize("你好", out_path=tmp_path / "a.mp3")
     assert "speaker not found" in str(exc.value)
+
+
+def test_v3_requests_and_parses_word_timestamps(tmp_path, monkeypatch) -> None:
+    import base64, json
+    import httpx
+    from scidirector_ai.tts.doubao import DoubaoTTSProvider
+    sent = {}
+    audio = base64.b64encode(b"ID3fake-mp3").decode()
+    lines = [json.dumps({"code": 0, "data": audio}),
+             json.dumps({"code": 0, "sentence": {"text": "你好。", "words": [
+                 {"word": "你", "startTime": 0.1, "endTime": 0.3}, {"word": "好", "startTime": 0.3, "endTime": 0.6}]}}),
+             # 第二句时间从 0 重新起算：应顺延到上一句之后。
+             json.dumps({"code": 0, "sentence": {"text": "再见。", "words": [
+                 {"word": "再", "startTime": 0.0, "endTime": 0.2}, {"word": "见", "startTime": 0.2, "endTime": 0.5}]}}),
+             json.dumps({"code": 20000000, "message": "ok"})]
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        sent.update(json)
+        return httpx.Response(200, text="\n".join(lines))
+    monkeypatch.setattr(httpx, "post", fake_post)
+    provider = DoubaoTTSProvider(api_key="k", auth_mode="api_key", api_style="v3", resource_id="r")
+    result = provider.synthesize("你好。再见。", out_path=tmp_path / "a.mp3")
+    assert sent["req_params"]["audio_params"]["enable_timestamp"] is True
+    assert [m.text for m in result.marks] == ["你", "好", "再", "见"]
+    assert result.marks[2].start_sec == pytest.approx(0.6)
+    assert result.duration_sec == pytest.approx(1.1)
