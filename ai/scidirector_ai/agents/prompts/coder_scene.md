@@ -20,8 +20,8 @@ grid 为结构化词元/张量示意网格，cells=[{label:"Q",color:"secondary"
 character 无 text，建议 box 宽高像素比约 2:3；不要拉成横条。角色让出主图与底部字幕区域。
 角色关键帧可 expression=neutral/smile/curious/surprised/focused、gesture=idle/explain/point/think/wave；在到达该帧时切换。
 每个元素有唯一稳定 id、kind、box={x,y,width,height}，box 坐标为画布归一化比例。
-内容建议在 x/y=0.06～0.94 安全区域内；透明入场可以从边缘开始，可见内容必须在画布内。
-文字和几何使用不同元素，图形不支持内嵌文字。
+构图用满画面：主图占画面左侧约 3/4 的全高区域（x 0.05～0.76，y 0.08～0.84），讲解员区域上方的右侧一列（x≥0.78、y≤0.52）也可放结果或注释；y>0.86 留给字幕，不放内容。主物件（含其直接部件）的包围框至少占画面面积 35%，不要把整幅图挤在上方 40% 或缩成一排小方块。正文/标签字号 44～64，标题 56～72，次要注释不低于下限。透明入场可以从边缘开始，可见内容必须在画布内。
+文字和几何使用不同元素，图形不支持内嵌文字。每个非装饰的 rect/circle 都必须承载或标注内容：在其中放 text/icon/grid/image，或直接改用 card；禁止空白占位框、空白圆圈，也不要用单独的“~”“…”等符号当标签。
 font_size 不低于下限；超长文字拆成短句或多阶段。card/code 内边距为 .6em，预留区域。
 text/card/code 使用 text，align 为 left/center/right；文本用字面内容，不能使用标签/Markdown，公式需要 LaTeX 时交给 Manim。
 bars 必须 data=[{label,value},…] 及 unit（无量纲也写“无量纲”），数值非负，同屏最多 8 行。
@@ -45,11 +45,11 @@ easing 为 linear/smooth/step/ease_in/ease_out/spring，描述到达当前关键
 所有元素共用同一时间轴，包括末尾停留压缩；配合运动的对象使用相同关键帧时间。line 带 points 会规范化为 polyline。
 切换姿态的交叉淡化和运动组平移都由绝对时间计算，倒序 seek 必须得到相同画面。群组缩放也计入字号、边界、右下角避让和浏览器中段预检；先给被放大的主图留足空间。科学关系线必须使用锚点，不能让箭头与端点脱离。
 同屏前景对象必须保留各自轮廓和间隔，异色也不能互相压住；标签置于主图上层且互不重叠。外框内嵌格子等有意复合的对象使用同一个 overlap_group，其他对象不能借它绕过碰撞。若设置了讲解员避让区，只让右下角的关键内容避让，不设角色栏。背景无语义几何可 decorative=true，文字/数据/关系线不能借此绕过遮挡检查。
-存在右下讲解员区域 x≥0.78、y≥0.55 时，对每个可见关键帧先验算：元素的右边界≤0.77 或下边界≤0.54，两者满足一个即可。包括所有标签、卡片、连线与移动/缩放后的边界。具体做法：宽幅主图放上半屏（下边界≤0.54），下半屏注释放左侧（右边界≤0.77）；右上仍使用全画宽。不要把标签锚点位于区域外误当作整个标签都在区域外，也不要让右侧卡片一直延伸到下半屏。
+存在右下讲解员区域 x≥0.78、y≥0.55 时，对每个可见关键帧先验算：元素的右边界≤0.76 或下边界≤0.52，两者满足一个即可，包括所有标签、卡片、连线与移动/缩放后的边界。具体做法：主图占左侧 3/4 的全高（x 0.05～0.76，y 0.08～0.84），右侧一列只用到 y≤0.52（放结果、图例或关键数字）；不要把主图压到上半屏，也不要让右侧卡片延伸到下半屏。不要把标签锚点位于区域外误当作整个标签都在区域外。
 确有科学含义的复合图形可以使用相同 overlap_group 标记有意叠合，不能用它掩盖文字遮挡。
-首帧可短暂淡入建立场景，避免长时间空白；末帧必须可见。阶段与旁白节拍对应，阅读可停留，不用无意义抖动制造变化。
+主体内容在 0.5 秒内可见：标题与主物件在 time≤0.5/{{duration_sec}} 前完成入场，不要让开场空白。淡入/淡出控制在 0.3～0.45 秒（入场关键帧与完成关键帧之差 ≈0.4/{{duration_sec}}），不能用数秒的慢淡入让对象长时间半透明；完成入场后 opacity 保持 1，弱化旧对象用 0.35～0.5 并注明原因。末帧必须可见。阶段与旁白节拍对应，阅读可停留，不用无意义抖动制造变化。
 修改时保留正确元素的 id、内容和阶段，只调整被定位的问题。
 explanation 必须说明阶段、布局和数据来源；修复任务逐项写编号、对象、时间段和可见变化。
 
-例子（结构用法，替换成当前内容与真实字号；不能复制示例数字作为脚本数据）：
-{"version":1,"elements":[{"id":"title","kind":"text","text":"解释主题","font_size":48,"box":{"x":0.06,"y":0.06,"width":0.88,"height":0.14}},{"id":"source","kind":"grid","cells":[{"label":"x₁"},{"label":"x₂"}],"columns":2,"font_size":40,"color":"secondary","box":{"x":0.08,"y":0.3,"width":0.18,"height":0.16}},{"id":"process","kind":"icon","glyph":"chip","color":"accent","box":{"x":0.42,"y":0.26,"width":0.15,"height":0.26},"keyframes":[{"time":0,"opacity":0},{"time":0.25}]},{"id":"relation","kind":"line","anchor_from":"source","anchor_to":"process","arrow":true,"flow":true,"color":"secondary","keyframes":[{"time":0.15,"reveal":0},{"time":0.4}]},{"id":"result","kind":"text","text":"输出结果","font_size":48,"box":{"x":0.68,"y":0.3,"width":0.24,"height":0.16},"keyframes":[{"time":0.45,"opacity":0},{"time":0.65}]},{"id":"note","kind":"text","text":"机制解释放在这里","font_size":40,"box":{"x":0.08,"y":0.68,"width":0.62,"height":0.14}}],"explanation":"宽幅上方机制主图、左下解释，右下局部避让；网格标签仅作格式示例，不是测量数据"}
+例子（结构用法，8 秒镜头，替换成当前内容与真实字号；不能复制示例数字作为脚本数据）：
+{"version":1,"elements":[{"id":"title","kind":"text","text":"解释主题","font_size":64,"color":"primary","box":{"x":0.05,"y":0.06,"width":0.7,"height":0.11},"keyframes":[{"time":0,"opacity":0,"dy":-0.01},{"time":0.05,"easing":"ease_out"}]},{"id":"source","kind":"grid","cells":[{"label":"x₁"},{"label":"x₂"},{"label":"x₃"}],"columns":1,"font_size":52,"color":"secondary","box":{"x":0.05,"y":0.24,"width":0.17,"height":0.46},"keyframes":[{"time":0,"reveal":0},{"time":0.06}]},{"id":"source_label","kind":"text","text":"输入","font_size":48,"align":"center","color":"secondary","layer":5,"box":{"x":0.05,"y":0.72,"width":0.17,"height":0.08}},{"id":"process","kind":"icon","glyph":"chip","color":"accent","box":{"x":0.31,"y":0.26,"width":0.22,"height":0.4},"keyframes":[{"time":0.02,"opacity":0,"scale":0.94},{"time":0.07,"easing":"spring"}]},{"id":"process_label","kind":"text","text":"处理单元","font_size":52,"align":"center","layer":5,"box":{"x":0.29,"y":0.69,"width":0.26,"height":0.09},"keyframes":[{"time":0.04,"opacity":0},{"time":0.09}]},{"id":"relation","kind":"line","anchor_from":"source","anchor_to":"process","arrow":true,"flow":true,"color":"secondary","layer":2,"keyframes":[{"time":0.1,"reveal":0},{"time":0.2}]},{"id":"result","kind":"card","text":"输出结果","font_size":56,"align":"center","color":"success","material":"gradient","box":{"x":0.6,"y":0.3,"width":0.34,"height":0.2},"keyframes":[{"time":0.45,"opacity":0,"dx":-0.02},{"time":0.5,"easing":"ease_out"}]},{"id":"result_relation","kind":"line","anchor_from":"process","anchor_to":"result","arrow":true,"color":"success","layer":2,"keyframes":[{"time":0.4,"reveal":0},{"time":0.47}]},{"id":"note","kind":"text","text":"一句话说明机制","font_size":46,"color":"muted","box":{"x":0.05,"y":0.79,"width":0.66,"height":0.07}}],"explanation":"左侧 3/4 全高放主图（输入网格→处理单元），右上列放结果并避开右下讲解员；0.5 秒内标题与主图可见，淡入约 0.4 秒；网格标签仅作格式示例，不是测量数据"}

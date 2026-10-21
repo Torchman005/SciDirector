@@ -51,7 +51,7 @@ export interface Artifact {
 
 export interface RepairTask {
   task_id: string
-  category: 'logic' | 'readability' | 'pacing' | 'layout' | 'rendering'
+  category: 'logic' | 'readability' | 'pacing' | 'layout' | 'rendering' | 'human'
   severity: 'blocking' | 'major' | 'advisory'
   start_sec: number
   end_sec: number

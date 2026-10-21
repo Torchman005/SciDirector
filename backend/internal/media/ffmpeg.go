@@ -391,14 +391,16 @@ func (r *Runner) Normalize(ctx context.Context, in, out string, spec NormalizeSp
 		"-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
 		"-map", "0:v:0", "-map", "1:a:0",
 		"-vf", spec.normalizeVideoFilter(),
-		"-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+	}
+	args = append(args, intermediateVideoArgs()...)
+	args = append(args,
 		"-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
 		// 显式写出色彩标记。仅靠滤镜转换是不够的：不打标时播放器只能猜，
 		// 而不同的播放器猜法不同，同一部成片在两个平台上观感不一致。
 		"-color_range", "tv",
 		"-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709",
 		"-shortest",
-	}
+	)
 	// 对齐到计划时长：`-t` 是输出选项，在**补帧之后**再兜一次底，
 	// 保证裁与补两条路径的产物长度都精确等于 AlignTo。
 	if spec.AlignTo > 0 {
@@ -467,7 +469,15 @@ func WriteConcatList(listPath string, files []string) error {
 // 早期实现把 `-map 2:s:0` 写死了，于是在「视频自带音轨、不额外传 audioPath」
 // 这条**最常见**的路径上，字幕下标永远指向不存在的流 ——
 // 表现为软字幕静默封不进去，而画面和音轨都正常，很难怀疑到映射上。
+//
+// MuxFinal 是成片唯一的交付编码：前面所有步骤都用近无损的中间档（crf 12），
+// 这里一次性用 slow + animation 调优 + 码率上限编码，避免多代压缩损失。
 func (r *Runner) MuxFinal(ctx context.Context, videoPath, audioPath, subtitlePath, out string) error {
+	return r.mux(ctx, videoPath, audioPath, subtitlePath, out, deliveryVideoArgs())
+}
+
+// mux 是 MuxFinal 的实现；videoArgs 决定视频是交付编码还是直接复制（预览）。
+func (r *Runner) mux(ctx context.Context, videoPath, audioPath, subtitlePath, out string, videoArgs []string) error {
 	var args []string
 	args = append(args, "-hide_banner", "-nostdin", "-y")
 
@@ -501,10 +511,8 @@ func (r *Runner) MuxFinal(ctx context.Context, videoPath, audioPath, subtitlePat
 		args = append(args, "-map", fmt.Sprintf("%d:s:0", subIdx), "-c:s", "mov_text")
 	}
 
-	args = append(args,
-		"-c:v", "copy",
-		"-c:a", "aac", "-b:a", "192k",
-	)
+	args = append(args, videoArgs...)
+	args = append(args, "-c:a", "aac", "-b:a", "192k")
 
 	// -shortest 只在**混入外部音轨**时才加，因为它要解决的问题正是
 	// 「外部音轨比画面长，导致末尾一段黑屏」。
@@ -680,7 +688,7 @@ func (s NormalizeSpec) alignPadSec() float64 {
 // 放到前面会让补的帧再被 fps 滤镜重采样一次，白多一步。
 func (s NormalizeSpec) normalizeVideoFilter() string {
 	vf := fmt.Sprintf(
-		"scale=%d:%d:force_original_aspect_ratio=decrease:in_range=auto:out_range=limited,"+
+		"scale=%d:%d:force_original_aspect_ratio=decrease:in_range=auto:out_range=limited"+scaleFlags+","+
 			"pad=%d:%d:(ow-iw)/2:(oh-ih)/2:color=black,"+
 			"fps=%d",
 		s.Width, s.Height, s.Width, s.Height, s.FPS,
@@ -723,7 +731,7 @@ func (r *Runner) ConcatWithTransition(ctx context.Context, inputs []string, out 
 	args = append(args,
 		"-filter_complex", filter,
 		"-map", "[vout]", "-map", "[aout]",
-		"-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+		"-c:v", "libx264", "-preset", "veryfast", "-crf", IntermediateCRF,
 		"-pix_fmt", "yuv420p",
 		"-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
 		// 与 Normalize 使用完全相同的色彩标记，保证成片内部一致。

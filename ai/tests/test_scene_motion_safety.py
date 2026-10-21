@@ -4,9 +4,19 @@ from pathlib import Path
 
 import pytest
 
+from scidirector_ai import scene as scene_module
 from scidirector_ai.browser_preflight import inspect, motion_scan_times, sample_times
 from scidirector_ai.scene import SceneSpec, compile_scene
 from scidirector_ai.schemas import StyleGuide
+
+
+@pytest.fixture(autouse=True)
+def synthetic_geometry(monkeypatch):
+    """These fixtures are bare geometric probes for the runtime and preflight.
+    Keep their exact authored geometry: no content-semantic rejection of
+    unlabeled rects and no layout normalization."""
+    monkeypatch.setattr(scene_module, "_validate_semantic_shapes", lambda scene: None)
+    monkeypatch.setattr(scene_module, "normalize_layout", lambda scene, *args, **kwargs: scene)
 
 
 def element(id, kind="rect", x=.1, **kw):
@@ -196,8 +206,10 @@ def test_anchor_tracks_moving_objects_and_reverse_seek(tmp_path: Path):
             start = state(0)
             assert start["opacity"] == "0"
             middle = state(2)
-            assert middle["x1"] == pytest.approx(middle["fromRight"], abs=1)
-            assert middle["x2"] == pytest.approx(middle["toLeft"], abs=1)
+            # A 4px gap at the source; the arrowhead (16px for stroke 4) plus a
+            # 5px gap sits between the trimmed path and the target edge.
+            assert middle["x1"] == pytest.approx(middle["fromRight"] + 4, abs=1)
+            assert middle["x2"] == pytest.approx(middle["toLeft"] - 5 - 15, abs=1)
             assert middle["x1"] > start["x1"]
             state(3.9)
             assert state(2) == middle

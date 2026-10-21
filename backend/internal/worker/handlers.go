@@ -568,6 +568,8 @@ func (p *Processor) HandleComposeJob(ctx context.Context, task ComposeTask) erro
 			MarginV:      s.MarginV,
 		}
 	}
+	bg, _ := job.StyleGuide["background_color"].(string)
+	postOpts.SubtitleStyle.LightBackground = media.IsLightColor(bg)
 	// 只有真的要烧录字幕时才把字幕交给后期：没有字幕文件时 BurnSubtitles
 	// 无从落地，硬传会让 PostProcess 直接报错。
 	if effects.BurnSubtitles && subtitlePath != "" {

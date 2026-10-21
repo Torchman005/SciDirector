@@ -220,7 +220,7 @@ func (r *Runner) SpliceSegment(ctx context.Context, basePath, patchPath, out str
 		"-i", patchPath,
 		"-filter_complex", filter,
 		"-map", "[vout]", "-map", "[aout]",
-		"-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+		"-c:v", "libx264", "-preset", "veryfast", "-crf", IntermediateCRF,
 		"-pix_fmt", "yuv420p",
 		"-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
 		"-color_range", "tv",

@@ -69,10 +69,17 @@ func (s *Shot) RecordFeedback(f Feedback) {
 		f.Passed = false
 	}
 	if canResolve || f.Kind == FeedbackReviewUnavailable {
+		// The score exemption applies only to tasks this review actually evaluated;
+		// an obligation missing from the incoming ledger keeps blocking.
+		evaluated := make(map[string]bool, len(f.RepairTasks))
+		for _, task := range f.RepairTasks {
+			evaluated[task.TaskID] = true
+		}
+		scoreOK := canResolve && f.Passed
 		ledger = mergeRepairLedger(ledger, f.RepairTasks, canResolve)
 		f.RepairTasks = append([]RepairTask(nil), ledger...)
 		for _, task := range ledger {
-			if task.Severity != "advisory" && task.Status != "resolved" {
+			if task.Blocks(scoreOK && evaluated[task.TaskID]) {
 				f.Passed = false
 				if len(f.Suggestions) == 0 && canResolve {
 					f.Suggestions = append(f.Suggestions, task.Instruction)
@@ -82,6 +89,20 @@ func (s *Shot) RecordFeedback(f Feedback) {
 	}
 	s.RepairTasks = append([]RepairTask(nil), ledger...)
 	s.Feedbacks = append(s.Feedbacks, f)
+}
+
+// Blocks mirrors ai/scidirector_ai/review_tasks.task_blocks: open blocking,
+// human, science and logic tasks always block; other major tasks block only
+// when the review score itself failed. Advisory tasks never block.
+func (t RepairTask) Blocks(scoreOK bool) bool {
+	if t.Status == "resolved" || t.Severity == "advisory" {
+		return false
+	}
+	if t.Severity == "blocking" || t.Category == "human" || t.Category == "logic" ||
+		strings.HasPrefix(t.TaskID, "human-") || strings.HasPrefix(t.TaskID, "science-") {
+		return true
+	}
+	return !scoreOK
 }
 
 func mergeRepairLedger(old, incoming []RepairTask, canResolve bool) []RepairTask {
@@ -121,9 +142,10 @@ func (s *Shot) RepairFeedback() *Feedback {
 		if kind := f.ReviewKind(); kind != FeedbackContentReview && kind != FeedbackScienceReview {
 			continue
 		}
+		scoreOK := f.Passed
 		f.RepairTasks = append([]RepairTask(nil), s.RepairLedger()...)
 		for _, task := range f.RepairTasks {
-			if task.Severity != "advisory" && task.Status != "resolved" {
+			if task.Blocks(scoreOK) {
 				f.Passed = false
 				if len(f.Suggestions) == 0 {
 					f.Suggestions = append(f.Suggestions, task.Instruction)

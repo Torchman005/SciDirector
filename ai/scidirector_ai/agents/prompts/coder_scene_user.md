@@ -15,4 +15,4 @@
 上一版场景 JSON（保留正确元素和 id，以此为基础修订）：
 {{previous_scene}}
 
-只输出符合系统 Schema 的完整 SceneSpec JSON。
+只输出符合系统提示中 JSON Schema 的 JSON：首稿或要求重建时输出完整 SceneSpec；系统提示要求 SceneRevision 定点修复时只输出修订补丁，不要重写整份场景。

@@ -384,6 +384,7 @@ class LLMClient:
         model: str | None = None,
         task: str = Task.CRITIQUE,
         image_labels: Sequence[str] = (),
+        max_tokens: int | None = None,
     ) -> BaseModel:
         """视觉结构化对话；有编号证据必须完整，未编号的缺失图片才可跳过。"""
         usable: list[str] = []
@@ -414,6 +415,7 @@ class LLMClient:
             schema,
             model=model or self.vision.model,
             temperature=0.0,  # 审查要求可复现，温度必须为 0
+            max_tokens=max_tokens,
             images=usable,
             image_labels=image_labels,
             task=task,

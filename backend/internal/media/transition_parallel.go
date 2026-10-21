@@ -109,7 +109,7 @@ func transitionEncodeArgs(out string) []string {
 		"-map", "[vout]", "-map", "[aout]",
 		// Several encoders run at once. Bound threads per encoder so they do not
 		// each claim every CPU and turn process parallelism into contention.
-		"-c:v", "libx264", "-threads:v", "2", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
+		"-c:v", "libx264", "-threads:v", "2", "-preset", "veryfast", "-crf", IntermediateCRF, "-pix_fmt", "yuv420p",
 		"-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
 		"-color_range", "tv", "-colorspace", "bt709",
 		"-color_primaries", "bt709", "-color_trc", "bt709",

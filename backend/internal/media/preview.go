@@ -121,7 +121,8 @@ func (r *Runner) RenderEffectsPreview(ctx context.Context, workDir, out string, 
 	if merr := r.MixSoundtrack(ctx, "", bgmTrack, mixed, spec.LoudnessLUFS); merr != nil {
 		return fmt.Errorf("media: 预览混音失败: %w", merr)
 	}
-	return r.MuxFinal(ctx, videoPath, mixed, "", out)
+	// 预览只验证配乐与背景，不值得花交付编码的时间：直接复制视频流。
+	return r.mux(ctx, videoPath, mixed, "", out, []string{"-c:v", "copy"})
 }
 
 // moveFile 把产物挪到目标位置；跨盘时退回复制。

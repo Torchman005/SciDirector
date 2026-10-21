@@ -42,7 +42,26 @@
     parent.appendChild(node);return node;
   };
   const defaults = {opacity:1,dx:0,dy:0,rotation:0,reveal:1,scale:1};
-  const ROUTE_CLEARANCE=12, ROUTE_BEND_COST=36;
+  const ROUTE_CLEARANCE=12, ROUTE_BEND_COST=40, ROUTE_DIAGONAL_COST=90, ROUTE_SNAP=24;
+  const CONNECTOR_GAP_START=4, CONNECTOR_GAP_END=5;
+  // Arrowheads scale with the stroke; the path stops at the head's base.
+  const arrowLength=sw=>Math.max(16,3.5*sw);
+  const cutStart=(pts,d)=>{
+    const out=pts.map(p=>({x:p.x,y:p.y}));
+    while(d>0&&out.length>=2){
+      const a=out[0],b=out[1],len=Math.hypot(b.x-a.x,b.y-a.y);
+      if(len>d||out.length===2){const f=Math.min(1,d/(len||1));out[0]={x:a.x+(b.x-a.x)*f,y:a.y+(b.y-a.y)*f};break;}
+      out.shift();d-=len;
+    }
+    return out;
+  };
+  const trimPath=(pts,start,end)=>{
+    let total=0;for(let i=1;i<pts.length;i++)total+=Math.hypot(pts[i].x-pts[i-1].x,pts[i].y-pts[i-1].y);
+    const room=Math.max(0,total-8),want=start+end;
+    if(want<=0||room<=0)return pts;
+    const f=Math.min(1,room/want);
+    return cutStart(cutStart(pts,start*f).reverse(),end*f).reverse();
+  };
   const sample = (frames,t) => {
     if(!frames.length) return {...defaults};
     let a=frames[0];
@@ -168,18 +187,24 @@
       if(el.kind==='rect') svgNode('rect',svg,{x:inset,y:inset,width:Math.max(1,w-inset*2),height:Math.max(1,h-inset*2),rx:el.corner_radius,fill,stroke,'stroke-width':sw});
       if(el.kind==='circle') svgNode('circle',svg,{cx:w/2,cy:h/2,r:Math.max(1,Math.min(w,h)/2-inset),fill,stroke,'stroke-width':sw});
       if(['line','polyline'].includes(el.kind)) {
-        const attrs={stroke:color(el.color),'stroke-width':el.stroke_width,fill:'none',pathLength:1,'stroke-linecap':'round','stroke-linejoin':'round'};
-        if(el.kind==='line' && !el.anchor_from) Object.assign(attrs,
-           {x1:4,y1:4,x2:Math.max(4,w-8),y2:Math.max(4,h-8)});
+        const attrs={stroke:color(el.color),'stroke-width':el.stroke_width,fill:'none',pathLength:1,
+          'stroke-linecap':el.arrow?'butt':'round','stroke-linejoin':'round'};
+        const head=el.arrow?arrowLength(el.stroke_width)-1:0;
+        if(el.kind==='line' && !el.anchor_from){
+          const [p,q]=trimPath([{x:4,y:4},{x:Math.max(4,w-8),y:Math.max(4,h-8)}],0,head);
+          Object.assign(attrs,{x1:p.x,y1:p.y,x2:q.x,y2:q.y});
+        }
         else if(el.anchor_from) attrs.points='0,0 0,0';
-        else attrs.points=el.points.map(p=>`${p.x*w},${p.y*h}`).join(' ');
+        else attrs.points=trimPath(el.points.map(p=>({x:p.x*w,y:p.y*h})),0,head).map(p=>`${p.x},${p.y}`).join(' ');
         record.stroke=svgNode(el.kind==='line' && !el.anchor_from?'line':'polyline',svg,attrs);
         record.strokeLength=record.stroke.getTotalLength();
         if(el.flow){
           for(let i=0;i<3;i++)record.packets.push(svgNode('circle',svg,{r:Math.max(3,el.stroke_width*1.15),fill:tint,stroke:light?'#FFFFFF':'#E6ECFF','stroke-width':1}));
         }
         if(el.arrow) {
-          record.arrow=svgNode('path',svg,{d:'M-10,-4.5 L0,0 L-10,4.5 Z',fill:color(el.color),'data-arrow':el.id});
+          const L=arrowLength(el.stroke_width),half=L*.42;
+          record.arrow=svgNode('path',svg,{d:`M-1,${-half} L${L},0 L-1,${half} Z`,fill:color(el.color),
+            'stroke-linejoin':'round','data-arrow':el.id});
         }
       }
     }
@@ -199,10 +224,12 @@
     }
     if(arrow) {
       arrow.style.visibility=s.reveal>0?'visible':'hidden';
-      const length=strokeLength*s.reveal, tip=stroke.getPointAtLength(length);
-      const behind=stroke.getPointAtLength(Math.max(0,length-.1));
-      const angle=Math.atan2(tip.y-behind.y,tip.x-behind.x)*180/Math.PI;
-      arrow.setAttribute('transform',`translate(${tip.x} ${tip.y}) rotate(${angle})`);
+      // The head's base rides on the revealed end; its tip leads the stroke.
+      const length=strokeLength*s.reveal, base=stroke.getPointAtLength(length);
+      const lo=Math.max(0,Math.min(length,strokeLength)-1),hi=Math.min(strokeLength,lo+1);
+      const from=stroke.getPointAtLength(lo),to=stroke.getPointAtLength(hi);
+      const angle=Math.atan2(to.y-from.y,to.x-from.x)*180/Math.PI;
+      arrow.setAttribute('transform',`translate(${base.x} ${base.y}) rotate(${angle})`);
     }
   };
   const toSceneRect=(r,stageRect)=>{
@@ -277,15 +304,19 @@
   };
   const routeConnector=(source,target,obstacles)=>{
     let best=null,bestCost=Infinity;
-    const lanesX=[...new Set(obstacles.flatMap(o=>[o.rect.left-ROUTE_CLEARANCE,o.rect.right+ROUTE_CLEARANCE]))];
-    const lanesY=[...new Set(obstacles.flatMap(o=>[o.rect.top-ROUTE_CLEARANCE,o.rect.bottom+ROUTE_CLEARANCE]))];
-    const consider=points=>{
-      const path=points.filter((p,i)=>!i || p.x!==points[i-1].x || p.y!==points[i-1].y);
+    const lanesX=[...new Set(obstacles.flatMap(o=>[o.rect.left-ROUTE_CLEARANCE,o.rect.right+ROUTE_CLEARANCE]))].sort((a,b)=>a-b);
+    const lanesY=[...new Set(obstacles.flatMap(o=>[o.rect.top-ROUTE_CLEARANCE,o.rect.bottom+ROUTE_CLEARANCE]))].sort((a,b)=>a-b);
+    const axis=(a,b)=>Math.abs(a.x-b.x)<.5||Math.abs(a.y-b.y)<.5;
+    const consider=(points,extra=0)=>{
+      const path=points.filter((p,i)=>!i || Math.abs(p.x-points[i-1].x)>.01 || Math.abs(p.y-points[i-1].y)>.01);
       if(path.length<2 || path.some(p=>p.x<0||p.x>W||p.y<0||p.y>H))return;
+      // A route is either one straight segment or fully orthogonal; never a
+      // diagonal stitched to orthogonal stubs.
+      if(path.length>2&&path.some((p,i)=>i&&!axis(path[i-1],p)))return;
       const first=path[0],second=path[1],last=path[path.length-1],before=path[path.length-2];
       if((second.x-first.x)*first.ox+(second.y-first.y)*first.oy<=0 ||
          (before.x-last.x)*last.ox+(before.y-last.y)*last.oy<=0)return;
-      let cost=0;
+      let cost=extra;
       for(let i=1;i<path.length;i++){
         const a=path[i-1],b=path[i];
         for(const obstacle of obstacles){
@@ -295,31 +326,61 @@
               top:obstacle.rect.top-ROUTE_CLEARANCE,bottom:obstacle.rect.bottom+ROUTE_CLEARANCE};
           if(crosses(a,b,r))return;
         }
-        cost+=Math.hypot(b.x-a.x,b.y-a.y);
+        const length=Math.hypot(b.x-a.x,b.y-a.y);
+        cost+=length;
+        if(!axis(a,b))cost+=ROUTE_DIAGONAL_COST;
+        // Very short legs read as jogs; make them expensive.
+        if(path.length>2&&length<28)cost+=ROUTE_BEND_COST;
         if(i>1){
           const prev=path[i-2];
-          if((a.x-prev.x)*(b.y-a.y)!==(a.y-prev.y)*(b.x-a.x))cost+=ROUTE_BEND_COST;
+          if(Math.abs((a.x-prev.x)*(b.y-a.y)-(a.y-prev.y)*(b.x-a.x))>.5)cost+=ROUTE_BEND_COST;
         }
       }
-      if(cost<bestCost){best=path;bestCost=cost;}
+      if(cost<bestCost-1e-6){best=path;bestCost=cost;}
     };
-    const pairs=ports(source.rect).flatMap(from=>ports(target.rect).map(to=>[from,to]));
-    for(const [from,to] of pairs)consider([from,to]);
-    if(best)return best;
+    const s=source.rect,t=target.rect;
+    const pairs=ports(s).flatMap(from=>ports(t).map(to=>[from,to]));
     for(const [from,to] of pairs){
-      const a={x:from.x+from.ox*ROUTE_CLEARANCE,y:from.y+from.oy*ROUTE_CLEARANCE};
-      const b={x:to.x+to.ox*ROUTE_CLEARANCE,y:to.y+to.oy*ROUTE_CLEARANCE};
-      consider([from,a,{x:b.x,y:a.y},b,to]);
-      consider([from,a,{x:a.x,y:b.y},b,to]);
-      for(const x of lanesX)consider([from,a,{x,y:a.y},{x,y:b.y},b,to]);
-      for(const y of lanesY)consider([from,a,{x:a.x,y},{x:b.x,y},b,to]);
+      const pt=(x,y,port)=>({x,y,ox:port.ox,oy:port.oy});
+      const horizontal=from.ox!==0,toHorizontal=to.ox!==0;
+      // Nearly aligned facing ports snap to one straight line in the shared span.
+      if(horizontal&&toHorizontal&&from.ox===-to.ox&&Math.abs(from.y-to.y)<ROUTE_SNAP){
+        const lo=Math.max(s.top,t.top)+6,hi=Math.min(s.bottom,t.bottom)-6;
+        if(lo<=hi){const y=Math.min(hi,Math.max(lo,(from.y+to.y)/2));consider([pt(from.x,y,from),pt(to.x,y,to)]);}
+      }
+      if(!horizontal&&!toHorizontal&&from.oy===-to.oy&&Math.abs(from.x-to.x)<ROUTE_SNAP){
+        const lo=Math.max(s.left,t.left)+6,hi=Math.min(s.right,t.right)-6;
+        if(lo<=hi){const x=Math.min(hi,Math.max(lo,(from.x+to.x)/2));consider([pt(x,from.y,from),pt(x,to.y,to)]);}
+      }
+      consider([from,to]);
+      if(horizontal&&toHorizontal){
+        consider([from,{x:(from.x+to.x)/2,y:from.y},{x:(from.x+to.x)/2,y:to.y},to]);
+        for(const x of lanesX)consider([from,{x,y:from.y},{x,y:to.y},to]);
+      }else if(!horizontal&&!toHorizontal){
+        consider([from,{x:from.x,y:(from.y+to.y)/2},{x:to.x,y:(from.y+to.y)/2},to]);
+        for(const y of lanesY)consider([from,{x:from.x,y},{x:to.x,y},to]);
+      }else if(horizontal){
+        consider([from,{x:to.x,y:from.y},to]);
+      }else{
+        consider([from,{x:from.x,y:to.y},to]);
+      }
+    }
+    if(best)return best;
+    // Last resort: leave both ports, then cross over on a lane or midpoint.
+    for(const [from,to] of pairs){
+      const a={x:from.x+from.ox*ROUTE_CLEARANCE*2,y:from.y+from.oy*ROUTE_CLEARANCE*2};
+      const b={x:to.x+to.ox*ROUTE_CLEARANCE*2,y:to.y+to.oy*ROUTE_CLEARANCE*2};
+      const mx=(a.x+b.x)/2,my=(a.y+b.y)/2;
+      consider([from,a,{x:mx,y:a.y},{x:mx,y:b.y},b,to],ROUTE_BEND_COST);
+      consider([from,a,{x:a.x,y:my},{x:b.x,y:my},b,to],ROUTE_BEND_COST);
+      for(const x of lanesX)consider([from,a,{x,y:a.y},{x,y:b.y},b,to],ROUTE_BEND_COST);
+      for(const y of lanesY)consider([from,a,{x:a.x,y},{x:b.x,y},b,to],ROUTE_BEND_COST);
     }
     return best;
   };
-  window.__seek = seconds => {
-    const t=Math.max(0,Math.min(D,Number.isFinite(seconds)?seconds:0))/D;
-    const local=Math.min(1,t/timelineEnd);
-    for(const {el,root,content,bars,cells,packets,stroke,strokeLength,arrow,character,images,iconAction} of nodes) {
+  const paintElements=(local,t)=>{
+    for(const {el,root,content,bars,cells,stroke,character,images,iconAction} of nodes) {
+      if(el.anchor_from) continue;
       const s=sample(el.keyframes, local);
       const group=groups.get(el.motion_group);
       if(group){
@@ -354,7 +415,7 @@
         character(t*D,s);
       }
       if(iconAction) iconAction(s.reveal);
-      if(stroke && !el.anchor_from) paintStroke(byId.get(el.id),s,t);
+      if(stroke) paintStroke(byId.get(el.id),s,t);
       if(el.kind==='code') content.textContent=Array.from(el.text).slice(0,Math.floor(Array.from(el.text).length*s.reveal)).join('');
       for(const bar of bars) bar.style.transform=`scaleX(${s.reveal})`;
       for(let i=0;i<cells.length;i++){
@@ -362,41 +423,103 @@
         cells[i].style.opacity=String(progress);cells[i].style.transform=`translateY(${(1-progress)*12}px)`;
       }
     }
-    // Resolve connectors after all objects have reached their absolute-time
-    // positions. A connector is never animated by guessed local coordinates.
-    const stageRect=nodes.some(record=>record.el.anchor_from)?stage.getBoundingClientRect():null;
-    const obstacles=stageRect?nodes.filter(({el,root})=>!el.anchor_from&&!el.decorative&&
-      el.kind!=='polyline'&&el.kind!=='line'&&
-      root.dataset.sceneAssetRole!=='background'&&Number(getComputedStyle(root).opacity)>.35)
-      .map(({el,root})=>({id:el.id,rect:paintedSceneRect(root,stageRect)}))
-      .filter(item=>item.rect):[];
-    if(stageRect && style.presenterSafeArea){
-      const p=style.presenterSafeArea;
-      obstacles.push({id:'presenter',rect:{left:p.x*W,right:(p.x+p.width)*W,
-        top:p.y*H,bottom:(p.y+p.height)*H}});
+  };
+  const connectors=nodes.filter(record=>record.el.anchor_from);
+  const isObstacle=({el,root})=>!el.anchor_from&&!el.decorative&&
+    el.kind!=='polyline'&&el.kind!=='line'&&root.dataset.sceneAssetRole!=='background';
+  const presenterArea=style.presenterSafeArea;
+  const presenterObstacle=presenterArea?{id:'presenter',rect:{left:presenterArea.x*W,right:(presenterArea.x+presenterArea.width)*W,
+    top:presenterArea.y*H,bottom:(presenterArea.y+presenterArea.height)*H}}:null;
+  const liveOpacity=root=>Number(getComputedStyle(root).opacity);
+  const measureObstacles=(stageRect,filter)=>{
+    const list=nodes.filter(record=>isObstacle(record)&&filter(record)).map(({el,root})=>({id:el.id,rect:paintedSceneRect(root,stageRect)}))
+      .filter(item=>item.rect);
+    if(presenterObstacle)list.push(presenterObstacle);
+    return list;
+  };
+  // Routes are resolved once against the settled layout and cached; seeking
+  // only re-reveals them. Endpoints that move reuse the settled obstacles, so
+  // the route topology cannot flip when an unrelated object fades in or out.
+  let routePlans=null;
+  const rectKey=r=>[r.left,r.top,r.right,r.bottom].map(v=>Math.round(v*2)/2).join(',');
+  const sameRect=(a,b)=>Math.abs(a.left-b.left)<1.5&&Math.abs(a.right-b.right)<1.5&&
+    Math.abs(a.top-b.top)<1.5&&Math.abs(a.bottom-b.bottom)<1.5;
+  const settleTime=el=>{
+    const frames=el.keyframes.filter(k=>(k.opacity??1)>.35&&(k.reveal??1)>0);
+    return frames.length?frames[frames.length-1].time:1;
+  };
+  const everVisible=({el})=>!el.keyframes.length||el.keyframes.some(k=>(k.opacity??1)>.35);
+  const prepareRoutes=()=>{
+    const plans=new Map();
+    if(connectors.length){
+      const stageRect=stage.getBoundingClientRect();
+      for(const {el} of connectors){
+        paintElements(Math.min(1,settleTime(el)),Math.min(1,settleTime(el))*timelineEnd);
+        const source=byId.get(el.anchor_from).root,target=byId.get(el.anchor_to).root;
+        const sourceRect=paintedSceneRect(source,stageRect),targetRect=paintedSceneRect(target,stageRect);
+        const attempt=obstacles=>sourceRect&&targetRect?routeConnector({id:el.anchor_from,rect:sourceRect},
+          {id:el.anchor_to,rect:targetRect},obstacles):null;
+        // Every object that is ever shown is an obstacle; fall back to the
+        // objects visible at the settled moment if that over-constrains.
+        let obstacles=measureObstacles(stageRect,everVisible),route=attempt(obstacles);
+        if(!route){obstacles=measureObstacles(stageRect,({root})=>liveOpacity(root)>.35);route=attempt(obstacles);}
+        plans.set(el.id,{sourceRect,targetRect,route,obstacles,cache:new Map()});
+      }
     }
-    for(const record of nodes){
+    routePlans=plans;
+  };
+  const resolveRoute=(el,sourceRect,targetRect,stageRect)=>{
+    const source={id:el.anchor_from,rect:sourceRect},target={id:el.anchor_to,rect:targetRect};
+    const plan=routePlans&&routePlans.get(el.id);
+    if(!plan)return routeConnector(source,target,measureObstacles(stageRect,({root})=>liveOpacity(root)>.35));
+    if(plan.route&&plan.sourceRect&&plan.targetRect&&sameRect(plan.sourceRect,sourceRect)&&sameRect(plan.targetRect,targetRect))
+      return plan.route;
+    const key=rectKey(sourceRect)+'|'+rectKey(targetRect);
+    if(!plan.cache.has(key)){
+      const obstacles=plan.obstacles.filter(o=>o.id!==el.anchor_from&&o.id!==el.anchor_to).concat([source,target]);
+      if(plan.cache.size>600)plan.cache.clear();
+      plan.cache.set(key,routeConnector(source,target,obstacles));
+    }
+    return plan.cache.get(key);
+  };
+  const paintConnectors=(local,t)=>{
+    if(!connectors.length)return;
+    const stageRect=stage.getBoundingClientRect();
+    for(const record of connectors){
       const {el,root,stroke}=record;
-      if(!el.anchor_from) continue;
       const source=byId.get(el.anchor_from).root,target=byId.get(el.anchor_to).root;
-      const endpointsVisible=Number(getComputedStyle(source).opacity)>.1 && Number(getComputedStyle(target).opacity)>.1;
+      const endpointOpacity=Math.min(liveOpacity(source),liveOpacity(target));
+      const endpointsVisible=endpointOpacity>.1;
       const state=sample(el.keyframes,local);
-      const sourceRect=paintedSceneRect(source,stageRect),targetRect=paintedSceneRect(target,stageRect);
-      const route=endpointsVisible&&sourceRect&&targetRect?routeConnector(
-        {id:el.anchor_from,rect:sourceRect},
-        {id:el.anchor_to,rect:targetRect},obstacles):null;
+      const measurable=endpointOpacity>.01;
+      const sourceRect=measurable?paintedSceneRect(source,stageRect):null;
+      const targetRect=measurable?paintedSceneRect(target,stageRect):null;
+      const route=sourceRect&&targetRect?resolveRoute(el,sourceRect,targetRect,stageRect):null;
       root.dataset.routeBlocked=String(endpointsVisible && state.opacity>.35 && state.reveal>0 && !route);
-      root.style.opacity=route?String(state.opacity):'0';
+      // Fade with the endpoints instead of popping at a visibility threshold.
+      root.style.opacity=route?String(state.opacity*Math.min(1,endpointOpacity)):'0';
       if(route){
-        stroke.setAttribute('points',route.map(p=>`${p.x},${p.y}`).join(' '));
+        const head=el.arrow?arrowLength(el.stroke_width)-1:0;
+        const drawn=trimPath(route,CONNECTOR_GAP_START,CONNECTOR_GAP_END+head);
+        stroke.setAttribute('points',drawn.map(p=>`${p.x},${p.y}`).join(' '));
         paintStroke(record,state,t);
       }else stroke.setAttribute('points','0,0 0,0');
     }
   };
+  window.__seek = seconds => {
+    const t=Math.max(0,Math.min(D,Number.isFinite(seconds)?seconds:0))/D;
+    const local=Math.min(1,t/timelineEnd);
+    paintElements(local,t);
+    // Resolve connectors after all objects have reached their absolute-time
+    // positions. A connector is never animated by guessed local coordinates.
+    paintConnectors(local,t);
+  };
   window.__seek(0);
-  Promise.all(imageLoads).then(()=>{
+  const fontsReady=document.fonts&&document.fonts.ready?document.fonts.ready.catch(()=>null):Promise.resolve();
+  Promise.all([...imageLoads,fontsReady]).then(()=>{
     for(const record of nodes)if(record.images)for(const img of record.images.values())
       img.__alphaBounds=imageAlphaBounds(img);
+    prepareRoutes();
     window.__seek(0);
     window.__ready=true;
   }).catch(error=>{

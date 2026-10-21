@@ -50,7 +50,8 @@ from ..review_tasks import (format_repairs, carry_repairs, active_repairs,
 from ..repair_evidence import attach_repair_evidence, precheck_repairs, skip_full_review
 from ..renderer import LLM_ENGINES, Renderer, RendererError, RenderRequest, build_renderer
 from ..sandbox.runner import SandboxRunner
-from ..tts.base import synthesize_with_retry, write_marks_sidecar
+from ..tts.base import write_marks_sidecar
+from ..tts.context import synthesize_in_context
 from ..schemas import CriticFeedback, FeedbackSource, RenderArtifact, RenderEngine, ShotSpec, StyleGuide
 from .state import (
     NODE_ADVANCE,
@@ -330,7 +331,16 @@ class PipelineNodes:
         if attempt > 1:
             from ..recovery import recovery_instruction, preserved_science
             limit = int(state.get("max_attempts_per_shot", 3) or 3)
-            rebuild = bool(state.get("render_error")) or attempt >= limit
+            # 完整重建会丢掉此前已修好的部分，并让已关闭的问题回潮。只在两种情况下重建：
+            # 逻辑/布局任务经一轮定点修复仍无改善而被升级；或非结构化代码到最后一轮仍渲染失败。
+            # 结构化场景的预检/渲染错误一律基于上一版定点修补，错误本身作为反馈。
+            progress = (state.get("repair_progress") or {}).get(shot.shot_id, {})
+            previous = (state.get("feedback") or {}).get(shot.shot_id)
+            escalated = any(
+                t.category in {"logic", "layout"} and (progress.get(t.task_id) or {}).get("escalated_at")
+                for t in (previous.repair_tasks if previous else []) if t.status != "resolved")
+            has_scene = '<script id="scid-scene-v1"' in (state.get("current_code") or "")
+            rebuild = escalated or (bool(state.get("render_error")) and not has_scene and attempt >= limit)
             shot = shot.model_copy(update={"meta": {**shot.meta,
                 "repair_strategy": "rebuild" if rebuild else "targeted"}})
             feedback_text = recovery_instruction(shot, style, rebuild=rebuild) + preserved_science(
@@ -675,7 +685,7 @@ class PipelineNodes:
         # 而「因为 TTS 抖动就丢掉整个镜头」是把外部依赖的问题升级成内容事故。
         # 但**必须留痕**：不配音是可见的质量差异（成片没声音），
         # 静默降级会让人以为「TTS 接好了但没生效」，方向完全错。
-        audio_path, tts_error = self._synthesize_narration(shot, out_dir)
+        audio_path, tts_error = self._synthesize_narration(shot, out_dir, state)
         if tts_error and shot.narration_revisions:
             reason = "修订后配音失败，保留原片与旁白，需人工处理：" + tts_error
             return {"render_error": reason, "route_hint": HINT_HUMAN,
@@ -773,7 +783,8 @@ class PipelineNodes:
     # ==================================================================
 
 
-    def _synthesize_narration(self, shot: "ShotSpec", out_dir: Path) -> tuple[str, str]:
+    def _synthesize_narration(self, shot: "ShotSpec", out_dir: Path,
+                              state: PipelineState | None = None) -> tuple[str, str]:
         """为该镜头合成配音。
 
         返回 `(音频路径, 失败原因)`：成功时原因为空串。
@@ -801,10 +812,17 @@ class PipelineNodes:
         try:
             # 带重试：TTS 是网络调用，实测会遇到「连接被 reset」这类瞬时失败。
             # 只试一次会让大部分镜头悄悄失去配音（成片莫名没声音）。
-            result = synthesize_with_retry(
+            # 连读合成：带上相邻镜头各一句作为语调上下文，再按逐字时间戳裁回本镜头。
+            shots = list((state or {}).get("shots") or [])
+            position = next((i for i, s in enumerate(shots) if s.shot_id == shot.shot_id), -1)
+            neighbor = lambda i: (shots[i].narration or "") if 0 <= i < len(shots) else ""  # noqa: E731
+            result = synthesize_in_context(
                 provider,
                 narration,
                 out_path=out_path,
+                prev_text=neighbor(position - 1) if position >= 0 else "",
+                next_text=neighbor(position + 1) if position >= 0 else "",
+                context_sentences=getattr(self.deps.settings, "tts_context_sentences", 1),
                 attempts=getattr(self.deps.settings, "tts_max_attempts", 3),
                 backoff_sec=getattr(self.deps.settings, "tts_retry_backoff_sec", 1.0),
             )

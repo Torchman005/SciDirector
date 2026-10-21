@@ -171,7 +171,7 @@ def test_graph_revised_marks_failure_is_not_a_silent_audio_fallback(tmp_path, mo
     shot = repair_narration(Editor(),ShotSpec(narration=OLD),feedback(),attempt=8)
     deps = _deps()
     deps.tts = SimpleNamespace(name="fixture")
-    monkeypatch.setattr(module,"synthesize_with_retry",lambda *args,**kwargs:SynthesisResult(tmp_path/"fresh.mp3",4))
+    monkeypatch.setattr(module,"synthesize_in_context",lambda *args,**kwargs:SynthesisResult(tmp_path/"fresh.mp3",4))
     def fail(*args,**kwargs):
         raise OSError("disk unavailable")
     monkeypatch.setattr(module,"write_marks_sidecar",fail)

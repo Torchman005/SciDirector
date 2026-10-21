@@ -17,7 +17,7 @@ def paper_demo() -> SceneSpec:
         {"id": "idea", "kind": "card", "text": "一个清楚的科学问题", "font_size": 32,
          "color": "primary", "material": "outline", "box": {"x": .09, "y": .32, "width": .47, "height": .22}},
         {"id": "focus", "kind": "circle", "color": "accent", "material": "gradient",
-         "box": {"x": .66, "y": .33, "width": .12, "height": .21},
+         "box": {"x": .66, "y": .33, "width": .1, "height": .18},
          "keyframes": [{"time": 0, "opacity": 0, "dy": -.04}, {"time": .24, "opacity": 1}, {"time": 1, "opacity": 1}]},
     ], "explanation": "暖纸舞台上保留稳定地面，前景对象按节拍进入"})
 

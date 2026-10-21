@@ -84,7 +84,7 @@ class Settings(BaseSettings):
     #   edge   —— 免费、无需密钥、给**句级**时间戳（本机唯一可真实验证的）
     #   doubao —— 需 appid + token（本机未验证）
     #   openai —— 需密钥，**不给时间戳**
-    #   fish   —— 需密钥，另有带时间戳的 SSE 端点（负载结构未知，暂未实现）
+    #   fish   —— 需密钥，/v1/tts/with-timestamp 给**逐字**时间戳
     tts_provider: Literal["", "none", "edge", "doubao", "openai", "fish"] = ""
     #: 音色。留空则用各服务商的默认音色。
     tts_voice: str = ""
@@ -121,10 +121,17 @@ class Settings(BaseSettings):
 
     # Fish Audio。
     fish_api_key: str = ""
-    fish_model: str = "s1"
+    #: s1 于 2026-12-31 退役；s2.1-pro 是服务端默认，韵律明显更自然。
+    fish_model: str = "s2.1-pro"
     fish_reference_id: str = ""
     fish_endpoint: str = ""
     fish_with_timestamp: bool = True
+    #: 采样温度 / top_p。服务端默认 0.7/0.7 偏稳，讲解旁白略放开能减少"一字一顿"。
+    fish_temperature: float = Field(default=0.8, ge=0.0, le=1.0)
+    fish_top_p: float = Field(default=0.8, ge=0.0, le=1.0)
+    #: 连读合成：把相邻镜头各一句作为上下文一起合成，再按逐字时间戳裁出本镜头。
+    #: 孤立合成每段都会"重新起调、句末降调"，整片听起来像一条条播报。
+    tts_context_sentences: int = Field(default=1, ge=0, le=3)
 
     # OpenAI TTS（复用 openai_api_key / openai_base_url）。
     openai_tts_model: str = "gpt-4o-mini-tts"

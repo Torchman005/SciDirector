@@ -53,7 +53,7 @@ def test_mathematical_error_cannot_be_overridden_by_vlm_and_repeated_source_is_c
         result=agent.review(shot=shot,artifact=make_artifact(tmp_path),style_guide=StyleGuide(),attempt=attempt)
         assert not result.feedback.passed and not result.degraded
         assert result.feedback.repair_tasks[0].actionable
-    assert len(calls)==1 and calls[0]['max_parse_attempts']==1
+    assert len(calls)==1 and calls[0]['max_parse_attempts']==2
 
 
 def test_only_explicit_source_proof_closes_science_tasks_and_empty_audit_is_invalid():
@@ -110,7 +110,10 @@ def test_visual_reaudit_uses_current_science_and_acceptance_not_stale_diagnosis(
         style_guide=StyleGuide(),attempt=2,previous_review=old,previous_feedback='STALE_TRANSCRIPT',user_intent='想先展示公式')
     assert captured and '当前公式正确' in captured[0] and '标签须完整可见' in captured[0]
     assert '想先展示公式' in captured[0] and 'STALE_' not in captured[0]
-    assert not result.feedback.passed  # Dropping stale prose never discards the obligation.
+    # 义务仍以原验收条件进入复审清单；达标的复审未再观察到该问题时按此关闭，而不是永久挂起。
+    task = result.feedback.repair_tasks[0]
+    assert task.acceptance == '标签须完整可见' and task.status == 'resolved'
+    assert task.resolution_evidence == '复审未再观察到该问题' and result.feedback.passed
 
 
 @pytest.mark.parametrize('corrected_pass', [True, False])

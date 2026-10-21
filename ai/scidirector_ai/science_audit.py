@@ -53,7 +53,7 @@ def science_request(shot: ShotSpec, previous: CriticFeedback | None) -> str:
 def audit_science(llm: LLMClient, request: str) -> ScienceAudit:
     from .agents.base import load_prompt
     return llm.chat_json(load_prompt('science_audit'), request, ScienceAudit,
-                         task=Task.SCIENCE, temperature=0, max_tokens=2600, max_parse_attempts=1)
+                         task=Task.SCIENCE, temperature=0, max_tokens=4000, max_parse_attempts=2)
 
 
 def science_tasks(audit: ScienceAudit, *, attempt: int, duration: float) -> list[RepairTask]:

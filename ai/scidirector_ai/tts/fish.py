@@ -39,7 +39,8 @@ DEFAULT_ENDPOINT = "https://api.fish.audio/v1/tts"
 # **逐字**的 start/end —— 比句级还细。这正是"语音和字幕对不上"的解法：
 # 原来没有时间戳，字幕只能按"镜头时长 × 文本比例"猜，长镜头里能差好几秒。
 TIMESTAMP_ENDPOINT = "https://api.fish.audio/v1/tts/with-timestamp"
-DEFAULT_MODEL = "s1"
+#: s1 于 2026-12-31 退役；s2.1-pro 是服务端默认且韵律更自然。
+DEFAULT_MODEL = "s2.1-pro"
 
 #: Fish Audio 的音色 id 形如 32 位十六进制（见官方示例）。
 _REFERENCE_ID_RE = re.compile(r"^[0-9a-fA-F]{32}$")
@@ -96,6 +97,9 @@ class FishAudioTTSProvider:
         audio_format: str = "mp3",
         timeout_sec: int = 60,
         with_timestamp: bool = True,
+        speed: float = 1.0,
+        temperature: float = 0.8,
+        top_p: float = 0.8,
     ) -> None:
         self.api_key = api_key
         self.endpoint = endpoint
@@ -104,6 +108,9 @@ class FishAudioTTSProvider:
         self.audio_format = audio_format
         self.timeout_sec = timeout_sec
         self.with_timestamp = with_timestamp
+        self.speed = speed
+        self.temperature = temperature
+        self.top_p = top_p
 
     def available(self) -> tuple[bool, str]:
         if not self.api_key:
@@ -132,7 +139,18 @@ class FishAudioTTSProvider:
                 provider=self.name,
             )
 
-        payload: dict[str, object] = {"text": clean, "format": self.audio_format}
+        # 显式写出影响音质与韵律的参数，不依赖服务端默认值：
+        # latency=normal 质量最好；condition_on_previous_chunks 让长文本分块之间语调连贯；
+        # 温度/top_p 略高于默认 0.7 可减少"一字一顿"的平直感。
+        payload: dict[str, object] = {
+            "text": clean, "format": self.audio_format, "latency": "normal", "normalize": True,
+            "temperature": self.temperature, "top_p": self.top_p,
+            "chunk_length": 300, "condition_on_previous_chunks": True,
+            # 此前 SCID_TTS_SPEED 对 Fish 完全不生效（参数被丢弃）。
+            "prosody": {"speed": min(max(float(speed or self.speed), 0.5), 2.0), "normalize_loudness": True},
+        }
+        if self.audio_format == "mp3":
+            payload["mp3_bitrate"] = 192
         # voice 参数在这里表示 Fish Audio 的音色模型 id（reference_id）。
         ref = voice or self.reference_id
         if ref:

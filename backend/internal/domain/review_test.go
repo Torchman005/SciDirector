@@ -80,3 +80,24 @@ func TestLegacyLedgerIgnoresFaultStatusChanges(t *testing.T) {
 		t.Fatalf("legacy faults changed verified task state: %+v", got)
 	}
 }
+
+func TestMajorLayoutTaskIsAdviceOnlyWhenEvaluatedReviewPasses(t *testing.T) {
+	layout := RepairTask{TaskID: "r1-01", Category: "layout", Severity: "major", Status: "open"}
+	if layout.Blocks(true) || !layout.Blocks(false) {
+		t.Fatal("major layout task must block only when the score failed")
+	}
+	for _, task := range []RepairTask{
+		{TaskID: "human-1-01", Category: "human", Severity: "blocking", Status: "open"},
+		{TaskID: "r1-02", Category: "logic", Severity: "major", Status: "open"},
+		{TaskID: "science-1", Category: "logic", Severity: "major", Status: "unverified"},
+	} {
+		if !task.Blocks(true) {
+			t.Fatalf("%s must block regardless of score", task.TaskID)
+		}
+	}
+	shot := &Shot{}
+	shot.RecordFeedback(Feedback{Source: FeedbackVLM, Passed: true, Score: .9, RepairTasks: []RepairTask{layout}})
+	if !shot.Feedbacks[0].Passed {
+		t.Fatal("evaluated advisory-level major task rejected a passing review")
+	}
+}

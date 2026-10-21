@@ -34,9 +34,9 @@ func (r *Runner) OverlayPresenter(ctx context.Context, base, layer, out string) 
 		return err
 	}
 	_, _, aw, ah := PresenterGeometry(probe.Width, probe.Height)
-	filter := fmt.Sprintf("[1:v]scale=%d:%d[avatar];[0:v][avatar]overlay=x=W-w-W*0.006:y=H-h-H*0.006:eof_action=pass:format=auto[v]", aw, ah)
+	filter := fmt.Sprintf("[1:v]scale=%d:%d"+scaleFlags+"[avatar];[0:v][avatar]overlay=x=W-w-W*0.006:y=H-h-H*0.006:eof_action=pass:format=auto[v]", aw, ah)
 	// Native VP9 decoding may drop the alpha plane; explicitly use libvpx for this input.
 	return r.run(ctx, "-hide_banner", "-nostdin", "-y", "-i", base, "-c:v", "libvpx-vp9", "-i", layer,
 		"-filter_complex", filter, "-map", "[v]", "-map", "0:a?", "-c:v", "libx264", "-preset", "veryfast",
-		"-crf", "18", "-pix_fmt", "yuv420p", "-c:a", "copy", "-t", fmt.Sprintf("%.6f", probe.DurationSec), "-movflags", "+faststart", out)
+		"-crf", IntermediateCRF, "-pix_fmt", "yuv420p", "-c:a", "copy", "-t", fmt.Sprintf("%.6f", probe.DurationSec), "-movflags", "+faststart", out)
 }

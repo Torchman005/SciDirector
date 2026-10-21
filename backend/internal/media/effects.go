@@ -20,6 +20,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -84,12 +85,16 @@ type SubtitleStyle struct {
 	OutlineWidth float64 `json:"outline_width,omitempty"`
 	// MarginV 是字幕距画面底边的像素。0 = 自动（画面高度 / 18）。
 	MarginV int `json:"margin_v,omitempty"`
+	// LightBackground 由 worker 按任务背景色推断：浅色纸面上白字黑边会糊成一团，
+	// 改用深墨色字 + 纸色描边。用户显式给了字色时不改字色。
+	LightBackground bool `json:"-"`
 }
 
 // 字幕自动样式的推算基准。
 const (
 	// subtitleFontDivisor：1080p 下得到 45px，是科普视频的常见字号。
-	subtitleFontDivisor = 30
+	// （此前写的是 30，实际只有 36px，在 1080p 成片里偏小。）
+	subtitleFontDivisor = 24
 	// subtitleMarginDivisor：1080p 下得到 60px 底边距。
 	subtitleMarginDivisor = 18
 	minSubtitleFontSize   = 12
@@ -148,7 +153,7 @@ func PlanSubtitleStyle(s SubtitleStyle, frameHeight int) (string, error) {
 	outlinePx := s.OutlineWidth
 	if outlinePx <= 0 {
 		// 描边与字号成正比：字越大，细描边就越显得没用。
-		outlinePx = math.Max(1, math.Round(float64(fontSizePx)/18))
+		outlinePx = math.Max(1, math.Round(float64(fontSizePx)/15))
 	}
 	if outlinePx > 8 {
 		return "", fmt.Errorf("media: 字幕描边过宽（%.1f，上限 8）", outlinePx)
@@ -162,11 +167,22 @@ func PlanSubtitleStyle(s SubtitleStyle, frameHeight int) (string, error) {
 		return "", fmt.Errorf("media: 字幕底边距越界（%d，画面高 %d）", marginPx, frameHeight)
 	}
 
-	colour := s.PrimaryColor
+	colour, outlineColour := s.PrimaryColor, "#101010"
+	if s.LightBackground {
+		// 浅色纸面：深墨字 + 纸色描边，与画面同一套材质，不再出现"黑边糊字"。
+		outlineColour = "#FFF8EC"
+		if strings.TrimSpace(colour) == "" {
+			colour = "#2B2420"
+		}
+	}
 	if strings.TrimSpace(colour) == "" {
 		colour = "#FFFFFF"
 	}
 	ass, err := assColour(colour)
+	if err != nil {
+		return "", err
+	}
+	outlineAss, err := assColour(outlineColour)
 	if err != nil {
 		return "", err
 	}
@@ -177,12 +193,40 @@ func PlanSubtitleStyle(s SubtitleStyle, frameHeight int) (string, error) {
 	// 字号与底边距用**浮点**输出而不是取整：脚本单位取整会引入量化误差，
 	// 而它回头会被乘以 frameHeight/288 —— 2160p 下 ±0.5 单位就是 ±3.75px。
 	// 实测取整后 2160p 的目标 72px 变成 75px。libass 能解析浮点字号。
-	return fmt.Sprintf("FontSize=%.2f,PrimaryColour=%s,Outline=%.2f,MarginV=%.2f",
+	// 显式指定中文字体与粗体：libass 的回退字体常是细宋体，在 1080p 成片里发虚。
+	return fmt.Sprintf("FontName=%s,Bold=1,FontSize=%.2f,PrimaryColour=%s,OutlineColour=%s,BorderStyle=1,Outline=%.2f,Shadow=0,MarginV=%.2f",
+		subtitleFontName(),
 		toScriptUnit(float64(fontSizePx), frameHeight),
 		ass,
+		outlineAss,
 		toScriptUnit(outlinePx, frameHeight),
 		toScriptUnit(float64(marginPx), frameHeight),
 	), nil
+}
+
+// IsLightColor 判断 #RRGGBB 背景是否为浅色（相对亮度 > 0.6）；无法解析时按深色处理。
+func IsLightColor(hex string) bool {
+	hex = strings.TrimPrefix(strings.TrimSpace(hex), "#")
+	if len(hex) == 3 {
+		hex = string([]byte{hex[0], hex[0], hex[1], hex[1], hex[2], hex[2]})
+	}
+	if len(hex) != 6 {
+		return false
+	}
+	v, err := strconv.ParseUint(hex, 16, 32)
+	if err != nil {
+		return false
+	}
+	r, g, b := float64(v>>16&0xFF)/255, float64(v>>8&0xFF)/255, float64(v&0xFF)/255
+	return 0.2126*r+0.7152*g+0.0722*b > 0.6
+}
+
+// subtitleFontName 选当前平台上必然存在的中文无衬线字体。
+func subtitleFontName() string {
+	if runtime.GOOS == "windows" {
+		return "Microsoft YaHei"
+	}
+	return "Noto Sans CJK SC"
 }
 
 // assColour 把 `#RRGGBB` 转成 ASS 的 `&HAABBGGRR`。
@@ -444,7 +488,7 @@ func (r *Runner) PostProcess(ctx context.Context, in, out string, opts PostOptio
 		"-i", in,
 		"-map", "0:v:0", "-map", "0:a?",
 		"-vf", chain,
-		"-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+		"-c:v", "libx264", "-preset", "veryfast", "-crf", IntermediateCRF,
 		// 显式写死像素格式，与滤镜链末尾的 format=yuv420p **双保险**。
 		//
 		// 少了它（或少了链尾那道 format），libx264 会跟着输入的 yuv444p 走，

@@ -15,7 +15,7 @@ from test_scene import Checker, Stub, compile_it, spec
 def test_review_inventory_exposes_exact_words_and_scaled_font_before_geometry():
     scene = spec(text="力的方向与运动方向相反",font_size=48,
                  keyframes=[{"time":0,"opacity":0,"scale":.5},{"time":.2,"scale":.96},{"time":.8}])
-    scene.elements.append(SceneSpec(elements=[dict(id="shape",kind="rect",box=dict(x=.2,y=.6,width=.2,height=.2))]).elements[0])
+    scene.elements.append(SceneSpec(elements=[dict(id="shape",kind="rect",box=dict(x=.2,y=.6,width=.14,height=.14))]).elements[0])
     manifest=review_manifest(compile_it(scene))
     data=json.loads(manifest.split("\n")[-1])
     assert data["literal_text"]==[dict(id="#headline",text="力的方向与运动方向相反",font_size_px=48,visible_keyframe_fonts_px=[46.08,48.0])]
@@ -100,7 +100,7 @@ def test_review_manifest_names_anchored_direction_for_scientific_review() -> Non
 
 
 def test_incompatible_old_layout_is_rebuilt_without_wasting_a_patch():
-    original = spec(box=dict(x=.6,y=.5,width=.35,height=.3))
+    original = spec(box=dict(x=.05,y=.5,width=.9,height=.3))
     fixed = spec(box=dict(x=.1,y=.1,width=.8,height=.3))
     llm = Stub([fixed])
     style = StyleGuide(presenter_safe_area=dict(x=.78,y=.55,width=.22,height=.45))
@@ -114,7 +114,7 @@ def test_incompatible_old_layout_is_rebuilt_without_wasting_a_patch():
 def test_exact_edit_removes_old_object_without_text_model_and_preserves_preflight():
     original = spec()
     original.elements.append(spec(id='old_link',kind='rect',text='',
-        box=dict(x=.1,y=.6,width=.4,height=.1)).elements[0])
+        box=dict(x=.1,y=.6,width=.4,height=.045)).elements[0])
     llm, checker = Stub([]), Checker()
     coder = CoderAgent(llm, Settings(_env_file=None,llm_provider='mock'), quality_checker=checker)
     shot = ShotSpec(tag=SceneTag.MOTION,code=compile_it(original))

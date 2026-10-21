@@ -25,8 +25,11 @@
 
 ### 2. 画布与配色
 - 背景色：`self.camera.background_color = "{{background_color}}"`
-- 主色：`{{primary_color}}`；强调可用 `YELLOW` / `ORANGE` / `GREEN`。
-- 深色背景上**不要**用 `BLACK` 或深灰作为文字色。
+- 正文与公式默认色：`{{text_color}}`（已按背景明暗选好）。在 `construct` 开头写
+  `Text.set_default(color="{{text_color}}", font="Noto Sans CJK SC")` 与
+  `MathTex.set_default(color="{{text_color}}")`，与 HTML 镜头保持同一套字体和墨色。
+- 主色：`{{primary_color}}`；强调色在浅色背景上用饱和度适中的深色（如 `"#A65F50"`、`"#3F6F6A"`），
+  不要用 `YELLOW`/`WHITE` 这类在纸面上看不见的亮色；深色背景上不要用 `BLACK` 或深灰。
 
 ### 3. 可读性（审查智能体会逐帧检查，不达标会被打回）
 - 所有 `Text` 的 `font_size` **必须 ≥ {{min_font_size}}**。
@@ -117,8 +120,10 @@ from manim import *
 class SciShotScene(Scene):
     def construct(self):
         self.camera.background_color = "{{background_color}}"
+        Text.set_default(color="{{text_color}}", font="Noto Sans CJK SC")
+        MathTex.set_default(color="{{text_color}}")
 
-        title = Text("勾股定理", font_size={{min_font_size}}, color=WHITE)
+        title = Text("勾股定理", font_size={{min_font_size}})
         title.to_edge(UP, buff=0.7)
 
         eq = MathTex(r"a^2 + b^2 = c^2", font_size=72, color="{{primary_color}}")
@@ -131,8 +136,8 @@ class SciShotScene(Scene):
         self.play(Write(title), run_time=stage)
         self.play(FadeIn(eq, shift=UP * 0.3), run_time=stage)
         # 逐步高亮：一次只强调一处，观众视线才有落点。
-        self.play(eq[0][0:3].animate.set_color(YELLOW), run_time=stage)
-        self.play(eq.animate.set_color(WHITE), run_time=stage)
+        self.play(eq[0][0:3].animate.set_color("{{primary_color}}"), run_time=stage)
+        self.play(eq.animate.set_color("{{text_color}}"), run_time=stage)
         self.wait(hold)
 ```
 

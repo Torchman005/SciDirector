@@ -15,7 +15,7 @@ from scidirector_ai.agents.coder import CoderAgent, _RawCode
 from scidirector_ai.config import Settings
 from scidirector_ai.generation_quality import QualityResult
 from scidirector_ai.llm import LLMClient, LLMParseError, Task
-from scidirector_ai.scene import SceneSpec, compile_scene, extract_scene, scene_runtime
+from scidirector_ai.scene import SceneSpec, compile_scene, extract_scene, normalize_layout, scene_runtime
 from scidirector_ai.schemas import RenderEngine, SceneTag, ShotSpec, StyleGuide
 from test_coder import VALID_HTML, VALID_MANIM
 
@@ -29,6 +29,11 @@ def spec(**changes: Any) -> SceneSpec:
 
 def compile_it(scene: SceneSpec) -> str:
     return compile_scene(scene, width=1920, height=1080, duration=8, style=StyleGuide())
+
+
+def normalized(scene: SceneSpec, style: StyleGuide | None = None, duration: float = 8) -> SceneSpec:
+    """The compiler persists the deterministically normalized IR it renders."""
+    return normalize_layout(scene, style or StyleGuide(), 1920, 1080, duration)
 
 
 @pytest.mark.parametrize("change", [
@@ -70,7 +75,9 @@ def test_compilation_is_deterministic_safe_and_revision_preserves_ir() -> None:
     code = compile_it(scene)
     assert code == compile_it(scene)
     assert '</script><script>missingSymbol()' not in code
-    assert extract_scene(code) == scene
+    assert extract_scene(code) == normalized(scene)
+    assert normalized(normalized(scene)) == normalized(scene)
+    assert compile_scene(scene, width=1920, height=1080, duration=8, style=StyleGuide(), normalize=False) != code
     assert extract_scene(VALID_HTML) is None
 
 
@@ -79,7 +86,11 @@ def test_opening_fade_in_end_keyframe_and_near_edge_text_are_renderable() -> Non
                  keyframes=[{"time": 0, "opacity": 0, "dx": -.1},
                             {"time": .15, "opacity": 1}, {"time": 1, "opacity": 1}])
     html = compile_it(scene)
-    assert extract_scene(html) == scene
+    assert extract_scene(html) == normalized(scene)
+    frames = extract_scene(html).elements[0].keyframes
+    # The 1.2s authored fade is tightened to 0.4s, then the only content is
+    # pulled forward so the opening is not blank (timeline: 7.5s per unit).
+    assert frames[0].time == 0 and abs(frames[1].time * 7.5 - .4) < 1e-6 and frames[2].time == 1
     assert '"animatedUntil": 0.9375' in html
 
 
@@ -90,7 +101,7 @@ def test_background_presets_follow_user_selection_and_auto_scene_choice() -> Non
     forced = compile_scene(scene, width=1920, height=1080, duration=8,
                            style=StyleGuide(background_style="grid"))
     assert "135deg" in auto and "background-size: 64px 64px" in forced
-    assert extract_scene(forced) == scene
+    assert extract_scene(forced) == normalized(scene, StyleGuide(background_style="grid"))
 
 
 class Checker:
@@ -123,7 +134,8 @@ def test_html_engines_default_to_scene_with_original_contract(engine: RenderEngi
     result = CoderAgent(llm, settings, quality_checker=checker).generate(
         shot=ShotSpec(engine=engine), style_guide=StyleGuide())
     assert result.policy_ok and result.llm_attempts == 1 and result.artifact.language == "html+js"
-    assert extract_scene(result.code) == spec()
+    assert extract_scene(result.code) == normalize_layout(spec(), StyleGuide(), settings.render_width,
+                                                          settings.render_height, ShotSpec(engine=engine).duration_sec)
     assert llm.calls[0]["task"] == Task.SCENE and llm.calls[0]["max_parse_attempts"] == 1
     assert "JSON Schema" in llm.calls[0]["system"] and not result.examples_used
     assert "{{" not in llm.calls[0]["system"] and "{{" not in llm.calls[0]["user"]

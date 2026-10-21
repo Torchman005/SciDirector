@@ -197,7 +197,7 @@ class RepairTask(BaseModel):
     """问题定位与验收目标；task_id 由程序分配，复审不得改写验收条件。"""
 
     task_id: str = ""
-    category: Literal["logic", "readability", "pacing", "layout", "rendering"] = "layout"
+    category: Literal["logic", "readability", "pacing", "layout", "rendering", "human"] = "layout"
     severity: Literal["blocking", "major", "advisory"] = "major"
     start_sec: float = Field(default=0.0, ge=0.0)
     end_sec: float = Field(default=0.0, ge=0.0)
@@ -211,6 +211,36 @@ class RepairTask(BaseModel):
     resolution_evidence: str = ""
     evidence_pairs: list[RepairEvidence] = Field(default_factory=list)
     repair_scope: Literal["", "visual", "narration", "both"] = ""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _sanitize_location(cls, value: Any) -> Any:
+        """VLM 常给出略越界的 region 或颠倒的时间段；逐项修正，而不是让整份审核解析失败。"""
+        if not isinstance(value, dict):
+            return value
+        value = dict(value)
+        try:
+            start = max(float(value.get("start_sec") or 0), 0.0)
+            end = max(float(value.get("end_sec") or 0), 0.0)
+            if end < start:
+                start, end = end, start
+            value["start_sec"], value["end_sec"] = start, end
+        except (TypeError, ValueError):
+            value["start_sec"] = value["end_sec"] = 0.0
+        frames = value.get("frame_indices")
+        if isinstance(frames, list):
+            value["frame_indices"] = [int(i) for i in frames
+                                      if isinstance(i, (int, float)) and not isinstance(i, bool) and int(i) >= 1]
+        region = value.get("region")
+        if isinstance(region, list):
+            try:
+                x, y, width, height = (float(v) for v in region)
+                x, y = min(max(x, 0.0), 1.0), min(max(y, 0.0), 1.0)
+                width, height = min(width, 1.0 - x), min(height, 1.0 - y)
+                value["region"] = [x, y, width, height] if width > 0 and height > 0 else []
+            except (TypeError, ValueError):
+                value["region"] = []
+        return value
 
     @model_validator(mode="after")
     def _validate_location(self) -> RepairTask:

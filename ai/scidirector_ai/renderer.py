@@ -264,11 +264,11 @@ class ManimRenderer:
 #: 原本每帧都是一次 1080p PNG 截图 —— PNG 无损、又慢又大（1~3MB/张），
 #: 而这些帧马上会被 x264 以 crf20 重编码，无损那部分几乎全被丢掉。
 #:
-#: 改成 JPEG 90 + 多页面并行之后，同一镜头的实测耗时见 Agent.md v0.6.15。
+#: 改成 JPEG（现为 97：细线、文字边缘与纸纹在 90 下会出现色块/振铃）+ 多页面并行之后，同一镜头的实测耗时见 Agent.md v0.6.15。
 #: 并发数不在这里写死：由 `html_capture.py` 按 CPU 核数决定（上限 8），
 #: 这样换机器不用改配置，也不会在别的镜头并行时把整机吃满。
 _HTML_FRAME_FORMAT = "jpeg"
-_HTML_FRAME_QUALITY = 90
+_HTML_FRAME_QUALITY = 97
 
 #: 帧文件名的 pattern，必须与 `html_capture.frame_name` 的扩展名一致。
 #: 不一致的表现是 ffmpeg 读不到帧序列 → "帧序列编码失败"（响亮地失败，不是静默出错片），

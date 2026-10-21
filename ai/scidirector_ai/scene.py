@@ -342,12 +342,475 @@ def validate_layout(scene: SceneSpec, *, width: int, height: int, duration: floa
     # The first frame may intentionally establish a scene. The final state must
     # contain visible content; otherwise the renderer would produce a blank tail.
     groups_by_id = {group.id: group for group in scene.motion_groups}
+    _validate_semantic_shapes(scene)
+    _validate_free_lines(scene)
     if not any((not el.keyframes or (el.keyframes[-1].opacity > .1
                                      and (el.kind not in {"code", "bars", "grid"}
                                           or el.keyframes[-1].reveal > 0)))
                and (not el.motion_group or sample_track(groups_by_id[el.motion_group].keyframes, 1)[0] > .1)
                for el in scene.elements):
         raise ValueError("末帧必须有可见内容")
+
+
+# ---------------------------------------------------------------------------
+# Deterministic layout normalization
+# ---------------------------------------------------------------------------
+# LLM layouts tend to be small, top-heavy and slow to appear. These passes keep
+# the authored composition (relative positions, ids, timing order) and only
+# apply bounded, verifiable corrections. Every pass is validated separately; a
+# pass that would make the scene invalid is skipped instead of failing compile.
+
+NORMALIZE_GRID_PX = 8
+NORMALIZE_TARGET = (.05, .07, .95, .85)  # left, top, right, bottom
+NORMALIZE_MAX_SCALE = 1.6
+NORMALIZE_MIN_SCALE = 1.08
+NORMALIZE_FONT_CAP = 96
+NORMALIZE_TEXT_TARGET = 60  # median text size the scale pass grows toward
+NORMALIZE_FADE_SEC = .4
+NORMALIZE_FIRST_VISIBLE_SEC = .4
+CONTENT_KINDS = {"text", "card", "code", "bars", "icon", "image", "grid", "character"}
+
+
+def _sample_track(frames: list[Keyframe] | list[GroupKeyframe], at: float) -> tuple[float, float, float, float]:
+    """(opacity, dx, dy, scale) with the exact runtime interpolation."""
+    if not frames:
+        return 1, 0, 0, 1
+    first = frames[0]
+    if at < first.time:
+        return 0, first.dx, first.dy, first.scale
+    previous = first
+    for current in frames[1:]:
+        if at < current.time:
+            fraction = (at - previous.time) / (current.time - previous.time)
+            if current.easing == "step": fraction = 0
+            elif current.easing == "smooth": fraction = fraction*fraction*(3-2*fraction)
+            elif current.easing == "ease_in": fraction = fraction**3
+            elif current.easing == "ease_out": fraction = 1-(1-fraction)**3
+            elif current.easing == "spring": fraction = (1-(1+7*fraction)*math.exp(-7*fraction))/(1-8*math.exp(-7))
+            return tuple(getattr(previous, key)+(getattr(current, key)-getattr(previous, key))*fraction
+                         for key in ("opacity", "dx", "dy", "scale"))  # type: ignore[return-value]
+        previous = current
+    return previous.opacity, previous.dx, previous.dy, previous.scale
+
+
+def timeline_seconds_per_unit(scene: SceneSpec, duration: float) -> float:
+    """Seconds represented by one unit of keyframe time (runtime timelineEnd)."""
+    animated_until = 1 - min(FINAL_HOLD_SEC, duration * FINAL_HOLD_RATIO) / duration
+    late = (any(k.time > animated_until for el in scene.elements for k in el.keyframes) or
+            any(k.time > animated_until for g in scene.motion_groups for k in g.keyframes))
+    return duration * (animated_until if late else 1)
+
+
+def _is_content(el: Element) -> bool:
+    return not el.decorative and not el.anchor_from
+
+
+def _painted_extent(el: Element, width: int, height: int) -> tuple[float, float, float, float]:
+    """Approximate painted rect; text boxes are often much wider than their glyphs."""
+    b = el.box
+    if el.kind != "text" or not el.text.strip():
+        return b.x, b.y, b.x + b.width, b.y + b.height
+    size, box_w = el.font_size, max(1., b.width * width)
+    lines, widest = 0, 0.
+    for line in el.text.split("\n"):
+        advance = sum(size if ord(c) > 0x2E7F else size * .56 for c in line)
+        lines += max(1, math.ceil(advance / box_w))
+        widest = max(widest, min(advance, box_w))
+    painted_w = widest / width
+    painted_h = min(b.height, lines * size * 1.4 / height)
+    left = b.x if el.align == "left" else b.x + b.width - painted_w if el.align == "right" else b.x + (b.width - painted_w) / 2
+    top = b.y + (b.height - painted_h) / 2
+    return left, top, left + painted_w, top + painted_h
+
+
+def _visible_rects(scene: SceneSpec, el: Element, base: tuple[float, float, float, float]):
+    """Yield the element's painted rect at every probe time it is visible."""
+    groups = {g.id: g for g in scene.motion_groups}
+    group = groups.get(el.motion_group)
+    pivot = (0., 0.)
+    if group is not None:
+        members = [m for m in scene.elements if m.motion_group == group.id]
+        pivot = ((min(m.box.x for m in members) + max(m.box.x + m.box.width for m in members)) / 2,
+                 (min(m.box.y for m in members) + max(m.box.y + m.box.height for m in members)) / 2)
+    times = sorted({0., 1., *(k.time for k in el.keyframes), *(k.time for k in (group.keyframes if group else []))})
+    probes = sorted(set(times) | {(a + b) / 2 for a, b in zip(times, times[1:])})
+    cx, cy = el.box.x + el.box.width / 2, el.box.y + el.box.height / 2
+    rel = (base[0] - cx, base[1] - cy, base[2] - cx, base[3] - cy)
+    for at in probes:
+        opacity, dx, dy, scale = _sample_track(el.keyframes, at)
+        ax, ay = cx + dx, cy + dy
+        if group is not None:
+            g_opacity, g_dx, g_dy, g_scale = _sample_track(group.keyframes, at)
+            opacity *= g_opacity
+            ax = pivot[0] + g_scale * (ax - pivot[0]) + g_dx
+            ay = pivot[1] + g_scale * (ay - pivot[1]) + g_dy
+            scale *= g_scale
+        if opacity > .1:
+            yield ax + rel[0] * scale, ay + rel[1] * scale, ax + rel[2] * scale, ay + rel[3] * scale
+
+
+def _content_union(scene: SceneSpec, width: int, height: int) -> tuple[float, float, float, float] | None:
+    rects = [r for el in scene.elements if _is_content(el)
+             for r in _visible_rects(scene, el, _painted_extent(el, width, height))]
+    if not rects:
+        return None
+    return min(r[0] for r in rects), min(r[1] for r in rects), max(r[2] for r in rects), max(r[3] for r in rects)
+
+
+def _scene_dict(scene: SceneSpec) -> dict:
+    return scene.model_dump()
+
+
+def _transform_scene(scene: SceneSpec, k: float, ox: float, oy: float) -> dict:
+    """Uniform scale k then translate: x' = ox + k*x (all normalized)."""
+    data = _scene_dict(scene)
+    for el in data["elements"]:
+        if el["anchor_from"]:
+            el["stroke_width"] = min(20., round(el["stroke_width"] * (1 + (k - 1) / 2), 2))
+            continue
+        b = el["box"]
+        b.update(x=ox + k * b["x"], y=oy + k * b["y"], width=b["width"] * k, height=b["height"] * k)
+        for frame in el["keyframes"]:
+            frame["dx"] *= k
+            frame["dy"] *= k
+        if el["kind"] in {"text", "card", "code", "bars", "grid"}:
+            el["font_size"] = min(int(round(el["font_size"] * k)), max(el["font_size"], NORMALIZE_FONT_CAP))
+        el["stroke_width"] = min(20., round(el["stroke_width"] * (1 + (k - 1) / 2), 2))
+        el["corner_radius"] = min(80., round(el["corner_radius"] * k, 2))
+    for group in data["motion_groups"]:
+        for frame in group["keyframes"]:
+            frame["dx"] *= k
+            frame["dy"] *= k
+    return data
+
+
+def _try(data: dict, *, width: int, height: int, duration: float, style: StyleGuide) -> SceneSpec | None:
+    try:
+        candidate = SceneSpec.model_validate(data)
+        validate_layout(candidate, width=width, height=height, duration=duration, style=style)
+        return candidate
+    except ValueError:  # pydantic ValidationError is a ValueError
+        return None
+
+
+def _normalize_scale(scene: SceneSpec, *, width: int, height: int, duration: float, style: StyleGuide) -> SceneSpec | None:
+    union = _content_union(scene, width, height)
+    if union is None:
+        return None
+    left, top, right, bottom = union
+    uw, uh = right - left, bottom - top
+    if uw <= 0 or uh <= 0:
+        return None
+    sl, st, sr, sb = NORMALIZE_TARGET
+    k_max = min((sr - sl) / uw, (sb - st) / uh, NORMALIZE_MAX_SCALE)
+    # Enlarge small layouts toward readable type, not without bound: once the
+    # typical text is already large, recompiling a revision is a no-op.
+    fonts = sorted(el.font_size for el in scene.elements
+                   if _is_content(el) and el.kind in {"text", "card", "code", "bars", "grid"})
+    if fonts:
+        k_max = min(k_max, NORMALIZE_TEXT_TARGET / fonts[len(fonts) // 2])
+    if k_max <= NORMALIZE_MIN_SCALE:
+        return None
+
+    def attempt(k: float) -> SceneSpec | None:
+        w, h = uw * k, uh * k
+        placements = [((sl + sr - w) / 2, (st + sb - h) / 2),  # centered
+                      (sl, (st + sb - h) / 2),                  # left, vertically centered
+                      ((sl + sr - w) / 2, st),                  # top, horizontally centered
+                      (sl, st)]                                 # top-left, clear of the presenter
+        for px, py in placements:
+            result = _try(_transform_scene(scene, k, px - k * left, py - k * top),
+                          width=width, height=height, duration=duration, style=style)
+            if result is not None:
+                return result
+        return None
+
+    best = attempt(k_max)
+    if best is not None:
+        return best
+    lo, hi, best_k = 1., k_max, 0.
+    for _ in range(9):
+        mid = (lo + hi) / 2
+        result = attempt(mid)
+        if result is not None:
+            best, best_k, lo = result, mid, mid
+        else:
+            hi = mid
+    return best if best is not None and best_k > NORMALIZE_MIN_SCALE else None
+
+
+def _layout_candidates(scene: SceneSpec) -> list[Element]:
+    return [el for el in scene.elements if _is_content(el) and el.kind not in {"line", "polyline"}]
+
+
+def _normalize_siblings(scene: SceneSpec, *, width: int, height: int) -> dict:
+    data = _scene_dict(scene)
+    by_id = {el["id"]: el for el in data["elements"]}
+    candidates = [by_id[el.id] for el in _layout_candidates(scene)]
+    # Equal-looking siblings (same kind, size within 15%) get one shared size.
+    clusters: list[list[dict]] = []
+    # Text boxes are sized to their own words; resizing them can push a label
+    # into its neighbour, so only shaped objects are equalized.
+    shaped = [e for e in candidates if e["kind"] not in {"text", "code", "bars"}]
+    for el in sorted(shaped, key=lambda e: (e["kind"], e["box"]["width"] * e["box"]["height"], e["id"])):
+        for cluster in clusters:
+            ref = cluster[0]["box"]
+            if (cluster[0]["kind"] == el["kind"] and
+                    abs(el["box"]["width"] - ref["width"]) <= .15 * max(el["box"]["width"], ref["width"]) and
+                    abs(el["box"]["height"] - ref["height"]) <= .15 * max(el["box"]["height"], ref["height"])):
+                cluster.append(el)
+                break
+        else:
+            clusters.append([el])
+    for cluster in clusters:
+        if len(cluster) < 2:
+            continue
+        # Converge on the smallest sibling: equalizing must never grow an
+        # object into its label or neighbour.
+        mw = min(e["box"]["width"] for e in cluster)
+        mh = min(e["box"]["height"] for e in cluster)
+        for e in cluster:
+            b = e["box"]
+            cx, cy = b["x"] + b["width"] / 2, b["y"] + b["height"] / 2
+            b.update(width=mw, height=mh,
+                     x=min(max(0., cx - mw / 2), 1 - mw), y=min(max(0., cy - mh / 2), 1 - mh))
+    # Near-equal centers share a row/column; the largest element is the anchor.
+    for axis, size, total in (("x", "width", width), ("y", "height", height)):
+        items = sorted(candidates, key=lambda e: (e["box"][axis] + e["box"][size] / 2, e["id"]))
+        groups: list[list[dict]] = []
+        for e in items:
+            c = e["box"][axis] + e["box"][size] / 2
+            if groups:
+                g = groups[-1]
+                first = g[0]["box"][axis] + g[0]["box"][size] / 2
+                last = g[-1]["box"][axis] + g[-1]["box"][size] / 2
+                if (c - last) * total <= 12 and (c - first) * total <= 24:
+                    g.append(e)
+                    continue
+            groups.append([e])
+        for g in groups:
+            if len(g) < 2:
+                continue
+            anchor = max(g, key=lambda e: (e["box"]["width"] * e["box"]["height"], e["id"]))
+            target = anchor["box"][axis] + anchor["box"][size] / 2
+            for e in g:
+                b = e["box"]
+                b[axis] = min(max(0., target - b[size] / 2), 1 - b[size])
+    return data
+
+
+def _normalize_grid(scene: SceneSpec, *, width: int, height: int, shrink: bool) -> dict:
+    """Snap box edges to the pixel grid. ``shrink`` only moves edges inward so
+    snapping can never push an object into a neighbour."""
+    data = _scene_dict(scene)
+    content = {el.id for el in scene.elements if not el.anchor_from}
+    step = NORMALIZE_GRID_PX
+    for el in data["elements"]:
+        if el["id"] not in content:
+            continue
+        b = el["box"]
+        for axis, size, total in (("x", "width", width), ("y", "height", height)):
+            if b[size] * total < step * 3:
+                continue
+            # Size and position snap separately so equal siblings stay equal.
+            start, length = b[axis] * total, b[size] * total
+            end = start + length
+            if shrink:
+                # Never grow; prefer a placement inside the authored span, else
+                # the nearest one (at most 4px outside).
+                span = math.floor(length / step + 1e-6) * step
+                nearest = round((start + length / 2 - span / 2) / step) * step
+                inside = [c for c in (nearest, nearest - step, nearest + step)
+                          if c >= start - 1e-6 and c + span <= end + 1e-6]
+                placed = inside[0] if inside else nearest
+            else:
+                span = max(step, round(length / step) * step)
+                placed = round((start + length / 2 - span / 2) / step) * step
+            placed = max(0, min(placed, (total // step) * step - span))
+            if placed < 0 or span > total:
+                continue
+            b[axis], b[size] = placed / total, span / total
+    return data
+
+
+def _normalize_fades(scene: SceneSpec, *, duration: float) -> dict:
+    data = _scene_dict(scene)
+    seconds = timeline_seconds_per_unit(scene, duration)
+    fade = NORMALIZE_FADE_SEC / seconds
+    for el in data["elements"]:
+        if el["decorative"]:
+            continue
+        frames = el["keyframes"]
+        for i in range(len(frames) - 1):
+            a, b = frames[i], frames[i + 1]
+            hidden_before = i == 0 or frames[i - 1]["opacity"] <= .1
+            if (a["opacity"] <= .1 and b["opacity"] >= .9 and hidden_before and b["easing"] != "step"
+                    and b["time"] - a["time"] > fade * 1.125):
+                a["time"] = b["time"] - fade
+        if el["anchor_from"]:
+            continue
+        seen_full = False
+        for i, frame in enumerate(frames):
+            if frame["opacity"] >= .9:
+                seen_full = True
+                continue
+            if not .15 < frame["opacity"] < .85:
+                continue
+            nxt = frames[i + 1] if i + 1 < len(frames) else None
+            resting = (nxt is None or abs(nxt["opacity"] - frame["opacity"]) <= .05
+                       or (nxt["time"] - frame["time"]) * seconds >= 1.)
+            if not resting:
+                continue
+            # A semi-transparent entrance looks like a rendering glitch. A
+            # deliberate de-emphasis after full visibility stays, but readable.
+            frame["opacity"] = max(frame["opacity"], .35) if seen_full else 1.
+    return data
+
+
+def _first_visible_seconds(scene: SceneSpec, el: Element, seconds: float) -> float | None:
+    step = .05 / seconds
+    groups = {g.id: g for g in scene.motion_groups}
+    at = 0.
+    while at <= 1 + 1e-9:
+        opacity = _sample_track(el.keyframes, at)[0]
+        if el.motion_group:
+            opacity *= _sample_track(groups[el.motion_group].keyframes, at)[0]
+        if opacity > .1:
+            return at * seconds
+        at += step
+    return None
+
+
+def _normalize_first_frame(scene: SceneSpec, *, duration: float) -> dict | None:
+    seconds = timeline_seconds_per_unit(scene, duration)
+    entries = {el.id: _first_visible_seconds(scene, el, seconds) for el in scene.elements if _is_content(el)}
+    times = [t for t in entries.values() if t is not None]
+    if not times or min(times) <= .5:
+        return None
+    earliest = min(times)
+    data = _scene_dict(scene)
+    changed = False
+    for el in data["elements"]:
+        t = entries.get(el["id"])
+        if t is None or t > earliest + .3 or el["motion_group"]:
+            continue
+        frames = el["keyframes"]
+        target = next((i for i, f in enumerate(frames) if f["opacity"] > .1), None)
+        if target is None:
+            continue
+        goal = 0. if target == 0 else NORMALIZE_FIRST_VISIBLE_SEC / seconds
+        delta = frames[target]["time"] - goal
+        if delta <= 0:
+            continue
+        for i in range(target + 1):
+            frames[i]["time"] = max(0., frames[i]["time"] - delta)
+        # Clamped leading keys must remain strictly increasing.
+        for i in range(target - 1, -1, -1):
+            if frames[i]["time"] >= frames[i + 1]["time"]:
+                frames[i]["time"] = max(0., frames[i + 1]["time"] - .01)
+        if any(b["time"] <= a["time"] for a, b in zip(frames, frames[1:])):
+            continue
+        changed = True
+    return data if changed else None
+
+
+def normalize_layout(scene: SceneSpec, style: StyleGuide, width: int, height: int,
+                     duration: float) -> SceneSpec:
+    """Deterministically enlarge, align and retime an authored scene.
+
+    Returns the original scene when it is already invalid (compile reports the
+    real error) and skips any pass whose result does not validate.
+    """
+    def check(data: dict | None) -> SceneSpec | None:
+        return None if data is None else _try(data, width=width, height=height, duration=duration, style=style)
+
+    if check(_scene_dict(scene)) is None:
+        return scene
+    current = scene
+    passes = (
+        lambda s: _normalize_scale(s, width=width, height=height, duration=duration, style=style),
+        lambda s: check(_normalize_siblings(s, width=width, height=height)),
+        lambda s: (check(_normalize_grid(s, width=width, height=height, shrink=True)) or
+                   check(_normalize_grid(s, width=width, height=height, shrink=False))),
+        lambda s: check(_normalize_fades(s, duration=duration)),
+        lambda s: check(_normalize_first_frame(s, duration=duration)),
+    )
+    for normalize_pass in passes:
+        result = normalize_pass(current)
+        if result is not None:
+            current = result
+    return current
+
+
+def _is_symbol_only(text: str) -> bool:
+    """Bare punctuation such as "~" or "..." is not a label; math symbols are."""
+    import unicodedata
+    stripped = "".join(text.split())
+    if not stripped or len(stripped) > 3:
+        return False
+    meaningful = set("?？!！")
+    return all(c not in meaningful and (unicodedata.category(c).startswith("P") or c in "~～`^|¦¨˜")
+               for c in stripped)
+
+
+def _validate_free_lines(scene: SceneSpec) -> None:
+    """自由折线贴着会移动的对象时，对象一动线就悬空（实测成片里"箭头脱离"的主因）。
+
+    这类连接必须用 anchor_from/anchor_to，由运行时跟随端点重新布线。
+    """
+    def travel(frames) -> float:
+        # 只看可见关键帧之间的位移；透明状态下的入场微移不会让线悬空。
+        shown = [k for k in frames if k.opacity > .1]
+        if len(shown) < 2:
+            return 0.
+        return max(max(k.dx for k in shown) - min(k.dx for k in shown),
+                   max(k.dy for k in shown) - min(k.dy for k in shown))
+    groups = {g.id: g for g in scene.motion_groups}
+    movers = [el for el in scene.elements if _is_content(el) and el.kind not in {"line", "polyline"}
+              and (travel(el.keyframes) > .03
+                   or (el.motion_group and travel(groups[el.motion_group].keyframes) > .03))]
+    if not movers:
+        return
+    tolerance = .07  # 实测：模型常把线端停在对象外 5~6% 处
+    for line in scene.elements:
+        if line.kind not in {"line", "polyline"} or line.anchor_from or line.decorative:
+            continue
+        b = line.box
+        points = line.points or [Point(x=0, y=0), Point(x=1, y=1)]
+        for p in (points[0], points[-1]):
+            px, py = b.x + p.x * b.width, b.y + p.y * b.height
+            for el in movers:
+                o = el.box
+                if (o.x - tolerance <= px <= o.x + o.width + tolerance
+                        and o.y - tolerance <= py <= o.y + o.height + tolerance):
+                    raise ValueError(
+                        f"#{line.id} 的端点贴着会移动的 #{el.id}，对象移动后线会悬空；"
+                        f"请改用 kind=line 并设置 anchor_from/anchor_to 连接对象，不要用自由折线")
+
+
+def _validate_semantic_shapes(scene: SceneSpec) -> None:
+    labels = [el for el in scene.elements if el.kind in CONTENT_KINDS]
+    endpoints = {el.anchor_from for el in scene.elements if el.anchor_from} | {el.anchor_to for el in scene.elements if el.anchor_to}
+    for el in scene.elements:
+        if el.kind in {"text", "card", "code"} and _is_symbol_only(el.text):
+            raise ValueError(f"#{el.id} 文字只有标点/符号“{el.text.strip()}”，不能作为标签；写出具体含义，或删除该元素")
+        if el.kind not in {"rect", "circle"} or el.decorative or el.id in endpoints:
+            continue
+        b = el.box
+        if b.width * b.height <= .02:
+            continue
+        if el.overlap_group and any(other.id != el.id and other.overlap_group == el.overlap_group and not other.decorative
+                                    for other in scene.elements):
+            continue
+        for other in labels:
+            o = other.box
+            inter = max(0., min(b.x + b.width, o.x + o.width) - max(b.x, o.x)) * \
+                max(0., min(b.y + b.height, o.y + o.height) - max(b.y, o.y))
+            if inter >= .6 * o.width * o.height:
+                break
+        else:
+            raise ValueError(f"#{el.id} 是没有内容的空白{('矩形' if el.kind == 'rect' else '圆形')}；"
+                             "有文字的容器请改用 card，或在其中放置文字/图标/网格标签，不能留空占位框")
 
 
 @lru_cache(maxsize=1)
@@ -358,7 +821,9 @@ def scene_runtime() -> str:
 
 
 def compile_scene(scene: SceneSpec, *, width: int, height: int, duration: float,
-                  style: StyleGuide) -> str:
+                  style: StyleGuide, normalize: bool = True) -> str:
+    if normalize:
+        scene = normalize_layout(scene, style, width, height, duration)
     validate_layout(scene, width=width, height=height, duration=duration, style=style)
     for value in (style.background_color, style.primary_color):
         if not re.fullmatch(r"#[0-9a-fA-F]{3}(?:[0-9a-fA-F]{3})?", value):
@@ -403,7 +868,7 @@ def compile_scene(scene: SceneSpec, *, width: int, height: int, duration: float,
     return ("<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\">"
             "<style>html,body{margin:0;width:100%;height:100%;overflow:hidden}"
             "*{box-sizing:border-box}#stage{position:absolute;inset:0;overflow:hidden}"
-            ".scene-element{position:absolute;transform-origin:center;white-space:pre-wrap;"
+            ".scene-element{position:absolute;transform-origin:center;white-space:pre-wrap;will-change:transform,opacity;"
             "overflow-wrap:anywhere;line-height:1.4}"
             ".scene-text{display:flex;flex-direction:column;justify-content:center}"
             ".scene-card,.scene-code{border-radius:18px;border:2px solid;padding:.6em}"

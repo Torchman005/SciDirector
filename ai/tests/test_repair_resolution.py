@@ -17,12 +17,25 @@ def previous() -> CriticFeedback:
         task(task_id=f"r1-{i}", target=f"labels {i}") for i in range(4)])
 
 
-def test_missing_results_and_unselected_tasks_cannot_disappear() -> None:
+def test_passing_review_closes_tasks_it_no_longer_observes() -> None:
     old = previous()
     result = merge_repairs(old, CriticFeedback(passed=True, score=.95), [], set())
-    assert not result.passed and len(result.repair_tasks) == 4
+    assert result.passed and len(result.repair_tasks) == 4
+    assert {t.status for t in result.repair_tasks} == {"resolved"}
+    assert result.repair_tasks[0].acceptance == old.repair_tasks[0].acceptance
+
+
+def test_failing_review_keeps_unmatched_tasks_unverified() -> None:
+    old = previous()
+    result = merge_repairs(old, CriticFeedback(passed=False, score=.4, suggestions=["x"]), [], set())
+    assert not result.passed and result.repair_tasks[0].status == "unverified"
+
+
+def test_explicit_open_result_is_not_closed_by_score() -> None:
+    old = previous()
+    result = merge_repairs(old, CriticFeedback(passed=True, score=.95),
+                           [{"task_id": "r1-0", "status": "open", "evidence": ""}], set())
     assert result.repair_tasks[0].status == "unverified"
-    assert result.repair_tasks[3] == old.repair_tasks[3]
 
 
 def test_verified_result_keeps_original_acceptance_and_id() -> None:
@@ -31,7 +44,7 @@ def test_verified_result_keeps_original_acceptance_and_id() -> None:
                            [{"task_id": "r1-0", "status": "resolved", "evidence": "labels separated"}], {"r1-0"})
     assert result.repair_tasks[0].status == "resolved"
     assert result.repair_tasks[0].acceptance == old.repair_tasks[0].acceptance
-    assert result.repair_tasks[0].task_id == "r1-0" and not result.passed
+    assert result.repair_tasks[0].task_id == "r1-0" and result.passed
     repeated = task(task_id="r2-1", target="labels 0")
     again = merge_repairs(old, CriticFeedback(passed=False, suggestions=["repair"], repair_tasks=[repeated]),
                           [{"task_id": "r1-0", "status": "resolved", "evidence": "done"}], {"r1-0"})
@@ -40,8 +53,9 @@ def test_verified_result_keeps_original_acceptance_and_id() -> None:
 
 @pytest.mark.parametrize("evidence,indices,expected", [
     ("labels separately readable in after image", [4], True),
-    ("", [4], False), ("done", [3], False), ("done", [999], False),
-    ("done", [1], False),
+    # 任一当前帧都可作证据；缺证据时由达标的整体复审按"未再观察到"关闭。
+    ("", [4], True), ("done", [3], True), ("done", [999], True),
+    ("done", [1], True),
 ])
 def test_review_uses_one_call_and_requires_current_pair(
     tmp_path: Path, evidence: str, indices: list[int], expected: bool,

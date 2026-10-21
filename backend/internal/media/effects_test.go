@@ -687,9 +687,9 @@ func TestPlanSubtitleStyleAutoScalesWithFrameHeight(t *testing.T) {
 		height int
 		wantPx float64
 	}{
-		{720, 24},
-		{1080, 36},
-		{2160, 72},
+		{720, 30},
+		{1080, 45},
+		{2160, 90},
 	}
 	for _, c := range cases {
 		style, err := PlanSubtitleStyle(SubtitleStyle{}, c.height)
@@ -719,6 +719,24 @@ func TestPlanSubtitleStyleAutoScalesWithFrameHeight(t *testing.T) {
 	}
 	if !strings.Contains(fallback, "FontSize=") {
 		t.Errorf("缺少画面高度时也应当给出可用样式，实际：%s", fallback)
+	}
+}
+
+func TestPlanSubtitleStyleUsesInkOnPaperBackgrounds(t *testing.T) {
+	got, err := PlanSubtitleStyle(SubtitleStyle{LightBackground: true}, 1080)
+	if err != nil {
+		t.Fatalf("PlanSubtitleStyle 报错: %v", err)
+	}
+	// #2B2420 墨色 -> &H0020242B；#FFF8EC 纸色描边 -> &H00ECF8FF
+	if !strings.Contains(got, "PrimaryColour=&H0020242B") || !strings.Contains(got, "OutlineColour=&H00ECF8FF") {
+		t.Errorf("浅色背景应使用墨色字与纸色描边，实际：%s", got)
+	}
+	if !strings.Contains(got, "Bold=1") || !strings.Contains(got, "FontName=") {
+		t.Errorf("字幕应显式指定中文粗体，实际：%s", got)
+	}
+	custom, _ := PlanSubtitleStyle(SubtitleStyle{LightBackground: true, PrimaryColor: "#FF0000"}, 1080)
+	if !strings.Contains(custom, "PrimaryColour=&H000000FF") {
+		t.Errorf("用户显式字色不应被主题覆盖：%s", custom)
 	}
 }
 

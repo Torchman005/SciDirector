@@ -34,7 +34,8 @@ from .llm import LLMClient, LLMError
 from .logging import get_logger
 from .media import MediaToolError, FrameSample, extract_frames, frame_sample_times
 from .repair_evidence import attach_repair_evidence, precheck_repairs, skip_full_review
-from .review_tasks import active_repairs, carry_repairs, repair_improved, FAILURES_BEFORE_HANDOFF
+from .review_tasks import (active_repairs, carry_repairs, ensure_human_task, repair_stalled,
+                           FAILURES_BEFORE_HANDOFF)
 from .scene_revision import parse_exact_revision
 from .renderer import RendererError, RenderRequest, build_renderer, renderer_availability
 from .sandbox.runner import SandboxRunner
@@ -424,6 +425,12 @@ class PipelineService:
                 shot=shot, style_guide=style_guide, revision=exact_revision)
 
         current = shot
+        if exact_revision is None:
+            # 审核员意见进入台账成为阻塞任务：只有复审逐项确认落实（或人工放行）才能关闭，
+            # 不会再被一次机器"通过"静默吞掉；Go 持久化的台账让历史意见在后续轮次继续生效。
+            previous_feedback = ensure_human_task(
+                previous_feedback, human_comment, attempt=attempt, duration=shot.duration_sec,
+                start_sec=range_start_sec, end_sec=range_end_sec)
         request_context = "用户期望：" + (human_comment.strip() or "根据系统诊断自动修复并复审")
         request_context += preserved_science(previous_feedback)
         if previous_error:
@@ -446,9 +453,11 @@ class PipelineService:
                 if exact_result is None:
                     current = repair_narration(self.llm, current, previous_review, attempt=round_attempt,
                         partial=range_end_sec > range_start_sec)
-                rebuild = (not current.code or technical_failures > 0 or
-                           current.meta.get("repair_strategy") == "rebuild" or
-                           (rounds > 1 and revision_round == rounds - 1))
+                # 结构化场景始终在上一版基础上定点修补：完整重建会丢掉已修好的部分。
+                # 非结构化源码（如 Manim）连续技术失败时才重建。
+                structured = '<script id="scid-scene-v1"' in (current.code or "")
+                rebuild = (not current.code or current.meta.get("repair_strategy") == "rebuild" or
+                           (technical_failures > 0 and not structured))
                 generation_shot = current.model_copy(update={"meta": {
                     **current.meta, "repair_strategy": "rebuild" if rebuild else "targeted"}})
                 science_context = [t for review in (previous_feedback, previous_review) if review
@@ -538,7 +547,8 @@ class PipelineService:
             if outcome.feedback.passed or outcome.degraded or not active_repairs(outcome.feedback):
                 return last_valid
             if previous_review and active_repairs(previous_review):
-                stalled_repairs = 0 if repair_improved(previous_review, outcome.feedback) else stalled_repairs + 1
+                # 只有原问题被复审再次看到才算停滞；没拿到有效证据（unverified）不推向人工。
+                stalled_repairs = stalled_repairs + 1 if repair_stalled(previous_review, outcome.feedback) else 0
             if stalled_repairs >= FAILURES_BEFORE_HANDOFF:
                 outcome.feedback.handoff_reason = "连续两轮修复没有任务级的可验证改善，已停止自动重做，请人工核对原验收条件与对照帧。"
                 return last_valid

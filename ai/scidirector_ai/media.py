@@ -48,6 +48,10 @@ class MediaInfo:
         return self.width > 0 and self.duration_sec > 0
 
 
+#: 单镜头编码只是中间产物：后端还会重编码数次（规范化、转场、讲解员叠加、调色）。
+#: 近无损的 CRF 避免细线与文字边缘在多代压缩中逐级发糊。
+INTERMEDIATE_CRF = 12
+
 #: 常见中文字体候选路径。按顺序探测，第一个存在的被采用。
 #: 之所以要探测而不是写死：Windows 开发机与 Linux 容器的字体路径完全不同。
 _FONT_CANDIDATES = (
@@ -261,7 +265,7 @@ def extract_frames_with_times(
                 "-i", str(target),
                 "-frames:v", "1",
                 # 缩到 1024 宽：足够 VLM 判断字号与排版，又显著降低上传成本。
-                "-vf", f"scale={width}:-2",
+                "-vf", f"scale={width}:-2:flags=lanczos",
                 str(frame_path),
             ],
             cwd=out,
@@ -530,7 +534,7 @@ def encode_frames(
             "-framerate", str(fps),
             "-i", str(src / pattern),
             # yuv420p 是最大兼容性的像素格式，缺少它很多播放器会花屏。
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", str(INTERMEDIATE_CRF),
             "-pix_fmt", "yuv420p",
             *(["-t", f"{duration_sec:.3f}"] if duration_sec > 0 else []),
             "-movflags", "+faststart",
@@ -666,7 +670,7 @@ def _run_ambient(
             "-t", f"{out_duration:.3f}",
             "-r", str(fps),
             "-pix_fmt", "yuv420p",
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", str(INTERMEDIATE_CRF),
             "-movflags", "+faststart",
             str(target),
         ],

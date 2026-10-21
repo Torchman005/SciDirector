@@ -51,6 +51,7 @@ PROMPT_BY_ENGINE: dict[str, str] = {
 ENGINE_PROMPT_PLACEHOLDERS: tuple[str, ...] = (
     "min_font_size",
     "background_color",
+    "text_color",
     "primary_color",
     "width",
     "height",
@@ -561,6 +562,17 @@ def _clip_code_for_prompt(code: str, *, what: str = "上一版代码") -> str:
     )
 
 
+def _ink_for(background: str) -> str:
+    value = background.strip().lstrip("#")
+    if len(value) == 3:
+        value = "".join(c * 2 for c in value)
+    try:
+        r, g, b = (int(value[i:i + 2], 16) / 255 for i in (0, 2, 4))
+    except ValueError:
+        return "#E6ECFF"
+    return "#2B2420" if 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.6 else "#E6ECFF"
+
+
 def load_engine_prompt(
     name: str,
     settings: Settings,
@@ -586,6 +598,9 @@ def load_engine_prompt(
     mapping = {
         "min_font_size": str(min_font_size),
         "background_color": background_color,
+        # 文字色跟随背景明暗：浅色纸面上用深墨色，否则 Manim 镜头里的白字完全看不见，
+        # 也与 HTML 场景的配色不统一。
+        "text_color": _ink_for(background_color),
         "primary_color": primary_color,
         "width": str(settings.render_width),
         "height": str(settings.render_height),

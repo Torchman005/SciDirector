@@ -77,6 +77,10 @@ _DIMENSION_LABELS = {
 }
 
 
+#: 审核 JSON 含逐项 repair_tasks 与 repair_results，中文输出在 4096 下常被截断。
+CRITIC_MAX_TOKENS = 8192
+
+
 class _RepairResult(BaseModel):
     task_id: str
     status: Literal["open", "partial", "resolved", "unverified"]
@@ -365,6 +369,7 @@ class CriticAgent(Agent):
                 images=images,
                 image_labels=image_labels,
                 task=Task.CRITIQUE,
+                max_tokens=CRITIC_MAX_TOKENS,
             )
         except (LLMError, LLMParseError) as exc:
             # 关键的降级点：模型不可用时**绝不**伪造通过。
@@ -380,7 +385,8 @@ class CriticAgent(Agent):
             )
 
         assert isinstance(parsed, _RawCritique)
-        feedback, program_passed = self._decide(parsed, shot=shot, attempt=attempt)
+        feedback, program_passed = self._decide(parsed, shot=shot, attempt=attempt,
+                                                duration=artifact.duration_sec, frame_count=len(frames))
         needs_locations = not feedback.passed or any(t.severity != "advisory" for t in feedback.repair_tasks)
         invalid_new_tasks = any(
             t.end_sec > artifact.duration_sec or any(i > len(frames) for i in t.frame_indices)
@@ -409,27 +415,39 @@ class CriticAgent(Agent):
                     f"repair_results 必须回答这些已提供对比图的 task_id：{sorted(paired_ids)}，引用相应当前 AFTER 图像编号。"
                     "不能用泛泛建议或编造定位补齐。上一份输出：" + str(parsed.model_dump()),
                     _RawCritique, images=images, image_labels=image_labels, task=Task.CRITIQUE,
+                    max_tokens=CRITIC_MAX_TOKENS,
                 )
-                feedback, program_passed = self._decide(parsed, shot=shot, attempt=attempt)
+                feedback, program_passed = self._decide(parsed, shot=shot, attempt=attempt,
+                                                        duration=artifact.duration_sec, frame_count=len(frames))
             except (LLMError, LLMParseError) as exc:
                 return self._degrade(shot=shot, attempt=attempt,
                                      reason=f"审核意见定位补充失败：{exc}", frames=len(frames))
             if ((not feedback.passed or any(t.severity != "advisory" for t in feedback.repair_tasks))
                     and not _valid_task_locations(feedback.repair_tasks, artifact)
                     and (feedback.repair_tasks or not active_repairs(previous_review))):
-                return self._degrade(shot=shot, attempt=attempt,
-                                     reason="审核意见缺少有效定位、证据或验收条件，停止无目标重做",
-                                     frames=len(frames))
+                # 定位仍不完整时，按问题描述生成整段任务继续修复；只有连问题都没有才转人工。
+                # 之前这里直接降级，导致大量镜头因"缺定位"被推给人工。
+                fallback = _fallback_tasks(feedback, attempt=attempt, duration=artifact.duration_sec,
+                                           frame_count=len(frames))
+                if not fallback:
+                    return self._degrade(shot=shot, attempt=attempt,
+                                         reason="审核意见缺少有效定位、证据或验收条件，停止无目标重做",
+                                         frames=len(frames))
+                feedback = feedback.model_copy(update={"repair_tasks": fallback})
 
+        # 逐项结论只需引用任一当前版本图像：VLM 在二十余张图里精确对号经常失败，
+        # 而此前"对不上号 -> unverified -> 计失败"正是镜头迟迟无法收敛的主因。
+        selected_ids = {t.task_id for t in active_repairs(previous_review)}
         verified_ids = {
             r.task_id for r in parsed.repair_results
-            if r.task_id in paired_ids and r.evidence.strip() and r.image_indices
+            if r.task_id in selected_ids and r.evidence.strip() and r.image_indices
             and not r.task_id.startswith('science-')  # source proof, never visual guesswork, closes these tasks
             and all(i in current_indices for i in r.image_indices)
-            and bool(set(r.image_indices) & task_current_indices.get(r.task_id, set()))
         }
+        score_ok = program_passed and not feedback.fatal_issues
         feedback = merge_repairs(previous_review, feedback,
-                                 [r.model_dump() for r in parsed.repair_results], verified_ids)
+                                 [r.model_dump() for r in parsed.repair_results], verified_ids,
+                                 score_ok=score_ok)
         outcome = CritiqueOutcome(
             feedback=feedback,
             frames_reviewed=len(frames),
@@ -461,7 +479,8 @@ class CriticAgent(Agent):
     # ------------------------------------------------------------------
 
     def _decide(
-        self, raw: _RawCritique, *, shot: ShotSpec, attempt: int
+        self, raw: _RawCritique, *, shot: ShotSpec, attempt: int,
+        duration: float = 0.0, frame_count: int = 0,
     ) -> tuple[CriticFeedback, bool]:
         """由程序计算最终结论，返回 (反馈, 程序判定是否通过)。
 
@@ -518,7 +537,7 @@ class CriticAgent(Agent):
             )
 
         repair_tasks = _normalize_repair_tasks(
-            raw.repair_tasks, attempt=attempt,
+            raw.repair_tasks, attempt=attempt, duration=duration, frame_count=frame_count,
         )
         blocking = [task for task in repair_tasks if task.severity == "blocking"]
         if blocking:
@@ -619,13 +638,60 @@ def _normalize_repair_tasks(
     tasks: list[RepairTask],
     *,
     attempt: int,
+    duration: float = 0.0,
+    frame_count: int = 0,
 ) -> list[RepairTask]:
-    """Do not invent evidence to convert legacy vague feedback into a repair."""
+    """Do not invent evidence to convert legacy vague feedback into a repair.
+
+    有对象、证据、指令与验收但没给时间的问题视为整段问题（0～时长）；
+    越界的时间与帧号收拢到当前产物范围内，而不是整条丢弃。
+    """
+    out: list[RepairTask] = []
+    for task in tasks:
+        update: dict[str, Any] = {}
+        if duration > 0:
+            end = min(task.end_sec, duration)
+            update.update(start_sec=min(task.start_sec, end), end_sec=end)
+        if frame_count > 0:
+            update["frame_indices"] = [i for i in task.frame_indices if i <= frame_count]
+        task = task.model_copy(update=update)
+        if (duration > 0 and not task.frame_indices and task.end_sec <= task.start_sec
+                and all(v.strip() for v in (task.target, task.evidence, task.instruction, task.acceptance))):
+            task = task.model_copy(update={"start_sec": 0.0, "end_sec": duration})
+        if task.actionable:
+            out.append(task)
     return [task.model_copy(update={
         "task_id": f"r{attempt}-{index + 1:02d}", "status": "open",
         "resolution_evidence": "",
         "evidence_pairs": [],
-    }) for index, task in enumerate(tasks) if task.actionable]
+    }) for index, task in enumerate(out)]
+
+
+def _fallback_tasks(feedback: CriticFeedback, *, attempt: int, duration: float,
+                    frame_count: int) -> list[RepairTask]:
+    """把未定位的判负理由转成整段修复任务；证据即模型原话，不编造位置。"""
+    valid = [t for t in feedback.repair_tasks if t.actionable and t.end_sec <= duration
+             and all(i <= frame_count for i in t.frame_indices)]
+    if valid or feedback.passed:
+        return valid
+    issues = [i for i in feedback.issues
+              if i and not i.startswith(("模型自报", "自动审查反馈不可执行", "维度未达硬性下限"))]
+    suggestions = [s for s in feedback.suggestions if not s.startswith("模型未能给出")] or _derive_suggestions(issues)
+    tasks = []
+    for index, (issue, instruction) in enumerate(zip(issues, suggestions + issues[len(suggestions):]), 1):
+        if index > 3:
+            break
+        category = ("readability" if any(k in issue for k in ("字号", "看不清", "可读", "对比"))
+                    else "pacing" if any(k in issue for k in ("节奏", "太快", "太慢", "静止"))
+                    else "logic" if any(k in issue for k in ("逻辑", "错误", "不符", "公式", "旁白"))
+                    else "layout")
+        tasks.append(RepairTask(
+            task_id=f"r{attempt}-{index:02d}", category=category, severity="major",
+            start_sec=0.0, end_sec=max(duration, 0.0),
+            frame_indices=list(range(1, frame_count + 1)), target="整段画面",
+            evidence=issue, instruction=instruction,
+            acceptance="复审时不再出现该问题：" + issue))
+    return tasks
 
 
 def _valid_task_locations(tasks: list[RepairTask], artifact: RenderArtifact) -> bool:
