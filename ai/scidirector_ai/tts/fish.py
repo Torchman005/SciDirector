@@ -73,8 +73,11 @@ def marks_from_alignment(alignment: object) -> tuple[SentenceMark, ...]:
             e = float(seg.get("end"))
         except (TypeError, ValueError):
             continue
-        if not math.isfinite(s) or not math.isfinite(e) or s < 0 or e <= s or s < last_end - .05:
+        if not math.isfinite(s) or not math.isfinite(e) or s < 0 or e < s or s < last_end - .05:
             return ()  # Do not silently align a partial or non-monotonic transcript.
+        # 实测服务端偶尔给出 start == end 的单字（如长文本中的"一"）。
+        # 它仍是有效时刻；整段拒绝会让字幕和章节时间轴全部失去对齐。
+        e = max(e, s + .01)
         marks.append(SentenceMark(text=ch, start_sec=s, duration_sec=e-s))
         last_end = e
     return tuple(marks)
