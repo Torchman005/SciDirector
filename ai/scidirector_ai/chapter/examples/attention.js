@@ -119,8 +119,8 @@ scene('qk', svg => {
   const tSc = txt(svg, PX + 32, PY + 44, 'softmax(分数 ÷ √d)', { 'font-size': 28, 'font-weight': 800, fill: C.k });
   const demo = txt(svg, PX + PW - 28, PY + 44, '示意数值', { 'text-anchor': 'end', 'font-size': 20, fill: C.mute });
   const chart = bars(svg, { x: PX + 36, y: PY + 90, w: PW - 60, h: 240, labels: TOK, fs: 21, vfs: 22 });
-  const warn = txt(svg, PX + PW / 2, PY + PH + 40, '几乎全给了一个词：其余词被忽略，梯度也几乎为 0', { 'text-anchor': 'middle', 'font-size': 26, fill: C.q, 'font-weight': 700 });
-  const good = txt(svg, PX + PW / 2, PY + PH + 40, '分布更温和：主次分明，其他词也保留一点', { 'text-anchor': 'middle', 'font-size': 26, fill: C.k, 'font-weight': 700 });
+  const warn = txt(svg, PX + PW / 2, PY + PH + 40, '几乎全给一个词，梯度接近 0', { 'text-anchor': 'middle', 'font-size': 26, fill: C.q, 'font-weight': 700 });
+  const good = txt(svg, PX + PW / 2, PY + PH + 40, '更温和：主次分明，其他词也保留一点', { 'text-anchor': 'middle', 'font-size': 26, fill: C.k, 'font-weight': 700 });
   const badge = S('g', {}, svg);
   S('rect', { x: -118, y: -34, width: 236, height: 68, rx: 34, fill: C.gold }, badge);
   txt(badge, 0, 2, '÷ √d = ÷ 8', { 'text-anchor': 'middle', 'font-size': 32, 'font-weight': 900, fill: '#fff' });

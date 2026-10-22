@@ -78,3 +78,72 @@ def test_attention_chapter_passes_browser_preflight(tmp_path) -> None:
     problems = preflight_chapter(broken, estimate_timing([ChapterLine("a", "这一句。")]),
                                  executable=os.environ["SCID_CHROME"])
     assert any("不存在的词" in p for p in problems)
+
+
+# ---------------------------------------------------------------------------
+# 内容 → 脚本 → 场景代码
+# ---------------------------------------------------------------------------
+
+def _script_dict(**over) -> dict:
+    base = {"title": "注意力", "highlights": {"Query": "#E8735A", "bad": "red"}, "scenes": [
+        {"id": "intro", "title": "开场", "stage": "一排词卡居中，上方留出连线空间",
+         "lines": [{"id": "hello", "sub": "今天讲注意力机制", "visual": "标题放大淡入", "cues": ["注意力"]},
+                   {"id": "sq", "sub": "先除以 √d", "say": "先除以根号d", "visual": "金色徽标弹出", "cues": ["根号d"]}]}]}
+    base.update(over)
+    return base
+
+
+def test_script_separates_subtitle_and_speech_and_checks_cues() -> None:
+    from scidirector_ai.chapter.writer import ChapterScript
+    script = ChapterScript.model_validate(_script_dict())
+    assert [l.spoken for l in script.chapter_lines()] == ["今天讲注意力机制", "先除以根号d"]
+    assert script.highlights == {"Query": "#E8735A"}  # 非法颜色被丢弃
+    bad = _script_dict()
+    bad["scenes"][0]["lines"][1]["say"] = ""  # 朗读里留着 √ 符号
+    with pytest.raises(ValueError, match="符号"):
+        ChapterScript.model_validate(bad)
+    bad = _script_dict()
+    bad["scenes"][0]["lines"][0]["cues"] = ["不存在"]
+    with pytest.raises(ValueError, match="卡点词"):
+        ChapterScript.model_validate(bad)
+
+
+class _FakeLLM:
+    """按调用顺序返回预置结果，记录提示词。"""
+
+    def __init__(self, replies):
+        self.replies, self.calls = list(replies), []
+
+    def chat_json(self, system, user, schema, **kw):
+        self.calls.append(user)
+        reply = self.replies.pop(0)
+        return schema.model_validate(reply) if isinstance(reply, dict) else reply
+
+
+def test_long_script_is_sent_back_for_shortening() -> None:
+    from scidirector_ai.chapter.writer import write_script
+    long = _script_dict()
+    long["scenes"][0]["lines"][0]["sub"] = "今天讲注意力机制" + "，展开讲" * 12
+    llm = _FakeLLM([long, {"ok": True, "issues": []}, _script_dict()])
+    script = write_script(llm, "讲注意力", target_sec=5)
+    assert "远超目标" in llm.calls[-1] and script.scenes[0].lines[0].sub == "今天讲注意力机制"
+
+
+def test_scene_problems_are_routed_to_their_scene() -> None:
+    from scidirector_ai.chapter.workflow import _by_scene
+    from scidirector_ai.chapter.writer import ChapterScript
+    script = ChapterScript.model_validate(_script_dict())
+    grouped = _by_scene(["[场景 hello] 文字重叠", "页面异常：x", "[场景 nope] y"], script)
+    assert grouped["hello"] == ["[场景 hello] 文字重叠"] and len(grouped["*"]) == 2
+
+
+@pytest.mark.skipif(not os.environ.get("SCID_CHROME"), reason="Set SCID_CHROME for real browser acceptance")
+def test_syntax_error_in_one_scene_is_tagged_and_others_still_run(tmp_path) -> None:
+    timing = estimate_timing([ChapterLine("a", "第一句。"), ChapterLine("b", "第二句。")])
+    html = tmp_path / "i.html"
+    html.write_text(compile_chapter([("a", "scene('a', svg => { const x = 1; const x = 2; });"),
+                                     ("b", "scene('b', svg => { const g = txt(svg, 400, 400, '好'); return t => O(g, 1); });")],
+                                    timing), encoding="utf-8")
+    problems = preflight_chapter(html, timing, executable=os.environ["SCID_CHROME"])
+    assert any(p.startswith("[场景 a]") and "脚本错误" in p for p in problems)
+    assert not any(p.startswith("[场景 b]") for p in problems)

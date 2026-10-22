@@ -60,15 +60,18 @@ function S(tag, attrs = {}, parent) {
   for (const k in attrs) { if (k === 'text') e.textContent = attrs[k]; else e.setAttribute(k, f2(attrs[k])); }
   if (parent) parent.appendChild(e); return e;
 }
-const A = (e, o) => { for (const k in o) e.setAttribute(k, f2(o[k])); return e; };
-const O = (e, v) => { e.setAttribute('opacity', clamp(v).toFixed(3)); return e; };
-const TR = (e, x, y, s = 1, r = 0) => { e.setAttribute('transform', `translate(${x.toFixed(2)},${y.toFixed(2)}) rotate(${r.toFixed(2)}) scale(${(+s).toFixed(4)})`); return e; };
-const TRS = (e, x, y, sx, sy) => { e.setAttribute('transform', `translate(${x.toFixed(2)},${y.toFixed(2)}) scale(${Math.max(sx, .001).toFixed(4)},${Math.max(sy, .001).toFixed(4)})`); return e; };
+/** 组件对象（chip 等返回 {g,...}）与元素都可以传入；数组逐个处理。 */
+const el = e => e && typeof e.setAttribute !== 'function' && e.g ? e.g : e;
+const each = (e, fn) => { if (Array.isArray(e)) { e.forEach(fn); return e; } return fn(e); };
+const A = (e, o) => { if (Array.isArray(e)) return each(e, n => A(n, o)); e = el(e); if (!e) return e; for (const k in o) e.setAttribute(k, f2(o[k])); return e; };
+const O = (e, v) => { if (Array.isArray(e)) return each(e, n => O(n, v)); e = el(e); if (!e) return e; e.setAttribute('opacity', clamp(v).toFixed(3)); return e; };
+const TR = (e, x, y, s = 1, r = 0) => { if (Array.isArray(e)) return each(e, n => TR(n, x, y, s, r)); e = el(e); if (!e) return e; e.setAttribute('transform', `translate(${x.toFixed(2)},${y.toFixed(2)}) rotate(${r.toFixed(2)}) scale(${(+s).toFixed(4)})`); return e; };
+const TRS = (e, x, y, sx, sy) => { if (Array.isArray(e)) return each(e, n => TRS(n, x, y, sx, sy)); e = el(e); if (!e) return e; e.setAttribute('transform', `translate(${x.toFixed(2)},${y.toFixed(2)}) scale(${Math.max(sx, .001).toFixed(4)},${Math.max(sy, .001).toFixed(4)})`); return e; };
 const FONT = DATA.font || '"Microsoft YaHei","PingFang SC","Noto Sans CJK SC",sans-serif';
 const txt = (parent, x, y, s, attrs = {}) => S('text', Object.assign({ x, y, text: s, fill: C.ink, 'font-size': 32, 'dominant-baseline': 'central' }, attrs), parent);
 /** 描线路径：DP(e, p) 画到 p。 */
 const drawPath = (parent, d, attrs = {}) => S('path', Object.assign({ d, fill: 'none', pathLength: 1, 'stroke-dasharray': '1 1', 'stroke-dashoffset': 1, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }, attrs), parent);
-const DP = (e, p) => { e.setAttribute('stroke-dashoffset', (1 - clamp(p)).toFixed(4)); e.setAttribute('visibility', p <= .001 ? 'hidden' : 'visible'); return e; };
+const DP = (e, p) => { if (Array.isArray(e)) return each(e, n => DP(n, p)); e = el(e); if (!e) return e; e.setAttribute('stroke-dashoffset', (1 - clamp(p)).toFixed(4)); e.setAttribute('visibility', p <= .001 ? 'hidden' : 'visible'); return e; };
 const measureCtx = document.createElement('canvas').getContext('2d');
 const textW = (s, fs, weight = 700) => { measureCtx.font = `${weight} ${fs}px ${FONT}`; return measureCtx.measureText(s).width; };
 
@@ -156,12 +159,23 @@ const scenes = [], pending = [];
 function scene(firstId, build) { pending.push({ firstId, build }); }
 function buildScenes() {
   pending.forEach(({ firstId, build }, k) => {
-    const div = document.createElement('div'); div.className = 'scene'; scenesRoot.appendChild(div);
+    const div = document.createElement('div'); div.className = 'scene'; div.dataset.scene = firstId; scenesRoot.appendChild(div);
     const svg = S('svg', { viewBox: `0 0 ${W0} ${H0}` }, div);
-    const a = k === 0 ? -10 : T(firstId) - .75;
-    const b = k === pending.length - 1 ? DUR + 30 : T(pending[k + 1].firstId) - .35;
-    const sc = { a, b, div, svg };
-    sc.update = build(svg, sc) || (() => {});
+    let a = 0, b = DUR + 30;
+    try {
+      a = k === 0 ? -10 : T(firstId) - .75;
+      b = k === pending.length - 1 ? DUR + 30 : T(pending[k + 1].firstId) - .35;
+    } catch (e) { errors.push(`[场景 ${firstId}] ${e.message || e}`); }
+    const sc = { a, b, div, svg, id: firstId, failed: false };
+    // 每个场景独立隔离错误：一个场景出错不拖垮整章，报错带场景 id，便于定点修复。
+    let update = () => {};
+    try { update = build(svg, sc) || update; }
+    catch (e) { sc.failed = true; errors.push(`[场景 ${firstId}] 建立失败：${e.message || e}`); }
+    sc.update = t => {
+      if (sc.failed) return;
+      try { update(t); }
+      catch (e) { sc.failed = true; errors.push(`[场景 ${firstId}] t=${t.toFixed(2)} 更新失败：${e.message || e}`); }
+    };
     scenes.push(sc);
   });
 }
@@ -203,6 +217,35 @@ window.__seek = seconds => {
 };
 window.SC = { DATA, DUR, W: W0, H: H0, C, T, TE, K, KE, clamp, lerp, Ez, P, Wn: W, mix, softmax, rng,
   S, A, O, TR, TRS, txt, drawPath, DP, textW, chip, rowXs, panel, heading, arcD, arcPt, flowDots, vecRow, matrix, bars, pop, scene };
+/** 版式检查：在当前画面上找互相重叠、出画、压字幕区或讲解员区的可见文字。 */
+const effOpacity = el => { let o = 1; for (let n = el; n && n !== stage; n = n.parentElement) o *= Number(getComputedStyle(n).opacity); return o; };
+window.__layout = () => {
+  const out = [];
+  for (const sc of scenes) {
+    if (sc.div.style.display === 'none' || Number(sc.div.style.opacity) < .95) continue;
+    const boxes = [...sc.div.querySelectorAll('text')].filter(e => e.textContent.trim() && effOpacity(e) > .6)
+      .map(e => ({ e, r: e.getBoundingClientRect(), s: e.textContent.trim().slice(0, 16) })).filter(b => b.r.width > 2 && b.r.height > 4);
+    const name = b => `“${b.s}”(x${Math.round(b.r.left)}–${Math.round(b.r.right)},y${Math.round(b.r.top)}–${Math.round(b.r.bottom)})`;
+    for (const b of boxes) {
+      const r = b.r;
+      if (r.left < 0 || r.top < 0 || r.right > W0 || r.bottom > H0) out.push(`[场景 ${sc.id}] 文字${name(b)}超出画面`);
+      else if (r.bottom > 905) out.push(`[场景 ${sc.id}] 文字${name(b)}压到底部字幕区（y>900）`);
+      else if (r.right > 1440 && r.bottom > 560) out.push(`[场景 ${sc.id}] 文字${name(b)}进入右下讲解员区（x>1440,y>560）`);
+    }
+    for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++) {
+      const p = boxes[i].r, q = boxes[j].r, a = boxes[i].s, c = boxes[j].s;
+      // 同文字叠放是有意的描边/阴影；单字小框贴着大框是上下标（如 w 的下标 j）。
+      if (a === c) continue;
+      const small = Math.min(p.width * p.height, q.width * q.height), big = Math.max(p.width * p.height, q.width * q.height);
+      if (Math.min(a.length, c.length) <= 1 && small < .35 * big) continue;
+      const w = Math.min(p.right, q.right) - Math.max(p.left, q.left), h = Math.min(p.bottom, q.bottom) - Math.max(p.top, q.top);
+      if (w > 0 && h > 0 && w * h > .25 * Math.min(p.width * p.height, q.width * q.height))
+        out.push(`[场景 ${sc.id}] 文字${name(boxes[i])}与${name(boxes[j])}重叠`);
+    }
+  }
+  return out;
+};
+
 window.__chapterStart = () => {
   const fonts = document.fonts && document.fonts.ready ? document.fonts.ready.catch(() => null) : Promise.resolve();
   fonts.then(() => {

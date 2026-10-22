@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import math
 import shutil
 import subprocess
@@ -32,7 +33,7 @@ def _script_safe(code: str) -> str:
     return code.replace("</script", "<\\/script")
 
 
-def compile_chapter(director_js: str, timing: dict, *, width: int = 1920, height: int = 1080,
+def compile_chapter(director_js: str | list[tuple[str, str]], timing: dict, *, width: int = 1920, height: int = 1080,
                     series: str = "", title: str = "", highlights: dict[str, str] | None = None,
                     palette: dict[str, str] | None = None, presenter: bool = True) -> str:
     """生成整章 HTML。``presenter`` 为真时字幕右侧让出右下角讲解员。"""
@@ -75,8 +76,21 @@ svg text{{font-family:{FONT}}}
             "<div id=\"subs\"><div id=\"sub\"></div></div><div id=\"prog\"></div></div>"
             f'<script id="scid-chapter-v1" type="application/json">{data}</script>'
             f"<script>{_script_safe(chapter_runtime())}</script>"
-            f"<script>(()=>{{const {{{', '.join(_EXPORTS)}}}=SC;\n{_script_safe(director_js)}\n}})();"
-            "window.__chapterStart();</script></body></html>")
+            + _director_scripts(director_js) +
+            "<script>window.__chapterStart();</script></body></html>")
+
+
+def _director_scripts(director_js: str | list[tuple[str, str]]) -> str:
+    """每个场景单独一个 script：某个场景的语法错误不会让整章停摆，并能标出是哪个场景。"""
+    parts = [("", director_js)] if isinstance(director_js, str) else director_js
+    head = "const {" + ", ".join(_EXPORTS) + "}=SC;"
+    out = ["<script>window.addEventListener('error',e=>{window.__errors.push("
+           "(window.__sceneTag?`[场景 ${window.__sceneTag}] `:'')+'脚本错误：'+e.message);});</script>"]
+    for scene_id, code in parts:
+        out.append(f"<script>window.__sceneTag={json.dumps(scene_id)};</script>"
+                   f"<script>(()=>{{{head}\n{_script_safe(code)}\n}})();</script>")
+    out.append("<script>window.__sceneTag='';</script>")
+    return "".join(out)
 
 
 #: 导演代码可直接使用的名字（与 chapter_runtime.js 的 window.SC 一致）。
@@ -85,7 +99,8 @@ _EXPORTS = ("DATA", "DUR", "W", "H", "C", "T", "TE", "K", "KE", "clamp", "lerp",
             "rowXs", "panel", "heading", "arcD", "arcPt", "flowDots", "vecRow", "matrix", "bars", "pop", "scene")
 
 
-async def _preflight_async(html: Path, times: list[float], width: int, height: int, executable: str) -> list[str]:
+async def _preflight_async(html: Path, times: list[float], width: int, height: int, executable: str,
+                           layout_times: list[float] = ()) -> list[str]:
     from playwright.async_api import async_playwright
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(executable_path=executable or None,
@@ -98,14 +113,30 @@ async def _preflight_async(html: Path, times: list[float], width: int, height: i
             await page.wait_for_function("() => window.__ready === true", timeout=30_000)
             for t in times:
                 await page.evaluate("(t) => window.__seek(t)", t)
-            problems += await page.evaluate("() => window.__errors.slice()")
-            # 倒序再 seek 一次并比对可见场景：画面必须只由 t 决定（隐藏场景不参与绘制）。
-            first = await page.evaluate("(t) => (window.__seek(t), [...document.querySelectorAll('#scenes > .scene')].filter(d => d.style.display !== 'none').map(d => d.style.cssText + d.innerHTML).join('|'))", times[len(times) // 2])
+            tagged = await page.evaluate("() => window.__errors.slice()")
+            # 页面级异常若已被带场景标记的错误覆盖，只保留后者（便于定点修复）。
+            problems = [p for p in problems if not any(p.removeprefix("页面异常：") in t for t in tagged)] + tagged
+            # 版式：在每句话的稳定时刻检查文字重叠、出画与占用字幕/讲解员区。
+            for t in layout_times:
+                for issue in await page.evaluate("(t) => (window.__seek(t), window.__layout())", t):
+                    issue = f"{issue}（t={t:.1f}s）"
+                    key = re.sub(r"\(x[^)]*\)", "", issue.split("（t=")[0])
+                    if not any(key == re.sub(r"\(x[^)]*\)", "", p.split("（t=")[0]) for p in problems):
+                        problems.append(issue)
+            # 倒序再 seek 一次并逐场景比对：画面必须只由 t 决定（隐藏场景不参与绘制）。
+            snap = ("(t) => (window.__seek(t), Object.fromEntries([...document.querySelectorAll('#scenes > .scene')]"
+                    ".filter(d => d.style.display !== 'none').map(d => [d.dataset.scene || '', d.style.cssText + d.innerHTML])))")
+            probe = [times[len(times) // 4], times[len(times) // 2], times[3 * len(times) // 4]]
+            first = [await page.evaluate(snap, t) for t in probe]
             for t in reversed(times):
                 await page.evaluate("(t) => window.__seek(t)", t)
-            again = await page.evaluate("(t) => (window.__seek(t), [...document.querySelectorAll('#scenes > .scene')].filter(d => d.style.display !== 'none').map(d => d.style.cssText + d.innerHTML).join('|'))", times[len(times) // 2])
-            if first != again:
-                problems.append("同一时刻两次 seek 的画面不同：动画依赖调用顺序，不能逐帧渲染")
+            again = [await page.evaluate(snap, t) for t in probe]
+            for t, a, b in zip(probe, first, again):
+                for scene_id in a:
+                    if a[scene_id] != b.get(scene_id):
+                        tag = f"[场景 {scene_id}] " if scene_id else ""
+                        problems.append(f"{tag}t={t:.1f}s 两次 seek 画面不同：动画依赖调用顺序或保存了跨帧状态，"
+                                        "必须只由 t 计算（不要在 update 里累加、不要用 Math.random）")
             return problems
         finally:
             await browser.close()
@@ -117,7 +148,9 @@ def preflight_chapter(html: Path, timing: dict, *, width: int = 1920, height: in
     dur = float(timing["dur"])
     times = sorted({round(dur * k / 40, 3) for k in range(41)} |
                    {round(line["start"] + .4, 3) for line in timing["lines"]})
-    return asyncio.run(_preflight_async(Path(html), times, width, height, executable))
+    # 句末前 0.15 秒：入场动作已经完成、下一句还没开始。
+    layout_times = [round(max(line["start"] + .6, line["end"] - .15), 3) for line in timing["lines"]]
+    return asyncio.run(_preflight_async(Path(html), times, width, height, executable, layout_times))
 
 
 def render_chapter(html: Path, timing: dict, out_dir: Path, *, audio: Path | None = None, fps: int = 30,
