@@ -21,6 +21,9 @@ SVG：
 - `arcD(x1, x2, y, h)` 弧线路径、`arcPt(x1, x2, y, h, s)` 弧上一点；`flowDots(parent, n, color)` → `.update(t, s=>[x,y], 可见度)`；
 - `vecRow(parent, x, y, n, i=>颜色, {cell})` 一排向量格；`matrix(parent, {x,y,rows,cols,cell,rowLabels,colLabels,color})` → `.set(values, p)`；
 - `bars(parent, {x,y,w,h,labels})` → `.update(values0to1, p, {color: i=>色})`；`pop(e, x, y, p)` 弹出。
+数据：`V` 是脚本给出的示例数据（如 `V.tokens`、`V.scores`、`V.d`）；`pct(x)` 把 0～1 格式化为百分比。
+**画面上的每个数字都必须从 V 取或用代码计算**（如 `softmax(V.scores.map(s => s / Math.sqrt(V.d)))`），
+禁止在字符串里手写 “43%”“= 23” 这类结果，预检会拒绝。
 颜色 `C.ink C.mute C.card C.line C.q C.k C.v C.gold C.blue`。CSS 类：`class:'math'` 公式斜体、`class:'hand'` 手写体。
 
 ## 版式
@@ -28,6 +31,9 @@ SVG：
 - 左上 (56,92) 是章节标题，系列标签在其上方；**底部 y>900 留给字幕**，**右下 x>1440 且 y>560 是讲解员**，都不能放内容。
 - 主体放在 x 60～1420、y 160～860，大而清楚：正文字号 ≥ 26，关键词卡 40～56，主图占满可用区域，不要缩在角落。
 - 同时可见的文字不能互相重叠，也不能出画。对象之间留 ≥ 24px 空隙。
+- **图形不能盖住文字**：柱条、色块、卡片要先建立，文字标签后建立（后建立的画在上面）；
+  动态出现的图形放在不与已有文字重叠的位置。预检会报告“图形画在文字上面”。
+- 坐标先规划再写：同一行/列的对象用统一的起点与间距计算（如 `x0 + i * step`），不要逐个估算。
 
 ## 动画
 
@@ -39,7 +45,7 @@ SVG：
 ## 输出
 
 只输出 JSON：`{"code": "scene('首句id', svg => { ...建立元素...; return t => { ...按 t 更新... }; });"}`。
-代码里不要再定义运行时已有的函数。
+代码里不要再定义运行时已有的函数，也不要用运行时的名字（如 bars、chip、matrix、panel）命名自己的变量。
 
 ## 参考范例（同一运行时写的完整章节，学习它的写法与节奏，不要照抄内容）
 

@@ -68,7 +68,8 @@ class ScriptScene(BaseModel):
     title: str = Field(min_length=2, max_length=24)
     #: 场景的固定舞台：贯穿本场景的对象及布局（导演据此建立元素）。
     stage: str = Field(min_length=10, max_length=600)
-    lines: list[ScriptLine] = Field(min_length=1, max_length=12)
+    #: 一个舞台最多 6 句：实测 10 句的场景同屏对象堆叠，版式问题集中在那一个场景。
+    lines: list[ScriptLine] = Field(min_length=1, max_length=6)
 
 
 class ChapterScript(BaseModel):
@@ -76,7 +77,20 @@ class ChapterScript(BaseModel):
     series: str = Field(default="", max_length=40)
     #: 字幕关键词着色：词 -> #RRGGBB
     highlights: dict[str, str] = Field(default_factory=dict)
-    scenes: list[ScriptScene] = Field(min_length=1, max_length=10)
+    scenes: list[ScriptScene] = Field(min_length=1, max_length=12)
+    #: 全章共用的示例数据（贯穿的例子）：画面上的所有数值由运行时从这里取或计算，
+    #: 模型不得在动画代码里手写结果（实测手写的 softmax 百分比与分数对不上）。
+    data: dict[str, float | int | str | list[float] | list[int] | list[str]] = Field(default_factory=dict)
+
+    @field_validator("data")
+    @classmethod
+    def _data(cls, value: dict) -> dict:
+        for key, item in value.items():
+            if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,31}", key):
+                raise ValueError(f"data 的键 {key!r} 必须是字母开头的标识符")
+            if isinstance(item, list) and len(item) > 64:
+                raise ValueError(f"data.{key} 太长（≤64 项）")
+        return value
 
     @field_validator("highlights")
     @classmethod
@@ -164,7 +178,86 @@ def _scene_brief(script: ChapterScript, index: int, timing: dict) -> str:
         rows.append({"id": line.id, "字幕": line.sub, "朗读逐字": t["chars"],
                      "时长秒": round(t["end"] - t["start"], 2), "画面": line.visual, "卡点词": line.cues})
     return json.dumps({"场景编号": f"{index + 1:02d}", "场景标题": scene.title, "舞台": scene.stage,
-                       "首句id": scene.lines[0].id, "句子": rows}, ensure_ascii=False, indent=1)
+                       "首句id": scene.lines[0].id, "句子": rows,
+                       "示例数据V": script.data}, ensure_ascii=False, indent=1)
+
+
+#: 字符串里手写的计算结果（百分比、“= 23”）：必须改为由 V 计算。
+_HARDCODED = re.compile(r"\d+(?:\.\d+)?\s*%|=\s*-?\d")
+#: 运行时导出的名字：导演代码重新声明它们会遮蔽运行时（实测 const bars = ... 导致初始化前访问）。
+_RUNTIME_NAMES = ("V", "C", "T", "TE", "K", "KE", "P", "Wn", "Ez", "S", "A", "O", "TR", "TRS", "txt", "drawPath",
+                  "DP", "chip", "rowXs", "panel", "heading", "arcD", "arcPt", "flowDots", "vecRow", "matrix",
+                  "bars", "pop", "scene", "softmax", "pct", "mix", "clamp", "lerp", "rng", "textW")
+_DECL = re.compile(r"\b(?:const|let|var|function)\s+(" + "|".join(_RUNTIME_NAMES) + r")\b")
+
+
+def _string_literals(code: str) -> list[str]:
+    """按 JS 词法取出 '…' 与 "…" 字面量（处理转义；跳过注释与模板字符串）。"""
+    out, i, n = [], 0, len(code)
+    while i < n:
+        c = code[i]
+        if code.startswith("//", i):
+            i = code.find("\n", i)
+            i = n if i < 0 else i
+        elif code.startswith("/*", i):
+            i = code.find("*/", i + 2)
+            i = n if i < 0 else i + 2
+        elif c in "'\"`":
+            j, buf = i + 1, []
+            while j < n and code[j] != c:
+                if code[j] == "\\":
+                    j += 1
+                elif c == "`" and code.startswith("${", j):
+                    # 模板里的插值是计算出来的，跳过直到配对的右括号。
+                    depth, j = 1, j + 2
+                    while j < n and depth:
+                        depth += {"{": 1, "}": -1}.get(code[j], 0)
+                        j += 1
+                    continue
+                buf.append(code[j] if j < n else "")
+                j += 1
+            out.append("".join(buf))
+            i = j + 1
+        else:
+            i += 1
+    return out
+
+
+_K_CALL = re.compile(r"""\bKE?\(\s*(['"])([A-Za-z][A-Za-z0-9_]*)\1\s*,\s*(['"])([^'"]+)\3""")
+_T_CALL = re.compile(r"""\bTE?\(\s*(['"])([A-Za-z][A-Za-z0-9_]*)\1\s*\)""")
+
+
+def cue_problems(code: str, scene_id: str, timing: dict) -> list[str]:
+    """静态核对 T()/K() 引用：句子要存在，关键词要在那句里；找不到时指出它实际在哪句。"""
+    lines = {line["id"]: line["chars"] for line in timing["lines"]}
+    norm = lambda s: re.sub(r"[\s，。！？、；：,.!?;:…—“”‘’\"'（）()《》]+", "", s).casefold()  # noqa: E731
+    problems = []
+    for m in _T_CALL.finditer(code):
+        if m.group(2) not in lines:
+            problems.append(f"[场景 {scene_id}] T('{m.group(2)}')：没有这句旁白；可用的 id：{list(lines)}")
+    for m in _K_CALL.finditer(code):
+        line_id, word = m.group(2), norm(m.group(4))
+        if line_id not in lines:
+            problems.append(f"[场景 {scene_id}] K('{line_id}', …)：没有这句旁白")
+        elif word not in lines[line_id]:
+            where = [i for i, chars in lines.items() if word in chars]
+            hint = f"它在 {where} 里" if where else "整章都没有念到这个词，换成该句朗读里实际出现的词"
+            problems.append(f"[场景 {scene_id}] K('{line_id}', '{m.group(4)}')：这句朗读里没有该词（朗读：{lines[line_id]}）；{hint}")
+    return problems
+
+
+def static_problems(code: str, scene_id: str) -> list[str]:
+    """代码层面的硬性检查：数值必须从脚本数据计算；不能遮蔽运行时函数。"""
+    problems = []
+    # '100%' 是 SVG/CSS 尺寸，不是计算结果。
+    found = sorted({s[:40] for s in _string_literals(code) if _HARDCODED.search(s) and s.strip() != "100%"})
+    if found:
+        problems.append(f"[场景 {scene_id}] 字符串里手写了数值结果 {found[:5]}：画面上的数字必须由 V 中的数据计算"
+                        "（如 pct(softmax(V.scores)[i])、`= ${...}`），不得手写")
+    shadowed = sorted(set(_DECL.findall(code)))
+    if shadowed:
+        problems.append(f"[场景 {scene_id}] 声明了与运行时同名的变量 {shadowed}，会遮蔽运行时函数；请改名（如 barChart）")
+    return problems
 
 
 def write_scene(llm: LLMClient, script: ChapterScript, index: int, timing: dict, *,

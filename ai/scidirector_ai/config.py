@@ -155,6 +155,11 @@ class Settings(BaseSettings):
     #: 模型名。**留空 = 用该服务商的出厂默认**（见 providers.py）。
     #: 各家模型名迭代很快，因此这两个值永远优先于出厂默认。
     llm_model: str = ""
+    #: 章节场景动画代码的服务商与模型。空串 = 跟随 llm_*。
+    #: 实测（2026-10-22，同一份脚本 4 个场景首稿）：deepseek-chat 3 个场景零错误；
+    #: qwen3-coder-flash 每个场景都有运行错误、版式问题多达 86 处；qwen3.6-plus 全部超时。
+    chapter_code_provider: Literal["", "openai", "deepseek", "bailian", "mock"] = ""
+    chapter_code_model: str = ""
     vlm_model: str = ""
     #: 通用覆盖：自建网关/代理时填这里，任何服务商都适用。
     #: 留空 = 用该服务商的官方兼容端点。

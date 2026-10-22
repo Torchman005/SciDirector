@@ -35,13 +35,14 @@ def _script_safe(code: str) -> str:
 
 def compile_chapter(director_js: str | list[tuple[str, str]], timing: dict, *, width: int = 1920, height: int = 1080,
                     series: str = "", title: str = "", highlights: dict[str, str] | None = None,
-                    palette: dict[str, str] | None = None, presenter: bool = True) -> str:
+                    palette: dict[str, str] | None = None, presenter: bool = True,
+                    data: dict | None = None) -> str:
     """生成整章 HTML。``presenter`` 为真时字幕右侧让出右下角讲解员。"""
     if not timing.get("lines") or timing.get("dur", 0) <= 0:
         raise ValueError("章节时间轴为空")
     colors = {**PAPER_PALETTE, **(palette or {})}
     payload = {"timing": timing, "width": width, "height": height, "palette": colors,
-               "highlights": highlights or {}, "font": FONT}
+               "highlights": highlights or {}, "font": FONT, "vars": data or {}}
     data = json.dumps(payload, ensure_ascii=False, allow_nan=False).replace("<", "\\u003c").replace("&", "\\u0026")
     sub_right = int(width * .27) if presenter else 120
     c = colors
@@ -94,8 +95,8 @@ def _director_scripts(director_js: str | list[tuple[str, str]]) -> str:
 
 
 #: 导演代码可直接使用的名字（与 chapter_runtime.js 的 window.SC 一致）。
-_EXPORTS = ("DATA", "DUR", "W", "H", "C", "T", "TE", "K", "KE", "clamp", "lerp", "Ez", "P", "Wn", "mix",
-            "softmax", "rng", "S", "A", "O", "TR", "TRS", "txt", "drawPath", "DP", "textW", "chip",
+_EXPORTS = ("DATA", "V", "DUR", "W", "H", "C", "T", "TE", "K", "KE", "clamp", "lerp", "Ez", "P", "Wn", "mix",
+            "softmax", "pct", "rng", "S", "A", "O", "TR", "TRS", "txt", "drawPath", "DP", "textW", "chip",
             "rowXs", "panel", "heading", "arcD", "arcPt", "flowDots", "vecRow", "matrix", "bars", "pop", "scene")
 
 

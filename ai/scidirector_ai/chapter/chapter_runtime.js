@@ -45,10 +45,13 @@ const P = (t, a, d = .6, e = Ez.io) => e(clamp((t - a) / d));
 const W = (t, a, b, d = .5, dOut = d) => P(t, a, d) * (1 - P(t, b, dOut));
 const hex = c => { const v = c.replace('#', ''); return [0, 2, 4].map(i => parseInt(v.slice(i, i + 2), 16)); };
 const mix = (a, b, p) => { const x = hex(a), y = hex(b); return '#' + x.map((v, i) => Math.round(lerp(v, y[i], clamp(p))).toString(16).padStart(2, '0')).join(''); };
+const pct = (x, digits = 0) => `${(x * 100).toFixed(digits)}%`;
 const softmax = xs => { const m = Math.max(...xs), e = xs.map(x => Math.exp(x - m)), s = e.reduce((a, b) => a + b, 0); return e.map(v => v / s); };
 function rng(seed) { return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let x = Math.imul(seed ^ seed >>> 15, 1 | seed); x = x + Math.imul(x ^ x >>> 7, 61 | x) ^ x; return ((x ^ x >>> 14) >>> 0) / 4294967296; }; }
 
 /* ---------- 调色板 ---------- */
+/** 脚本给出的示例数据（如 tokens、scores、d）；画面上的数值必须从这里取或计算。 */
+const V = Object.freeze(DATA.vars || {});
 const C = Object.assign({ paper: '#F6EFDD', card: '#FFFBF1', ink: '#2E2B3A', mute: '#8C8497', line: '#D9C9A6',
   q: '#E8735A', k: '#2C9F95', v: '#6B62D6', gold: '#F0B23E', blue: '#3A6FD8' }, DATA.palette || {});
 
@@ -215,7 +218,7 @@ window.__seek = seconds => {
   try { render(Math.max(0, Math.min(DUR, Number.isFinite(seconds) ? seconds : 0))); }
   catch (e) { if (errors.length < 20) errors.push(String(e && e.stack || e)); }
 };
-window.SC = { DATA, DUR, W: W0, H: H0, C, T, TE, K, KE, clamp, lerp, Ez, P, Wn: W, mix, softmax, rng,
+window.SC = { DATA, V, DUR, W: W0, H: H0, C, T, TE, K, KE, clamp, lerp, Ez, P, Wn: W, mix, softmax, pct, rng,
   S, A, O, TR, TRS, txt, drawPath, DP, textW, chip, rowXs, panel, heading, arcD, arcPt, flowDots, vecRow, matrix, bars, pop, scene };
 /** 版式检查：在当前画面上找互相重叠、出画、压字幕区或讲解员区的可见文字。 */
 const effOpacity = el => { let o = 1; for (let n = el; n && n !== stage; n = n.parentElement) o *= Number(getComputedStyle(n).opacity); return o; };
@@ -228,9 +231,27 @@ window.__layout = () => {
     const name = b => `“${b.s}”(x${Math.round(b.r.left)}–${Math.round(b.r.right)},y${Math.round(b.r.top)}–${Math.round(b.r.bottom)})`;
     for (const b of boxes) {
       const r = b.r;
-      if (r.left < 0 || r.top < 0 || r.right > W0 || r.bottom > H0) out.push(`[场景 ${sc.id}] 文字${name(b)}超出画面`);
+      if (r.left < 0 || r.top < 0 || r.right > W0 || r.bottom > H0) {
+        // 实测高频错误：标签用 txt(svg, 0, y, …) 建在根 svg 上，本意是放进随 TR() 移动的组，结果卡在左边缘。
+        const atOrigin = Math.abs(Number(b.e.getAttribute('x') || 0)) < 1 && b.e.parentNode === sc.svg;
+        out.push(`[场景 ${sc.id}] 文字${name(b)}超出画面` + (atOrigin
+          ? '：它建在根 svg 的 x=0 处且没有移动——应作为子元素建在对应的组里（txt(组, 0, y, …)），随组的 TR() 一起移动' : ''));
+      }
       else if (r.bottom > 905) out.push(`[场景 ${sc.id}] 文字${name(b)}压到底部字幕区（y>900）`);
       else if (r.right > 1440 && r.bottom > 560) out.push(`[场景 ${sc.id}] 文字${name(b)}进入右下讲解员区（x>1440,y>560）`);
+    }
+    // 画在文字之上的实心图形（柱条、卡片、色块）会遮住文字：按绘制顺序判断，背景板不算。
+    const shapes = [...sc.div.querySelectorAll('rect,circle,ellipse,polygon,path')].filter(e => {
+      const cs = getComputedStyle(e);
+      if (cs.fill === 'none' || Number(cs.fillOpacity) < .5 || effOpacity(e) < .5) return false;
+      const r = e.getBoundingClientRect(); return r.width * r.height > 150;
+    });
+    for (const b of boxes) for (const e of shapes) {
+      if (!(b.e.compareDocumentPosition(e) & Node.DOCUMENT_POSITION_FOLLOWING) || e.contains(b.e)) continue;
+      const q = e.getBoundingClientRect(), p = b.r;
+      const w = Math.min(p.right, q.right) - Math.max(p.left, q.left), h = Math.min(p.bottom, q.bottom) - Math.max(p.top, q.top);
+      if (w > 0 && h > 0 && w * h > .2 * p.width * p.height)
+        out.push(`[场景 ${sc.id}] 图形(${e.tagName} x${Math.round(q.left)}–${Math.round(q.right)},y${Math.round(q.top)}–${Math.round(q.bottom)})画在文字${name(b)}上面并遮住它`);
     }
     for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++) {
       const p = boxes[i].r, q = boxes[j].r, a = boxes[i].s, c = boxes[j].s;

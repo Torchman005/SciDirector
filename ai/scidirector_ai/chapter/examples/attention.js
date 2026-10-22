@@ -1,10 +1,11 @@
 // 注意力机制章节 —— 导演代码。只使用 SC 运行时导出的函数；所有画面都是 t 的纯函数。
-const TOK = ['小猫', '没有', '喝', '牛奶', '因为', '它', '太', '烫', '了'];
+// 示例数据优先取脚本提供的 V（章节工作流），否则用本文件的默认值。
+const TOK = V.tokens || ['小猫', '没有', '喝', '牛奶', '因为', '它', '太', '烫', '了'];
 const TOKC = ['#F29A4A', '#A3A9B5', '#7DBA74', '#4F9BE0', '#B29EDB', '#EDAA2F', '#E58FA8', '#E46B55', '#9DB39A'];
 const IT = 5, IMILK = 3, ICAT = 0, IHOT = 7;
 // 示意分数：q(它)·k_j，d = 64。
-const RAW = [10, 2, 4, 26, 1, 6, 3, 12, 1];
-const W_RAW = softmax(RAW), W_SC = softmax(RAW.map(x => x / 8));
+const RAW = V.scores || [10, 2, 4, 26, 1, 6, 3, 12, 1], DK = V.d || 64;
+const W_RAW = softmax(RAW), W_SC = softmax(RAW.map(x => x / Math.sqrt(DK)));
 
 /* =========================================================
    场景 1：一个“它”引发的问题

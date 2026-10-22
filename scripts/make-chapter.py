@@ -25,7 +25,9 @@ def main() -> None:
     parser.add_argument("--no-tts", action="store_true")
     parser.add_argument("--no-video", action="store_true")
     parser.add_argument("--reuse-script", action="store_true")
+    parser.add_argument("--reuse-audio", action="store_true", help="复用输出目录里已合成的旁白（需与脚本一致）")
     parser.add_argument("--chrome", default="")
+    parser.add_argument("--code-model", default="", help="场景代码模型，默认 SCID_CHAPTER_CODE_MODEL")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 
@@ -39,9 +41,14 @@ def main() -> None:
 
     settings = get_settings()
     tts = None if args.no_tts else build_tts_provider(settings)
-    result = make_chapter(LLMClient(settings), content, out, tts=tts, target_sec=args.target_sec,
+    code_settings = settings
+    if settings.chapter_code_provider or args.code_model:
+        code_settings = settings.model_copy(update={
+            "llm_provider": settings.chapter_code_provider or settings.llm_provider,
+            "llm_model": args.code_model or settings.chapter_code_model or settings.llm_model})
+    result = make_chapter(LLMClient(settings), content, out, tts=tts, code_llm=LLMClient(code_settings), target_sec=args.target_sec,
                           style=args.style, executable=args.chrome, render=not args.no_video,
-                          script=script, tts_attempts=settings.tts_max_attempts)
+                          script=script, tts_attempts=settings.tts_max_attempts, reuse_audio=args.reuse_audio)
     lines = sum(len(s.lines) for s in result.script.scenes)
     print(f"《{result.script.title}》{len(result.script.scenes)} 个场景、{lines} 句、{result.timing['dur']:.1f} 秒")
     for warning in result.warnings:

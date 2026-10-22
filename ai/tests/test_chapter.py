@@ -147,3 +147,40 @@ def test_syntax_error_in_one_scene_is_tagged_and_others_still_run(tmp_path) -> N
     problems = preflight_chapter(html, timing, executable=os.environ["SCID_CHROME"])
     assert any(p.startswith("[场景 a]") and "脚本错误" in p for p in problems)
     assert not any(p.startswith("[场景 b]") for p in problems)
+
+
+def test_hardcoded_results_in_strings_are_rejected() -> None:
+    from scidirector_ai.chapter.writer import static_problems
+    assert static_problems("txt(svg, 1, 1, pct(w[3])); S('rect', {width: '100%'})", "a") == []
+    problems = static_problems("txt(svg, 1, 1, '43%'); txt(svg, 1, 1, 'Σ = 23')", "a")
+    assert problems and problems[0].startswith("[场景 a]") and "43%" in problems[0]
+
+
+def test_script_data_keys_are_identifiers() -> None:
+    from scidirector_ai.chapter.writer import ChapterScript
+    ok = ChapterScript.model_validate(_script_dict(data={"scores": [1, 2], "d": 64}))
+    assert ok.data["d"] == 64
+    with pytest.raises(ValueError, match="标识符"):
+        ChapterScript.model_validate(_script_dict(data={"分数": [1]}))
+
+
+@pytest.mark.skipif(not os.environ.get("SCID_CHROME"), reason="Set SCID_CHROME for real browser acceptance")
+def test_shape_painted_over_text_is_reported_but_backing_panel_is_not(tmp_path) -> None:
+    timing = estimate_timing([ChapterLine("a", "第一句话比较长一些。")])
+    code = ("scene('a', svg => { S('rect', {x: 100, y: 300, width: 600, height: 200, fill: C.card}, svg);"
+            " txt(svg, 400, 400, '被遮住的标签', {'font-size': 40});"
+            " S('rect', {x: 380, y: 370, width: 300, height: 60, fill: C.q}, svg);"
+            " txt(svg, 400, 600, '背景板上的字', {'font-size': 40}); });")
+    html = tmp_path / "i.html"
+    html.write_text(compile_chapter([("a", code)], timing, data={"scores": [1]}), encoding="utf-8")
+    problems = preflight_chapter(html, timing, executable=os.environ["SCID_CHROME"])
+    covered = [p for p in problems if "图形" in p]
+    assert len(covered) == 1 and "被遮住的标签" in covered[0]
+
+
+def test_static_checker_reads_real_string_literals_and_shadowing() -> None:
+    from scidirector_ai.chapter.writer import static_problems
+    # 实测误报：把两个字面量之间的代码当成了字符串。
+    code = "txt(g, 1, 1, l, {'font-weight': 700, fill: j === 5 ? 'a' : 'b'}); txt(g, 1, 1, `${pct(x)} = ${y}`);"
+    assert static_problems(code, "a") == []
+    assert "同名" in static_problems("const bars = 1;", "a")[0]
