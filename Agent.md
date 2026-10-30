@@ -5,6 +5,8 @@
 >
 > 版本：v0.6.3 · 阶段：阶段五（生产加固）· 最后更新：见文末「迭代日志」
 
+2026-10-30 章节成品参考库：`chapter/references.py` 只读提取所选网页项目及其直接子项目中的 `app.js/scenes.js/scenes_a.js/scenes_b.js`，按行首 `scene(...)` 保留有界的构建/更新片段、相对出处、行号与源码 SHA-256；它不是 JavaScript 解析器，也不直接执行或编译外部模板。`scripts/import-chapter-reference.py` 离线导出新 JSON 包，`scripts/make-chapter.py --reference` 显式启用；未接入 Go/REST 任务入口或前端选择器。编剧仅接收标题/标签目录，场景生成及既有修复按当前内容最多检索两例，无相关项不强配；外部注释、字符串及代码只作数据，必须适配当前运行时、旁白和数值，原验证流程不变。ContextVar 隔离每章引用，输出保存参考包与选取记录；不导入旧音视频、播放器、角色模型或第三方依赖，不修改原成品。详细用法与限制见 `docs/CHAPTER_MODE.md`。
+
 2026-10-20 第2项旁白联动：RepairTask.repair_scope=15 区分 visual/narration/both，科学核对和视觉审核都必须区分原旁白错误与错误图示；空值兼容旧任务，旧 narration/旁白/画外音 logic 定位可进入修订。只有未关闭、非 advisory 的有定位科学任务触发最小原句替换；编辑与独立文本核对各一次解析，依据不足/相矛盾/调用失败即转人工，不靠改写原验收条件过审。此独立核对是一次分离调用，不保证与编辑使用不同模型，也不替代源码科学检查或 VLM。
 
 ShotSpec.narration_revisions=13 保存完整 before/after、reason、task_ids、attempt，Python 检查原句唯一定位、非空替换和不重叠；修稿不关闭账本。修订清除旧 beats/keywords/overlay，整镜重新生成并经原门禁，局部修补不能改旁白。单镜音轨仅在文本逐字一致时跨轮复用；新旁白重做配音及 marks，非重试型 TTS 失败保留根因。Go 只在新产物就绪时同步旁白、画面草案及追加历史，旧配音/旧视频/缺视频/历史冲突不发布；主链路使用 render 事件类型化 PipelineEvent.narration_patch=15，而非 code 事件提前覆盖文案，可选 payload_json 损坏不阻断正常产物事件；导演快照重放也不能恢复旧文案。Job.raw_script 不被改写。已有后台需协调重启，本阶段没有改音色、TTS 模型或自然度参数。
