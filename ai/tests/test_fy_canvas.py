@@ -228,3 +228,14 @@ def test_cli_rejects_style_on_svg_before_provider_creation(tmp_path,monkeypatch)
     with pytest.raises(SystemExit) as error:
         runpy.run_path(str(Path(__file__).resolve().parents[2]/'scripts/make-chapter.py'),run_name='__main__')
     assert error.value.code==2
+
+
+@pytest.mark.parametrize('engine',['svg','fy-canvas'])
+def test_cli_rejects_removed_reference_option_before_model_work(tmp_path,monkeypatch,capsys,engine):
+    from scidirector_ai import config
+    monkeypatch.setattr(config,'get_settings',lambda: pytest.fail('should reject option before providers'))
+    monkeypatch.setattr(sys,'argv',['make-chapter.py','--content','内容','--output',str(tmp_path),
+                                   '--engine',engine,'--reference','old-pack.json'])
+    with pytest.raises(SystemExit) as error:
+        runpy.run_path(str(Path(__file__).resolve().parents[2]/'scripts/make-chapter.py'),run_name='__main__')
+    assert error.value.code==2 and 'unrecognized arguments: --reference' in capsys.readouterr().err

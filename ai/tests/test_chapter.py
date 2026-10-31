@@ -129,6 +129,34 @@ def test_long_script_is_sent_back_for_shortening() -> None:
     assert "远超目标" in llm.calls[-1] and script.scenes[0].lines[0].sub == "今天讲注意力机制"
 
 
+def test_scene_generation_and_repair_keep_current_script_and_feedback() -> None:
+    from scidirector_ai.chapter.writer import ChapterScript, write_scene
+    script = ChapterScript.model_validate(_script_dict(data={"d": 64}))
+    code = "scene('hello', svg => { const title = txt(svg, 650, 400, '当前对象'); return t => O(title, 1); });"
+    llm = _FakeLLM([{"code": code}, {"code": code}])
+    timing = estimate_timing(script.chapter_lines())
+    assert write_scene(llm, script, 0, timing) == code
+    assert write_scene(llm, script, 0, timing, previous_code=code, problems=["标签需要移开"]) == code
+    assert all('"d": 64' in user and '今天讲注意力机制' in user for user in llm.calls)
+    assert "标签需要移开" in llm.calls[-1] and code in llm.calls[-1]
+
+
+def test_scripted_svg_workflow_still_compiles_without_extra_model_calls(tmp_path, monkeypatch) -> None:
+    from scidirector_ai.chapter import workflow
+    from scidirector_ai.chapter.writer import ChapterScript
+    script = ChapterScript.model_validate(_script_dict())
+    code = "scene('hello', svg => { const title = txt(svg, 650, 400, '当前对象'); return t => O(title, 1); });"
+    llm = _FakeLLM([{"code": code}])
+    checks = []
+    monkeypatch.setattr(workflow, "preflight_chapter", lambda html, *args, **kwargs: checks.append(html) or [])
+    # Accommodate the separate visual-review extension still in the working copy.
+    monkeypatch.setattr(workflow, "capture_line_frames", lambda *args, **kwargs: {}, raising=False)
+    monkeypatch.setattr(workflow, "review_scene", lambda *args, **kwargs: [], raising=False)
+    result = workflow.make_chapter(llm, "", tmp_path, tts=None, render=False, script=script)
+    assert len(llm.calls) == 1 and checks == [result.html]
+    assert code in result.html.read_text(encoding="utf-8")
+
+
 def test_scene_problems_are_routed_to_their_scene() -> None:
     from scidirector_ai.chapter.workflow import _by_scene
     from scidirector_ai.chapter.writer import ChapterScript

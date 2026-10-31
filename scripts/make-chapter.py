@@ -10,7 +10,6 @@ from pathlib import Path
 
 from scidirector_ai.chapter.fy import make_fy_chapter
 from scidirector_ai.chapter.fy_styles import load_fy_style
-from scidirector_ai.chapter.references import ReferenceLibrary, reference_session
 from scidirector_ai.chapter.workflow import make_chapter
 from scidirector_ai.chapter.writer import ChapterScript
 from scidirector_ai.config import get_settings
@@ -28,7 +27,6 @@ def main() -> None:
     parser.add_argument("--engine", choices=("svg", "fy-canvas"), default="svg", help="章节绘制引擎；fy-canvas 为可选的 Canvas 试验")
     parser.add_argument("--fy-style", default="", help="341 画风库编号，如 X17；仅用于 fy-canvas")
     parser.add_argument("--fy-style-root", default="", help="外部画风库根目录；也可设置 FY_STYLE_LIBRARY_ROOT")
-    parser.add_argument("--reference", default="", help="成品源码目录或 import-chapter-reference.py 导出的参考包；仅只读参考")
     parser.add_argument("--no-tts", action="store_true")
     parser.add_argument("--no-video", action="store_true")
     parser.add_argument("--reuse-script", action="store_true")
@@ -39,15 +37,12 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 
     out = Path(args.output)
-    if args.engine == "fy-canvas" and (args.reference or args.reuse_audio):
-        parser.error("fy-canvas 试验暂不接受 --reference 或 --reuse-audio；请使用新输出目录与当前脚本生成")
+    if args.engine == "fy-canvas" and args.reuse_audio:
+        parser.error("fy-canvas 试验暂不接受 --reuse-audio；请使用新输出目录与当前脚本生成")
     if (args.fy_style or args.fy_style_root) and args.engine != "fy-canvas":
         parser.error("--fy-style 与 --fy-style-root 需要 --engine fy-canvas")
     if args.fy_style_root and not args.fy_style:
         parser.error("--fy-style-root 需要明确的 --fy-style 编号")
-    library = ReferenceLibrary.load(args.reference) if args.reference else None
-    if args.reference and Path(args.reference).is_dir() and out.resolve().is_relative_to(Path(args.reference).resolve()):
-        parser.error("输出目录不能位于所选参考成品目录内")
     script = None
     if args.reuse_script:
         script = ChapterScript.model_validate_json((out / "script.json").read_text(encoding="utf-8"))
@@ -71,10 +66,9 @@ def main() -> None:
                                  render=not args.no_video, script=script, tts_attempts=settings.tts_max_attempts,
                                  fy_style=fy_style)
     else:
-        with reference_session(library, output=out):
-            result = make_chapter(LLMClient(settings), content, out, tts=tts, code_llm=LLMClient(code_settings), target_sec=args.target_sec,
-                                  style=args.style, executable=args.chrome, render=not args.no_video,
-                                  script=script, tts_attempts=settings.tts_max_attempts, reuse_audio=args.reuse_audio)
+        result = make_chapter(LLMClient(settings), content, out, tts=tts, code_llm=LLMClient(code_settings), target_sec=args.target_sec,
+                              style=args.style, executable=args.chrome, render=not args.no_video,
+                              script=script, tts_attempts=settings.tts_max_attempts, reuse_audio=args.reuse_audio)
     lines = sum(len(s.lines) for s in result.script.scenes)
     print(f"《{result.script.title}》{len(result.script.scenes)} 个场景、{lines} 句、{result.timing['dur']:.1f} 秒")
     for warning in result.warnings:

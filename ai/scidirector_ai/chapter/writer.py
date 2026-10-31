@@ -28,7 +28,6 @@ import logging
 
 from ..llm import LLMClient, LLMParseError, Task
 from .narration import ChapterLine, validate_lines
-from .references import reference_context
 
 _ID = r"^[A-Za-z][A-Za-z0-9_]{0,31}$"
 #: 字幕两行以内（40px、可用宽约 1300px，每行约 32 字）。
@@ -123,9 +122,7 @@ def write_script(llm: LLMClient, content: str, *, target_sec: int = 90, style: s
     """内容 → 讲解脚本；模型自审一次，有问题则按意见重写一次。"""
     user = render(load_prompt("chapter_script_user"), content=content.strip(), target_sec=target_sec,
                   chars=int(target_sec * 4.4), style=style or "（无）")
-    references = reference_context(content, key="planning", planning=True)
-    user += references
-    system = load_prompt("chapter_script") + ("\n" + load_prompt("chapter_reference") if references else "")
+    system = load_prompt("chapter_script")
     script = llm.chat_json(system, user, ChapterScript, task=Task.PLAN,
                            temperature=0.5, max_tokens=8192)
     assert isinstance(script, ChapterScript)
@@ -269,16 +266,10 @@ def write_scene(llm: LLMClient, script: ChapterScript, index: int, timing: dict,
     """生成（或按预检问题修复）一个场景的 ``scene(...)`` 代码。"""
     user = render(load_prompt("chapter_director_user"), brief=_scene_brief(script, index, timing),
                   chapter=script.title)
-    scene = script.scenes[index]
-    query = scene.title + " " + scene.stage + " " + " ".join(line.visual + " " + line.sub for line in scene.lines)
-    references = reference_context(query, key=scene.id)
-    user += references
     if previous_code:
         user += ("\n\n## 上一版代码\n```js\n" + previous_code + "\n```\n## 浏览器预检发现的问题（逐条修复，"
                  "保留没问题的部分）\n" + "\n".join(f"- {p}" for p in (problems or [])))
     system = render(load_prompt("chapter_director"), example=_EXAMPLE.read_text(encoding="utf-8"))
-    if references:
-        system += "\n" + load_prompt("chapter_reference")
     result = llm.chat_json(system, user, SceneCode, task=Task.CODE, temperature=0.2, max_tokens=8192)
     assert isinstance(result, SceneCode)
     code = result.code.strip()
