@@ -100,7 +100,7 @@ def test_workflow_never_renders_when_canvas_preflight_remains_bad(tmp_path, monk
     ("scene('hello', ({K,label}) => { label(K('hello','不存在'),800,400); });", '不存在'),
     ("let n=0; scene('hello', ({label}) => { label(String(n++),800,400); });", '像素不同'),
     ("scene('hello', ({label}) => { label('小字',800,400,{size:18}); });", '字号过小'),
-    ('const broken = ;', '未注册'),
+    ('const broken = ;', '脚本错误'),
 ])
 def test_real_browser_checks_pixels_runtime_and_measured_text(tmp_path: Path, code: str, expected: str | None) -> None:
     _, timing = script_and_timing()
@@ -182,6 +182,73 @@ def test_real_theme_and_scene_boundaries(selected_style,tmp_path,mode):
             browser.close()
     else:
         assert any('theme' in p for p in problems)
+
+
+@pytest.mark.skipif(not os.environ.get('SCID_CHROME'), reason='Set SCID_CHROME for real Canvas acceptance')
+@pytest.mark.parametrize('problem, expected', [
+    ('missing', '缺少键=blue'), ('extra', '多余键=accent'),
+    ('nonhex', '非法颜色键=gold'), ('not_string', '非法颜色键=ink'),
+])
+def test_legacy_theme_reports_exact_failure_without_registration_cascade(selected_style, tmp_path, problem, expected):
+    _, timing = script_and_timing()
+    palette = dict(fy.PAPER_PALETTE)
+    if problem == 'missing':
+        del palette['blue']
+    elif problem == 'extra':
+        palette['accent'] = '#abc'
+    else:
+        palette['gold' if problem == 'nonhex' else 'ink'] = 'yellow' if problem == 'nonhex' else 1
+    code = 'theme(' + json.dumps(palette) + ');' + CODE
+    target = tmp_path / 'invalid-theme.html'
+    target.write_text(fy.compile_fy([('hello', code)], timing, style=selected_style), encoding='utf-8')
+    problems = fy.preflight_fy(target, timing, executable=os.environ['SCID_CHROME'])
+    assert any(expected in p for p in problems), problems
+    assert not any('未注册' in p or '缺少 theme 配色' in p for p in problems), problems
+
+
+@pytest.mark.skipif(not os.environ.get('SCID_CHROME'), reason='Set SCID_CHROME for real Canvas acceptance')
+@pytest.mark.parametrize('explicit', [True, False])
+def test_palette_initialization_preserves_colors_alpha_and_freezes_before_drawing(selected_style, tmp_path, explicit):
+    from playwright.sync_api import sync_playwright
+    from scidirector_ai.fy_generation import extract_fy_palette
+    _, timing = script_and_timing()
+    palette = {**fy.PAPER_PALETTE, 'paper': ' #17508c ', 'ink': '#ffff', 'blue': '#12345678'}
+    code = CODE if explicit else 'theme(' + json.dumps(palette) + ');' + CODE
+    target = tmp_path / 'palette.html'
+    html = fy.compile_fy([('hello', code)], timing, style=selected_style,
+                         palette=palette if explicit else None)
+    target.write_text(html, encoding='utf-8')
+    assert fy.preflight_fy(target, timing, executable=os.environ['SCID_CHROME']) == []
+    assert extract_fy_palette(html) == ({**palette, 'paper': '#17508c'} if explicit else None)
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(executable_path=os.environ['SCID_CHROME'])
+        page = browser.new_page()
+        page.goto(target.as_uri())
+        page.wait_for_function('window.__ready')
+        assert page.evaluate('FY.C.paper') == '#17508c'
+        assert page.evaluate('FY.C.ink') == '#ffff'
+        assert page.evaluate('Object.isFrozen(FY.C)')
+        assert page.evaluate("getComputedStyle(document.body).backgroundColor") == 'rgb(23, 80, 140)'
+        browser.close()
+
+
+@pytest.mark.skipif(not os.environ.get('SCID_CHROME'), reason='Set SCID_CHROME for real Canvas acceptance')
+def test_explicit_palette_rejects_obsolete_theme_call_without_cascade(selected_style, tmp_path):
+    _, timing = script_and_timing()
+    code = 'theme(' + json.dumps(fy.PAPER_PALETTE) + ');' + CODE
+    target = tmp_path / 'duplicate-theme.html'
+    target.write_text(fy.compile_fy([('hello', code)], timing, style=selected_style,
+                                  palette=fy.PAPER_PALETTE), encoding='utf-8')
+    problems = fy.preflight_fy(target, timing, executable=os.environ['SCID_CHROME'])
+    assert any('palette 已由服务端设置' in p for p in problems), problems
+    assert not any('未注册' in p or '缺少 theme 配色' in p for p in problems), problems
+
+
+def test_compiler_rejects_incomplete_explicit_palette(selected_style):
+    _, timing = script_and_timing()
+    with pytest.raises(ValueError, match='blue'):
+        fy.compile_fy([('hello', CODE)], timing, style=selected_style,
+                      palette={k: v for k, v in fy.PAPER_PALETTE.items() if k != 'blue'})
 
 
 def test_style_selection_rejects_unknown_id_and_source_output(tmp_path):

@@ -1,6 +1,6 @@
 # 章节模式与 fy 画风
 
-网页主任务现已接入同一 fy 画风读取器和 Canvas 编译器，使用方法见 [FY_MAIN_WORKFLOW.md](FY_MAIN_WORKFLOW.md)。本文的整章 CLI 仍为独立流程；下述“未接入”指整章工作流本身，不再表示网页完全不支持 fy。
+网页主任务现已接入同一 fy 画风读取器和 Canvas 编译器，使用方法见 [FY_MAIN_WORKFLOW.md](FY_MAIN_WORKFLOW.md)。主 coder 已改为独立 JSON `palette` 初始化，场景代码不调用 theme；本文的整章 CLI 仍使用首场景 `theme({...})`，配色错误会明确指出缺少、多余或非法颜色键，接受 #RGB/#RGBA/#RRGGBB/#RRGGBBAA。本文的整章 CLI 仍为独立流程；下述“未接入”指整章工作流本身，不再表示网页完全不支持 fy。
 
 ## fy-code-animation / 341 画风库试验
 

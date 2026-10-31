@@ -6,16 +6,24 @@ const {timing, width: W, height: H} = D, DUR = timing.dur, M = FYM;
 const C = {...D.palette}, V = Object.freeze(D.vars || {});
 const by = new Map(timing.lines.map(l => [l.id, l]));
 const errors = window.__errors = [], scenes = [];
-let textBoxes = [], activeId = '', film, themed = false, started = false;
+let textBoxes = [], activeId = '', film, themed = D.explicit_palette === true, started = false;
 window.__ready = false;
 const fail = message => { throw new Error(message); };
 function theme(palette) {
+  if (D.explicit_palette) fail('palette 已由服务端设置；场景代码不要再调用 theme()，请修改输出 JSON 的 palette 字段');
   if (started || themed || scenes.length || window.__sceneTag !== D.first_ids[0]) fail('theme 只能在首场景注册前调用一次');
   const keys = Object.keys(C);
-  if (!palette || Object.keys(palette).length !== keys.length ||
-      !keys.every(key => /^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(palette[key])))
-    fail('theme 必须完整提供 C 的全部颜色键，值为十六进制颜色');
-  Object.assign(C, palette); themed = true;
+  if (!palette || typeof palette !== 'object' || Array.isArray(palette)) fail('theme 配色必须为颜色对象');
+  const supplied = Object.keys(palette), missing = keys.filter(k => !Object.hasOwn(palette, k));
+  const extra = supplied.filter(k => !keys.includes(k));
+  const invalid = keys.filter(k => Object.hasOwn(palette, k) &&
+    (typeof palette[k] !== 'string' || !/^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(palette[k].trim())));
+  if (missing.length || extra.length || invalid.length) fail('theme 配色无效：' +
+    [missing.length ? '缺少键=' + missing.join(',') : '', extra.length ? '多余键=' + extra.join(',') : '',
+     invalid.length ? '非法颜色键=' + invalid.join(',') : ''].filter(Boolean).join('；') +
+    '。必须完整提供 paper/card/ink/mute/line/q/k/v/gold/blue，颜色使用 #RGB/#RGBA/#RRGGBB/#RRGGBBAA');
+  for (const key of keys) C[key] = palette[key].trim();
+  themed = true;
 }
 const line = id => by.get(id) || fail(`未知旁白 id：${id}`);
 const norm = value => String(value).replace(/[\s，。！？、；：,.!?;:…—“”‘’"'（）()《》]+/g, '').toLowerCase();
@@ -106,6 +114,9 @@ function render({t}) {
 }
 window.__fyStart = async () => {
   started = true; Object.freeze(C);
+  // A script error already explains why registration stopped. Do not obscure it
+  // with derivative "missing theme / unregistered scene" diagnostics.
+  if (errors.length) { window.__ready = true; return; }
   if (D.require_theme && !themed) errors.push(`[场景 ${D.first_ids[0]}] 所选画风缺少 theme 配色`);
   const root = document.documentElement.style;
   for (const key of ['paper', 'ink', 'mute', 'blue']) root.setProperty(`--fy-${key}`, C[key]);

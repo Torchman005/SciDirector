@@ -18,8 +18,16 @@
 - 上述 REST 调用 `GetFyStyles(FyStylesRequest{style_id})`。空编号返回 `catalog_json`；明确编号返回 `source_json`，不同时返回两者。不接收客户端路径。
 - 新建请求的 `style_guide` 只需 `{"animation_style":"fy","fy_style_id":"X17"}`。`fy_style_source` 为内部字段，REST 拒绝客户端提供。Go 在模型调用/入队前解析来源，保存到 Job.StyleGuide；不可用返回明确 503，不创建替代任务。缺少编号、类型错误、非 16:9 或分镜图片返回 400。
 - 主流水线与单镜 RPC 通过原 `style_guide_json` 传完整快照。Python 校验编号、全文与 SHA-256、来源和版本；fy 校验错误映射 INVALID_ARGUMENT，不能沿用历史“损坏风格回默认”的行为。非 fy 的历史兼容保留。
-- 导演统一派生 `engine=motion`，meta 保留 generation_mode=fy-canvas、画风编号与哈希。专用 coder 只生成 Canvas 场景，编译时注入固定上游运行时；旧 SceneSpec 和范例不参与。源码中的 `scid-fy-code` 保存模型场景供修复，`scid-fy-source` 保存来源摘要。
+- 导演统一派生 `engine=motion`，meta 保留 generation_mode=fy-canvas、画风编号与哈希。专用 coder 输出 `palette`、`code`、`explanation`，编译时注入固定上游运行时；旧 SceneSpec 和范例不参与。`palette` 必须恰好含 paper/card/ink/mute/line/q/k/v/gold/blue，值为 #RGB/#RGBA/#RRGGBB/#RRGGBBAA 字符串；先经 Pydantic 校验再初始化运行时，去除首尾空白，不补缺省颜色。`code` 只注册 scene，禁止再次调用 theme。源码中的 `scid-fy-palette`、`scid-fy-code` 分别保存模型配色和场景供修复，`scid-fy-source` 保存来源摘要；生成内修复同时回传配色与代码。历史只有内联 theme 的快照仍可作为修复上下文，由模型迁移到新格式，不执行旧代码提取颜色。
 - 主渲染继续走 HtmlRenderer/SandboxRunner，不调用独立章节的浏览器直出路径。主预检增加约 33 个均布时刻及倒序像素比较，和原安全/预检共用最多一次生成内修复。初始化或绘制错误会在 seek 时明确失败，关闭预检也不会以缺主题的默认纸面配色静默出片。
+
+## 配色错误与单镜修复
+
+旧版通用错误“theme 必须完整提供 C 的全部颜色键”表示模型生成的配色不符合接口；仅凭这条历史信息不能确定具体缺项。theme 抛错会中断后续 scene 注册，因此“所选画风缺少 theme 配色”“未注册”可能是同一故障的连带结果。
+
+新版主链路把配色校验移到浏览器之前，错误会包含 `palette.blue` 等字段定位；旧 theme 路径也会列出缺少、多余或非法颜色的键。初始化脚本已有错误时，运行时只保留原故障，不再追加上述连带诊断。`ReviseShot FailedPrecondition` 仍表示本次新版本没有通过门禁，原产物保留；不是新版本已发布。修复预算不变，不能靠跳过检查或默认补色放行。
+
+应用这次 Python/运行时修改需要在空闲时重启 AI 服务；代码更新本身不会替换已有视频。这里不涉及新的 API 或前端协议。
 
 ## 安装与部署
 

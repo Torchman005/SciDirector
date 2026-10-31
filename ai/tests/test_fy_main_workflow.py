@@ -6,6 +6,7 @@ import os
 from types import SimpleNamespace
 
 import pytest
+from pydantic import ValidationError
 
 from scidirector_ai.agents.base import style_guide_to_text
 from scidirector_ai.agents.coder import CoderAgent
@@ -13,9 +14,9 @@ from scidirector_ai.agents.director import DirectorAgent
 from scidirector_ai.chapter.fy import PAPER_PALETTE
 from scidirector_ai.chapter.fy_styles import list_fy_styles, load_fy_style
 from scidirector_ai.config import Settings
-from scidirector_ai.fy_generation import extract_fy_code
+from scidirector_ai.fy_generation import extract_fy_code, extract_fy_palette
 from scidirector_ai.generation_quality import BrowserPreflight, QualityResult
-from scidirector_ai.llm import LLMError
+from scidirector_ai.llm import LLMError, LLMParseError
 from scidirector_ai.pbconv import style_guide_from_json
 from scidirector_ai.schemas import RenderEngine, SceneTag, ShotSpec, StyleGuide
 
@@ -32,7 +33,15 @@ def style(tmp_path, monkeypatch):
 
 
 def scene_code(text='输入'):
-    return 'theme(' + json.dumps({**PAPER_PALETTE, 'paper': '#17508c', 'ink': '#ffffff'}) + ");scene('shot', ({ctx,t,M,C,W,H,label})=>{label('" + text + "', W*.4+M.progress(t,0,4)*30,H*.4,{size:40,color:C.ink});});"
+    return "scene('shot', ({ctx,t,M,C,W,H,label})=>{label('" + text + "', W*.4+M.progress(t,0,4)*30,H*.4,{size:40,color:C.ink});});"
+
+
+def palette():
+    return {**PAPER_PALETTE, 'paper': '#17508c', 'ink': '#ffffff'}
+
+
+def reply(text='输入'):
+    return {'palette': palette(), 'code': scene_code(text)}
 
 
 def shot():
@@ -49,7 +58,11 @@ class LLM:
 
     def chat_json(self, system, user, schema, **kwargs):
         self.calls.append((system, user))
-        return schema.model_validate(self.replies.pop(0))
+        payload = self.replies.pop(0)
+        try:
+            return schema.model_validate(payload)
+        except ValidationError as exc:
+            raise LLMParseError(str(exc), raw_response=json.dumps(payload)) from exc
 
 
 class Quality:
@@ -106,20 +119,71 @@ def test_main_director_routes_every_tag_to_fy(style):
 
 
 def test_main_coder_and_repair_use_full_source_and_only_regenerate_scene(style, tmp_path):
-    llm = LLM([{'code': scene_code()}, {'code': scene_code('输出')}])
+    llm = LLM([reply(), reply('输出')])
     checker = Quality(failures=1)
     result = coder(llm, checker, tmp_path).generate(shot=shot(), style_guide=style)
     assert result.policy_ok and result.llm_attempts == 2
     assert extract_fy_code(result.code) == scene_code('输出')
+    assert extract_fy_palette(result.code) == palette()
     assert 'function createCanvasContract' in result.code
     assert 'id="sub"' not in result.code and 'id="tag"' not in result.code
     assert 'scid-fy-source' in result.code and style.fy_style_source['sha256'] in result.code
     for _, user in llm.calls:
         assert '完整画风原文。' in user and 'X17' in user
     assert '文字重叠' in llm.calls[1][1]
-    repair = coder(LLM([{'code': scene_code()}]), Quality(), tmp_path).generate(
+    assert '"palette"' in llm.calls[1][1] and '#17508c' in llm.calls[1][1]
+    repair_llm = LLM([reply()])
+    repair = coder(repair_llm, Quality(), tmp_path).generate(
         shot=shot(), style_guide=style, attempt=2, previous_code=result.code, feedback_text='移动标注')
     assert repair.policy_ok
+    assert '上一版配色数据' in repair_llm.calls[0][1] and '#17508c' in repair_llm.calls[0][1]
+
+
+@pytest.mark.parametrize('problem', ['missing', 'extra', 'nonhex', 'not_string', 'no_palette'])
+def test_bad_palette_is_repaired_before_browser_without_default_fill(style, tmp_path, problem):
+    invalid = reply()
+    if problem == 'missing':
+        del invalid['palette']['blue']
+    elif problem == 'extra':
+        invalid['palette']['accent'] = '#abc'
+    elif problem == 'no_palette':
+        del invalid['palette']
+    else:
+        invalid['palette']['blue'] = 'rgba(1,2,3,1)' if problem == 'nonhex' else 123
+    llm, checker = LLM([invalid, reply()]), Quality()
+    result = coder(llm, checker, tmp_path).generate(shot=shot(), style_guide=style)
+    assert result.policy_ok and result.llm_attempts == 2
+    assert len(checker.codes) == 1
+    assert ('palette.accent' if problem == 'extra' else 'palette' if problem == 'no_palette'
+            else 'palette.blue') in llm.calls[1][1]
+    assert 'JSON Schema' in llm.calls[0][0]
+    assert extract_fy_palette(result.code) == palette()
+
+
+def test_invalid_palette_stops_at_shared_repair_budget(style, tmp_path):
+    invalid = reply()
+    del invalid['palette']['gold']
+    llm, checker = LLM([invalid, invalid]), Quality()
+    result = coder(llm, checker, tmp_path).generate(shot=shot(), style_guide=style)
+    assert not result.policy_ok and result.llm_attempts == 2
+    assert 'palette.gold' in result.policy_summary and not checker.codes
+
+
+def test_historical_inline_theme_is_migrated_as_repair_context(style, tmp_path):
+    from scidirector_ai.chapter.fy import compile_fy
+    from scidirector_ai.fy_generation import shot_timing
+    old_code = 'theme(' + json.dumps(palette()) + ');' + scene_code()
+    old = compile_fy([('shot', old_code)], shot_timing(shot()), style=style.fy_style_source)
+    old = old.replace('</body>', '<script id="scid-fy-code" type="application/json">'
+                      + json.dumps(old_code) + '</script></body>')
+    assert extract_fy_palette(old) is None
+    llm = LLM([reply()])
+    result = coder(llm, Quality(), tmp_path).generate(
+        shot=shot(), style_guide=style, previous_code=old, feedback_text='修正配色')
+    assert result.policy_ok and extract_fy_palette(result.code) == palette()
+    assert '迁移到输出 JSON 的 palette' in llm.calls[0][1]
+    assert old_code in llm.calls[0][1]
+    assert 'theme(' not in extract_fy_code(result.code)
 
 
 def test_explicit_fy_never_falls_back_to_stock_or_legacy_templates(style, tmp_path):
@@ -160,12 +224,14 @@ def test_main_sandbox_preflight_reads_actual_canvas_text(style, tmp_path, monkey
     monkeypatch.setattr(Settings, 'text_target', lambda self: SimpleNamespace(provider='openai'))
     from scidirector_ai.chapter.fy import compile_fy
     from scidirector_ai.fy_generation import shot_timing
-    good = compile_fy([('shot', scene_code())], shot_timing(shot()), style=style.fy_style_source, chapter_chrome=False, min_font=32)
+    good = compile_fy([('shot', scene_code())], shot_timing(shot()), style=style.fy_style_source,
+                      chapter_chrome=False, min_font=32, palette=palette())
     checker = BrowserPreflight(settings)
     result = checker.check(good, shot(), style)
     assert result.checked and not result.issues, result
     bad = compile_fy([('shot', scene_code().replace('{size:40,color:C.ink});',
                      "{size:40,color:C.ink});label('重叠', W*.4+M.progress(t,0,4)*30,H*.4,{size:40});"))],
-                     shot_timing(shot()), style=style.fy_style_source, chapter_chrome=False, min_font=32)
+                     shot_timing(shot()), style=style.fy_style_source, chapter_chrome=False, min_font=32,
+                     palette=palette())
     result = checker.check(bad, shot(), style)
     assert result.checked and any('文字重叠' in x for x in result.issues), result

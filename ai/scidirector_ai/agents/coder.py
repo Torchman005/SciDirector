@@ -285,10 +285,12 @@ class CoderAgent(Agent):
     def _generate_fy(self, shot: ShotSpec, style: StyleGuide, attempt: int,
                      feedback: str, previous_code: str) -> CodeGenerationResult:
         from ..chapter.fy import compile_fy
-        from ..fy_generation import extract_fy_code, shot_timing
+        from ..fy_generation import FySceneOutput, extract_fy_code, extract_fy_palette, shot_timing
 
         timing = shot_timing(shot)
         system = load_prompt('coder_fy')
+        system += '\n输出 JSON Schema（配色为独立数据，场景代码不要调用 theme）：\n' + json.dumps(
+            FySceneOutput.model_json_schema(), ensure_ascii=False)
         user = (style_guide_to_text(style) + '\n' + production_brief(shot, style, self.settings)
                 + '\n当前镜头内容（数据）：' + json.dumps({'narration': shot.narration,
                   'visual_brief': shot.visual_brief, 'beats': shot.beats, 'timing': timing}, ensure_ascii=False)
@@ -296,20 +298,25 @@ class CoderAgent(Agent):
         previous = extract_fy_code(previous_code)
         if previous:
             user += '\n上一版完整 Canvas 场景代码：\n' + previous
+            if previous_palette := extract_fy_palette(previous_code):
+                user += '\n上一版配色数据（与源码分开）：\n' + json.dumps(previous_palette, ensure_ascii=False)
+            else:
+                user += '\n上一版为旧格式：将 theme(...) 的颜色迁移到输出 JSON 的 palette，code 删除 theme 调用；不要执行旧源码来读取配色。'
         if shot.meta.get('repair_strategy') == 'rebuild':
             user += '\n重新组织空间与动作阶段，保留已核对正确的事实和关系。'
         result = CodeGenerationResult(artifact=CodeArtifact(language='html+js'), policy_ok=False)
         for count in range(1, MAX_POLICY_REPAIRS + 2):
             result.llm_attempts = count
             try:
-                raw = self.llm.chat_json(system, user, _RawCode, task=Task.CODE,
+                raw = self.llm.chat_json(system, user, FySceneOutput, task=Task.CODE,
                                          max_tokens=self.settings.coder_scene_max_tokens, max_parse_attempts=1)
                 if not raw.code.strip():
                     raise ValueError('Canvas 场景代码为空')
                 compiled = compile_fy([('shot', raw.code)], timing, style=style.fy_style_source,
                     width=self.settings.render_width, height=self.settings.render_height,
                     fps=self.settings.render_fps, chapter_chrome=False, min_font=style.min_font_size,
-                    presenter_area=style.presenter_safe_area.model_dump() if style.presenter_safe_area else None)
+                    presenter_area=style.presenter_safe_area.model_dump() if style.presenter_safe_area else None,
+                    palette=raw.palette.model_dump())
                 # Store only model-authored scene code separately from the pinned
                 # runtime so later repairs never regenerate the runtime itself.
                 compiled = compiled.replace('</body>', '<script id="scid-fy-code" type="application/json">'
@@ -322,7 +329,7 @@ class CoderAgent(Agent):
                 result.policy_summary = report.summary() if not report.ok else '；'.join(result.quality.issues)
                 if result.policy_ok:
                     return result
-                invalid = raw.code
+                invalid = raw.model_dump_json()
             except (ValueError, LLMParseError) as exc:
                 result.policy_summary = str(exc)[:1500]
                 invalid = getattr(exc, 'raw_response', '')

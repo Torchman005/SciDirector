@@ -16,6 +16,7 @@ from ..tts.base import TTSProvider
 from .compile import FONT, PAPER_PALETTE, render_chapter
 from .narration import estimate_timing, synthesize_chapter
 from .fy_styles import style_summary
+from .fy_palette import FyPalette
 from .writer import ChapterScript, SceneCode, _scene_brief, cue_problems, static_problems, write_script
 
 _ROOT = Path(__file__).parent
@@ -49,7 +50,7 @@ def _safe_script(code: str) -> str:
 def compile_fy(codes: list[tuple[str, str]], timing: dict, *, title: str = '', series: str = '',
                data: dict | None = None, fps: int = 30, width: int = 1920, height: int = 1080,
                style: dict | None = None, chapter_chrome: bool = True, min_font: int = 25,
-               presenter_area: dict | None = None) -> str:
+               presenter_area: dict | None = None, palette: dict | None = None) -> str:
     """Inline the two pinned upstream modules and project adapter in an offline HTML."""
     engine_info(style)
     if not timing.get('lines') or not math.isfinite(timing['dur']) or timing['dur'] <= 0:
@@ -62,8 +63,10 @@ def compile_fy(codes: list[tuple[str, str]], timing: dict, *, title: str = '', s
         raise ValueError('场景必须按旁白顺序包含唯一首句 id')
     if [line_ids.index(i) for i in ids] != sorted(line_ids.index(i) for i in ids):
         raise ValueError('场景必须按旁白顺序注册')
+    colors = FyPalette.model_validate(palette).model_dump() if palette is not None else PAPER_PALETTE
     payload = {'timing': timing, 'first_ids': ids, 'width': width, 'height': height, 'fps': fps,
-               'vars': data or {}, 'palette': PAPER_PALETTE, 'font': FONT, 'require_theme': bool(style),
+               'vars': data or {}, 'palette': colors, 'explicit_palette': palette is not None,
+               'font': FONT, 'require_theme': bool(style),
                'chapter_chrome': chapter_chrome, 'min_font': min_font, 'presenter_area': presenter_area}
     encoded = json.dumps(payload, ensure_ascii=False, allow_nan=False).replace('<', '\\u003c').replace('&', '\\u0026')
     license_text = (_ROOT / 'fy_vendor' / 'LICENSE.md').read_text(encoding='utf-8')
@@ -91,8 +94,10 @@ def compile_fy(codes: list[tuple[str, str]], timing: dict, *, title: str = '', s
     tag = html_module.escape(' · '.join(s for s in [series, title] if s))
     chrome = ('<div id="tag">' + tag + '</div><div id="sub"></div><div id="progress"></div>') if chapter_chrome else ''
     provenance = ''
+    if palette is not None:
+        provenance += '<script id="scid-fy-palette" type="application/json">' + json.dumps(colors) + '</script>'
     if style:
-        provenance = '<script id="scid-fy-source" type="application/json">' + json.dumps(
+        provenance += '<script id="scid-fy-source" type="application/json">' + json.dumps(
             style_summary(style), ensure_ascii=False).replace('<', '\\u003c') + '</script>'
     return ('<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><style>' + css + '</style></head><body>'
             '<canvas id="film"></canvas>' + chrome + provenance
