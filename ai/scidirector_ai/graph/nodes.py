@@ -290,6 +290,11 @@ class PipelineNodes:
         "静默降级"和"如实降级"的区别就在这里：前者事后无法解释
         "这个镜头为什么突然变简单了"。
         """
+        style = state.get('style_guide')
+        if (style and style.animation_style == 'fy') or shot.meta.get('generation_mode') == 'fy-canvas':
+            # Explicit library selection is never replaced by stock footage.
+            return shot.model_copy(update={'engine': RenderEngine.MOTION,
+                'meta': {**shot.meta, 'generation_mode': 'fy-canvas'}}), None
         if shot.engine is not RenderEngine.MOTION:
             return shot, None
 

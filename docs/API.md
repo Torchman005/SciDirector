@@ -1,5 +1,7 @@
 # SciDirector API 契约
 
+2026-10-31 fy：新增 `GET /api/v1/styles/fy` 目录、`GET /api/v1/styles/fy/:id` 全文详情，以及 Go→Python `GetFyStyles` RPC（空 id 返回 catalog_json，明确 id 返回 source_json）。新建任务仅提交 `style_guide={animation_style:"fy",fy_style_id:"X17"}`；Go 拒绝客户端 `fy_style_source`，经 Python 固定读取器解析全文、哈希、版本后保存到 Job.StyleGuide。所有主生成/单镜修订 RPC 沿原 JSON 字段传来源快照，fy 无效参数返回 INVALID_ARGUMENT，不回默认风格；库或浏览器缺失明确 503，参数缺失或不支持的图片/比例为 400。主路径统一使用 motion/fy-canvas，任务查询返回画风快照供展示。完整字段、部署与限制见 [FY_MAIN_WORKFLOW.md](FY_MAIN_WORKFLOW.md)。
+
 2026-10-20 旁白联动：`RepairTask.repair_scope=15` 为 visual / narration / both，空值兼容旧数据。只有有定位且未关闭的非 advisory 科学任务可触发旁白修订；旧 target=narration/旁白/画外音 的 logic 任务保留入口。纯画面任务不额外调用修稿模型。修订不能修改原任务验收条件或直接关闭任务，仍需实际科学/视觉复审。
 
 `ShotSpec.narration_revisions=13` 和 REST Shot 同名数组保存完整 before/after、reason、task_ids、attempt（不是模型自报的路径/审批）。Go/Python protobuf、检查点和 Redis 持久化均保留。修订响应同现有 ReviseShotResponse.shot 返回当前 narration/visual_brief/beats/keywords 与历史；worker 校验追加历史的一致性，与新产物原子写入，不改 Job.raw_script。新旁白必须整镜重做，拒绝搭配旧音轨、旧视频或缺失视频的修订；失败保留原片及原文案。

@@ -260,7 +260,8 @@ class CriticAgent(Agent):
         system_prompt = render_prompt(
             "critic",
             threshold=f"{self.settings.critic_score_threshold:.2f}",
-            background_color=style_guide.background_color,
+            background_color=("所选画风 theme 的 paper 色（以当前源码为准）" if style_guide.animation_style == 'fy'
+                              else style_guide.background_color),
             min_font_size=min_font_size,
             min_font_size_tolerance=max(int(min_font_size * 0.9), 1),
             # 时长与采样间隔是"评估节奏"的必要背景：没有它们，
@@ -268,6 +269,11 @@ class CriticAgent(Agent):
             duration_sec=round(shot.duration_sec, 2),
             frame_interval_sec=interval_text,
         )
+        if style_guide.animation_style == 'fy':
+            system_prompt += ('\n本次使用 fy Canvas，所有内容标签都由 motion 引擎绘制；AMBIENCE 也可按所选画风编排。'
+                              '只建议 Canvas 路径、坐标、label、theme 和绝对时间动作的修改，不建议 DOM/CSS 动画或 Manim。'
+                              '配色、背景和材质应符合所选画风原文；不要恢复默认纸纹或默认蓝色。'
+                              'Canvas 已有文字实测预检，但图形遮挡和连线方向仍需对照当前帧与旁白核查。')
         # 缩略图换算比例：必须告诉 VLM 它在缩略图上量到的字号要乘多少才是成片字号。
         #
         # 不告诉它会出现很隐蔽的单位错配：提示词里的字号下限是**成片像素**，

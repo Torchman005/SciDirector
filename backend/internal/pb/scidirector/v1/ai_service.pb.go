@@ -32,6 +32,103 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type FyStylesRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	StyleId       string                 `protobuf:"bytes,1,opt,name=style_id,json=styleId,proto3" json:"style_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FyStylesRequest) Reset() {
+	*x = FyStylesRequest{}
+	mi := &file_scidirector_v1_ai_service_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FyStylesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FyStylesRequest) ProtoMessage() {}
+
+func (x *FyStylesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_scidirector_v1_ai_service_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FyStylesRequest.ProtoReflect.Descriptor instead.
+func (*FyStylesRequest) Descriptor() ([]byte, []int) {
+	return file_scidirector_v1_ai_service_proto_rawDescGZIP(), []int{0}
+}
+
+func (x *FyStylesRequest) GetStyleId() string {
+	if x != nil {
+		return x.StyleId
+	}
+	return ""
+}
+
+type FyStylesResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// JSON catalog or source snapshot (never both). See docs/FY_MAIN_WORKFLOW.md.
+	CatalogJson   string `protobuf:"bytes,1,opt,name=catalog_json,json=catalogJson,proto3" json:"catalog_json,omitempty"`
+	SourceJson    string `protobuf:"bytes,2,opt,name=source_json,json=sourceJson,proto3" json:"source_json,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FyStylesResponse) Reset() {
+	*x = FyStylesResponse{}
+	mi := &file_scidirector_v1_ai_service_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FyStylesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FyStylesResponse) ProtoMessage() {}
+
+func (x *FyStylesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_scidirector_v1_ai_service_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FyStylesResponse.ProtoReflect.Descriptor instead.
+func (*FyStylesResponse) Descriptor() ([]byte, []int) {
+	return file_scidirector_v1_ai_service_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *FyStylesResponse) GetCatalogJson() string {
+	if x != nil {
+		return x.CatalogJson
+	}
+	return ""
+}
+
+func (x *FyStylesResponse) GetSourceJson() string {
+	if x != nil {
+		return x.SourceJson
+	}
+	return ""
+}
+
 type RenderPresenterRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// API-resolved tenant asset: model.model3.json (Cubism) or model.portrait.json
@@ -51,7 +148,7 @@ type RenderPresenterRequest struct {
 
 func (x *RenderPresenterRequest) Reset() {
 	*x = RenderPresenterRequest{}
-	mi := &file_scidirector_v1_ai_service_proto_msgTypes[0]
+	mi := &file_scidirector_v1_ai_service_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -63,7 +160,7 @@ func (x *RenderPresenterRequest) String() string {
 func (*RenderPresenterRequest) ProtoMessage() {}
 
 func (x *RenderPresenterRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_scidirector_v1_ai_service_proto_msgTypes[0]
+	mi := &file_scidirector_v1_ai_service_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -76,7 +173,7 @@ func (x *RenderPresenterRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RenderPresenterRequest.ProtoReflect.Descriptor instead.
 func (*RenderPresenterRequest) Descriptor() ([]byte, []int) {
-	return file_scidirector_v1_ai_service_proto_rawDescGZIP(), []int{0}
+	return file_scidirector_v1_ai_service_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *RenderPresenterRequest) GetModelPath() string {
@@ -153,7 +250,7 @@ type RenderPresenterResponse struct {
 
 func (x *RenderPresenterResponse) Reset() {
 	*x = RenderPresenterResponse{}
-	mi := &file_scidirector_v1_ai_service_proto_msgTypes[1]
+	mi := &file_scidirector_v1_ai_service_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -165,7 +262,7 @@ func (x *RenderPresenterResponse) String() string {
 func (*RenderPresenterResponse) ProtoMessage() {}
 
 func (x *RenderPresenterResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_scidirector_v1_ai_service_proto_msgTypes[1]
+	mi := &file_scidirector_v1_ai_service_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -178,7 +275,7 @@ func (x *RenderPresenterResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RenderPresenterResponse.ProtoReflect.Descriptor instead.
 func (*RenderPresenterResponse) Descriptor() ([]byte, []int) {
-	return file_scidirector_v1_ai_service_proto_rawDescGZIP(), []int{1}
+	return file_scidirector_v1_ai_service_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *RenderPresenterResponse) GetVideoPath() string {
@@ -214,7 +311,7 @@ type CheckpointSnapshotRequest struct {
 
 func (x *CheckpointSnapshotRequest) Reset() {
 	*x = CheckpointSnapshotRequest{}
-	mi := &file_scidirector_v1_ai_service_proto_msgTypes[2]
+	mi := &file_scidirector_v1_ai_service_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -226,7 +323,7 @@ func (x *CheckpointSnapshotRequest) String() string {
 func (*CheckpointSnapshotRequest) ProtoMessage() {}
 
 func (x *CheckpointSnapshotRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_scidirector_v1_ai_service_proto_msgTypes[2]
+	mi := &file_scidirector_v1_ai_service_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -239,7 +336,7 @@ func (x *CheckpointSnapshotRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CheckpointSnapshotRequest.ProtoReflect.Descriptor instead.
 func (*CheckpointSnapshotRequest) Descriptor() ([]byte, []int) {
-	return file_scidirector_v1_ai_service_proto_rawDescGZIP(), []int{2}
+	return file_scidirector_v1_ai_service_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *CheckpointSnapshotRequest) GetJobId() string {
@@ -281,7 +378,7 @@ type CheckpointSnapshotResponse struct {
 
 func (x *CheckpointSnapshotResponse) Reset() {
 	*x = CheckpointSnapshotResponse{}
-	mi := &file_scidirector_v1_ai_service_proto_msgTypes[3]
+	mi := &file_scidirector_v1_ai_service_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -293,7 +390,7 @@ func (x *CheckpointSnapshotResponse) String() string {
 func (*CheckpointSnapshotResponse) ProtoMessage() {}
 
 func (x *CheckpointSnapshotResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_scidirector_v1_ai_service_proto_msgTypes[3]
+	mi := &file_scidirector_v1_ai_service_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -306,7 +403,7 @@ func (x *CheckpointSnapshotResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CheckpointSnapshotResponse.ProtoReflect.Descriptor instead.
 func (*CheckpointSnapshotResponse) Descriptor() ([]byte, []int) {
-	return file_scidirector_v1_ai_service_proto_rawDescGZIP(), []int{3}
+	return file_scidirector_v1_ai_service_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *CheckpointSnapshotResponse) GetFound() bool {
@@ -364,7 +461,7 @@ type CheckpointShotState struct {
 
 func (x *CheckpointShotState) Reset() {
 	*x = CheckpointShotState{}
-	mi := &file_scidirector_v1_ai_service_proto_msgTypes[4]
+	mi := &file_scidirector_v1_ai_service_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -376,7 +473,7 @@ func (x *CheckpointShotState) String() string {
 func (*CheckpointShotState) ProtoMessage() {}
 
 func (x *CheckpointShotState) ProtoReflect() protoreflect.Message {
-	mi := &file_scidirector_v1_ai_service_proto_msgTypes[4]
+	mi := &file_scidirector_v1_ai_service_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -389,7 +486,7 @@ func (x *CheckpointShotState) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CheckpointShotState.ProtoReflect.Descriptor instead.
 func (*CheckpointShotState) Descriptor() ([]byte, []int) {
-	return file_scidirector_v1_ai_service_proto_rawDescGZIP(), []int{4}
+	return file_scidirector_v1_ai_service_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *CheckpointShotState) GetShotId() string {
@@ -417,6 +514,9 @@ func (x *CheckpointShotState) GetHasArtifact() bool {
 // RunPipeline
 // -----------------------------------------------------------------------------
 // style_guide_json contract shared by all generation/review RPCs:
+// animation_style="fy" requires fy_style_id and fy_style_source, the verified
+// full snapshot resolved by GetFyStyles and persisted by Go. REST clients send
+// only fy_style_id; supplying fy_style_source from a client is rejected.
 // presenter_safe_area?: {x:number,y:number,width:number,height:number}, normalized
 // to [0,1]. Go derives it from enabled presenter effects; the full-size animation
 // must keep important content outside this LOCAL bottom-right overlay rectangle.
@@ -437,7 +537,7 @@ type RunPipelineRequest struct {
 
 func (x *RunPipelineRequest) Reset() {
 	*x = RunPipelineRequest{}
-	mi := &file_scidirector_v1_ai_service_proto_msgTypes[5]
+	mi := &file_scidirector_v1_ai_service_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -449,7 +549,7 @@ func (x *RunPipelineRequest) String() string {
 func (*RunPipelineRequest) ProtoMessage() {}
 
 func (x *RunPipelineRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_scidirector_v1_ai_service_proto_msgTypes[5]
+	mi := &file_scidirector_v1_ai_service_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -462,7 +562,7 @@ func (x *RunPipelineRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunPipelineRequest.ProtoReflect.Descriptor instead.
 func (*RunPipelineRequest) Descriptor() ([]byte, []int) {
-	return file_scidirector_v1_ai_service_proto_rawDescGZIP(), []int{5}
+	return file_scidirector_v1_ai_service_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *RunPipelineRequest) GetJobId() string {
@@ -537,7 +637,7 @@ type PlanScriptRequest struct {
 
 func (x *PlanScriptRequest) Reset() {
 	*x = PlanScriptRequest{}
-	mi := &file_scidirector_v1_ai_service_proto_msgTypes[6]
+	mi := &file_scidirector_v1_ai_service_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -549,7 +649,7 @@ func (x *PlanScriptRequest) String() string {
 func (*PlanScriptRequest) ProtoMessage() {}
 
 func (x *PlanScriptRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_scidirector_v1_ai_service_proto_msgTypes[6]
+	mi := &file_scidirector_v1_ai_service_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -562,7 +662,7 @@ func (x *PlanScriptRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlanScriptRequest.ProtoReflect.Descriptor instead.
 func (*PlanScriptRequest) Descriptor() ([]byte, []int) {
-	return file_scidirector_v1_ai_service_proto_rawDescGZIP(), []int{6}
+	return file_scidirector_v1_ai_service_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *PlanScriptRequest) GetJobId() string {
@@ -612,7 +712,7 @@ type PlanScriptResponse struct {
 
 func (x *PlanScriptResponse) Reset() {
 	*x = PlanScriptResponse{}
-	mi := &file_scidirector_v1_ai_service_proto_msgTypes[7]
+	mi := &file_scidirector_v1_ai_service_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -624,7 +724,7 @@ func (x *PlanScriptResponse) String() string {
 func (*PlanScriptResponse) ProtoMessage() {}
 
 func (x *PlanScriptResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_scidirector_v1_ai_service_proto_msgTypes[7]
+	mi := &file_scidirector_v1_ai_service_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -637,7 +737,7 @@ func (x *PlanScriptResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlanScriptResponse.ProtoReflect.Descriptor instead.
 func (*PlanScriptResponse) Descriptor() ([]byte, []int) {
-	return file_scidirector_v1_ai_service_proto_rawDescGZIP(), []int{7}
+	return file_scidirector_v1_ai_service_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *PlanScriptResponse) GetShots() []*ShotSpec {
@@ -698,7 +798,7 @@ type GenerateShotRequest struct {
 
 func (x *GenerateShotRequest) Reset() {
 	*x = GenerateShotRequest{}
-	mi := &file_scidirector_v1_ai_service_proto_msgTypes[8]
+	mi := &file_scidirector_v1_ai_service_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -710,7 +810,7 @@ func (x *GenerateShotRequest) String() string {
 func (*GenerateShotRequest) ProtoMessage() {}
 
 func (x *GenerateShotRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_scidirector_v1_ai_service_proto_msgTypes[8]
+	mi := &file_scidirector_v1_ai_service_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -723,7 +823,7 @@ func (x *GenerateShotRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GenerateShotRequest.ProtoReflect.Descriptor instead.
 func (*GenerateShotRequest) Descriptor() ([]byte, []int) {
-	return file_scidirector_v1_ai_service_proto_rawDescGZIP(), []int{8}
+	return file_scidirector_v1_ai_service_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *GenerateShotRequest) GetJobId() string {
@@ -807,7 +907,7 @@ type GenerateShotResponse struct {
 
 func (x *GenerateShotResponse) Reset() {
 	*x = GenerateShotResponse{}
-	mi := &file_scidirector_v1_ai_service_proto_msgTypes[9]
+	mi := &file_scidirector_v1_ai_service_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -819,7 +919,7 @@ func (x *GenerateShotResponse) String() string {
 func (*GenerateShotResponse) ProtoMessage() {}
 
 func (x *GenerateShotResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_scidirector_v1_ai_service_proto_msgTypes[9]
+	mi := &file_scidirector_v1_ai_service_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -832,7 +932,7 @@ func (x *GenerateShotResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GenerateShotResponse.ProtoReflect.Descriptor instead.
 func (*GenerateShotResponse) Descriptor() ([]byte, []int) {
-	return file_scidirector_v1_ai_service_proto_rawDescGZIP(), []int{9}
+	return file_scidirector_v1_ai_service_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *GenerateShotResponse) GetShot() *ShotSpec {
@@ -900,7 +1000,7 @@ type CritiqueShotRequest struct {
 
 func (x *CritiqueShotRequest) Reset() {
 	*x = CritiqueShotRequest{}
-	mi := &file_scidirector_v1_ai_service_proto_msgTypes[10]
+	mi := &file_scidirector_v1_ai_service_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -912,7 +1012,7 @@ func (x *CritiqueShotRequest) String() string {
 func (*CritiqueShotRequest) ProtoMessage() {}
 
 func (x *CritiqueShotRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_scidirector_v1_ai_service_proto_msgTypes[10]
+	mi := &file_scidirector_v1_ai_service_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -925,7 +1025,7 @@ func (x *CritiqueShotRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CritiqueShotRequest.ProtoReflect.Descriptor instead.
 func (*CritiqueShotRequest) Descriptor() ([]byte, []int) {
-	return file_scidirector_v1_ai_service_proto_rawDescGZIP(), []int{10}
+	return file_scidirector_v1_ai_service_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *CritiqueShotRequest) GetJobId() string {
@@ -975,7 +1075,7 @@ type CritiqueShotResponse struct {
 
 func (x *CritiqueShotResponse) Reset() {
 	*x = CritiqueShotResponse{}
-	mi := &file_scidirector_v1_ai_service_proto_msgTypes[11]
+	mi := &file_scidirector_v1_ai_service_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -987,7 +1087,7 @@ func (x *CritiqueShotResponse) String() string {
 func (*CritiqueShotResponse) ProtoMessage() {}
 
 func (x *CritiqueShotResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_scidirector_v1_ai_service_proto_msgTypes[11]
+	mi := &file_scidirector_v1_ai_service_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1000,7 +1100,7 @@ func (x *CritiqueShotResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CritiqueShotResponse.ProtoReflect.Descriptor instead.
 func (*CritiqueShotResponse) Descriptor() ([]byte, []int) {
-	return file_scidirector_v1_ai_service_proto_rawDescGZIP(), []int{11}
+	return file_scidirector_v1_ai_service_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *CritiqueShotResponse) GetFeedback() *CriticFeedback {
@@ -1061,7 +1161,7 @@ type ReviseShotRequest struct {
 
 func (x *ReviseShotRequest) Reset() {
 	*x = ReviseShotRequest{}
-	mi := &file_scidirector_v1_ai_service_proto_msgTypes[12]
+	mi := &file_scidirector_v1_ai_service_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1073,7 +1173,7 @@ func (x *ReviseShotRequest) String() string {
 func (*ReviseShotRequest) ProtoMessage() {}
 
 func (x *ReviseShotRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_scidirector_v1_ai_service_proto_msgTypes[12]
+	mi := &file_scidirector_v1_ai_service_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1086,7 +1186,7 @@ func (x *ReviseShotRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReviseShotRequest.ProtoReflect.Descriptor instead.
 func (*ReviseShotRequest) Descriptor() ([]byte, []int) {
-	return file_scidirector_v1_ai_service_proto_rawDescGZIP(), []int{12}
+	return file_scidirector_v1_ai_service_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *ReviseShotRequest) GetJobId() string {
@@ -1183,7 +1283,7 @@ type ReviseShotResponse struct {
 
 func (x *ReviseShotResponse) Reset() {
 	*x = ReviseShotResponse{}
-	mi := &file_scidirector_v1_ai_service_proto_msgTypes[13]
+	mi := &file_scidirector_v1_ai_service_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1195,7 +1295,7 @@ func (x *ReviseShotResponse) String() string {
 func (*ReviseShotResponse) ProtoMessage() {}
 
 func (x *ReviseShotResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_scidirector_v1_ai_service_proto_msgTypes[13]
+	mi := &file_scidirector_v1_ai_service_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1208,7 +1308,7 @@ func (x *ReviseShotResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReviseShotResponse.ProtoReflect.Descriptor instead.
 func (*ReviseShotResponse) Descriptor() ([]byte, []int) {
-	return file_scidirector_v1_ai_service_proto_rawDescGZIP(), []int{13}
+	return file_scidirector_v1_ai_service_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *ReviseShotResponse) GetShot() *ShotSpec {
@@ -1271,7 +1371,13 @@ var File_scidirector_v1_ai_service_proto protoreflect.FileDescriptor
 
 const file_scidirector_v1_ai_service_proto_rawDesc = "" +
 	"\n" +
-	"\x1fscidirector/v1/ai_service.proto\x12\x0escidirector.v1\x1a\x1bscidirector/v1/common.proto\"\xa0\x02\n" +
+	"\x1fscidirector/v1/ai_service.proto\x12\x0escidirector.v1\x1a\x1bscidirector/v1/common.proto\",\n" +
+	"\x0fFyStylesRequest\x12\x19\n" +
+	"\bstyle_id\x18\x01 \x01(\tR\astyleId\"V\n" +
+	"\x10FyStylesResponse\x12!\n" +
+	"\fcatalog_json\x18\x01 \x01(\tR\vcatalogJson\x12\x1f\n" +
+	"\vsource_json\x18\x02 \x01(\tR\n" +
+	"sourceJson\"\xa0\x02\n" +
 	"\x16RenderPresenterRequest\x12\x1d\n" +
 	"\n" +
 	"model_path\x18\x01 \x01(\tR\tmodelPath\x12\x1d\n" +
@@ -1384,8 +1490,9 @@ const file_scidirector_v1_ai_service_proto_rawDesc = "" +
 	"\ftotal_tokens\x18\x06 \x01(\x05R\vtotalTokens\x12\x1f\n" +
 	"\velapsed_sec\x18\a \x01(\x01R\n" +
 	"elapsedSec\x122\n" +
-	"\x15partial_range_honored\x18\b \x01(\bR\x13partialRangeHonored2\xe4\x05\n" +
-	"\x11AiDirectorService\x12b\n" +
+	"\x15partial_range_honored\x18\b \x01(\bR\x13partialRangeHonored2\xb6\x06\n" +
+	"\x11AiDirectorService\x12P\n" +
+	"\vGetFyStyles\x12\x1f.scidirector.v1.FyStylesRequest\x1a .scidirector.v1.FyStylesResponse\x12b\n" +
 	"\x0fRenderPresenter\x12&.scidirector.v1.RenderPresenterRequest\x1a'.scidirector.v1.RenderPresenterResponse\x12G\n" +
 	"\x06Health\x12\x1d.scidirector.v1.HealthRequest\x1a\x1e.scidirector.v1.HealthResponse\x12R\n" +
 	"\vRunPipeline\x12\".scidirector.v1.RunPipelineRequest\x1a\x1d.scidirector.v1.PipelineEvent0\x01\x12S\n" +
@@ -1409,63 +1516,67 @@ func file_scidirector_v1_ai_service_proto_rawDescGZIP() []byte {
 	return file_scidirector_v1_ai_service_proto_rawDescData
 }
 
-var file_scidirector_v1_ai_service_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
+var file_scidirector_v1_ai_service_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
 var file_scidirector_v1_ai_service_proto_goTypes = []any{
-	(*RenderPresenterRequest)(nil),     // 0: scidirector.v1.RenderPresenterRequest
-	(*RenderPresenterResponse)(nil),    // 1: scidirector.v1.RenderPresenterResponse
-	(*CheckpointSnapshotRequest)(nil),  // 2: scidirector.v1.CheckpointSnapshotRequest
-	(*CheckpointSnapshotResponse)(nil), // 3: scidirector.v1.CheckpointSnapshotResponse
-	(*CheckpointShotState)(nil),        // 4: scidirector.v1.CheckpointShotState
-	(*RunPipelineRequest)(nil),         // 5: scidirector.v1.RunPipelineRequest
-	(*PlanScriptRequest)(nil),          // 6: scidirector.v1.PlanScriptRequest
-	(*PlanScriptResponse)(nil),         // 7: scidirector.v1.PlanScriptResponse
-	(*GenerateShotRequest)(nil),        // 8: scidirector.v1.GenerateShotRequest
-	(*GenerateShotResponse)(nil),       // 9: scidirector.v1.GenerateShotResponse
-	(*CritiqueShotRequest)(nil),        // 10: scidirector.v1.CritiqueShotRequest
-	(*CritiqueShotResponse)(nil),       // 11: scidirector.v1.CritiqueShotResponse
-	(*ReviseShotRequest)(nil),          // 12: scidirector.v1.ReviseShotRequest
-	(*ReviseShotResponse)(nil),         // 13: scidirector.v1.ReviseShotResponse
-	(*ShotSpec)(nil),                   // 14: scidirector.v1.ShotSpec
-	(*CriticFeedback)(nil),             // 15: scidirector.v1.CriticFeedback
-	(*RenderArtifact)(nil),             // 16: scidirector.v1.RenderArtifact
-	(*HealthRequest)(nil),              // 17: scidirector.v1.HealthRequest
-	(*HealthResponse)(nil),             // 18: scidirector.v1.HealthResponse
-	(*PipelineEvent)(nil),              // 19: scidirector.v1.PipelineEvent
+	(*FyStylesRequest)(nil),            // 0: scidirector.v1.FyStylesRequest
+	(*FyStylesResponse)(nil),           // 1: scidirector.v1.FyStylesResponse
+	(*RenderPresenterRequest)(nil),     // 2: scidirector.v1.RenderPresenterRequest
+	(*RenderPresenterResponse)(nil),    // 3: scidirector.v1.RenderPresenterResponse
+	(*CheckpointSnapshotRequest)(nil),  // 4: scidirector.v1.CheckpointSnapshotRequest
+	(*CheckpointSnapshotResponse)(nil), // 5: scidirector.v1.CheckpointSnapshotResponse
+	(*CheckpointShotState)(nil),        // 6: scidirector.v1.CheckpointShotState
+	(*RunPipelineRequest)(nil),         // 7: scidirector.v1.RunPipelineRequest
+	(*PlanScriptRequest)(nil),          // 8: scidirector.v1.PlanScriptRequest
+	(*PlanScriptResponse)(nil),         // 9: scidirector.v1.PlanScriptResponse
+	(*GenerateShotRequest)(nil),        // 10: scidirector.v1.GenerateShotRequest
+	(*GenerateShotResponse)(nil),       // 11: scidirector.v1.GenerateShotResponse
+	(*CritiqueShotRequest)(nil),        // 12: scidirector.v1.CritiqueShotRequest
+	(*CritiqueShotResponse)(nil),       // 13: scidirector.v1.CritiqueShotResponse
+	(*ReviseShotRequest)(nil),          // 14: scidirector.v1.ReviseShotRequest
+	(*ReviseShotResponse)(nil),         // 15: scidirector.v1.ReviseShotResponse
+	(*ShotSpec)(nil),                   // 16: scidirector.v1.ShotSpec
+	(*CriticFeedback)(nil),             // 17: scidirector.v1.CriticFeedback
+	(*RenderArtifact)(nil),             // 18: scidirector.v1.RenderArtifact
+	(*HealthRequest)(nil),              // 19: scidirector.v1.HealthRequest
+	(*HealthResponse)(nil),             // 20: scidirector.v1.HealthResponse
+	(*PipelineEvent)(nil),              // 21: scidirector.v1.PipelineEvent
 }
 var file_scidirector_v1_ai_service_proto_depIdxs = []int32{
-	4,  // 0: scidirector.v1.CheckpointSnapshotResponse.shots:type_name -> scidirector.v1.CheckpointShotState
-	14, // 1: scidirector.v1.PlanScriptResponse.shots:type_name -> scidirector.v1.ShotSpec
-	14, // 2: scidirector.v1.GenerateShotRequest.shot:type_name -> scidirector.v1.ShotSpec
-	15, // 3: scidirector.v1.GenerateShotRequest.feedback:type_name -> scidirector.v1.CriticFeedback
-	14, // 4: scidirector.v1.GenerateShotResponse.shot:type_name -> scidirector.v1.ShotSpec
-	16, // 5: scidirector.v1.GenerateShotResponse.artifact:type_name -> scidirector.v1.RenderArtifact
-	14, // 6: scidirector.v1.CritiqueShotRequest.shot:type_name -> scidirector.v1.ShotSpec
-	16, // 7: scidirector.v1.CritiqueShotRequest.artifact:type_name -> scidirector.v1.RenderArtifact
-	15, // 8: scidirector.v1.CritiqueShotResponse.feedback:type_name -> scidirector.v1.CriticFeedback
-	14, // 9: scidirector.v1.ReviseShotRequest.shot:type_name -> scidirector.v1.ShotSpec
-	15, // 10: scidirector.v1.ReviseShotRequest.previous_feedback:type_name -> scidirector.v1.CriticFeedback
-	16, // 11: scidirector.v1.ReviseShotRequest.previous_artifact:type_name -> scidirector.v1.RenderArtifact
-	14, // 12: scidirector.v1.ReviseShotResponse.shot:type_name -> scidirector.v1.ShotSpec
-	16, // 13: scidirector.v1.ReviseShotResponse.artifact:type_name -> scidirector.v1.RenderArtifact
-	15, // 14: scidirector.v1.ReviseShotResponse.feedback:type_name -> scidirector.v1.CriticFeedback
-	0,  // 15: scidirector.v1.AiDirectorService.RenderPresenter:input_type -> scidirector.v1.RenderPresenterRequest
-	17, // 16: scidirector.v1.AiDirectorService.Health:input_type -> scidirector.v1.HealthRequest
-	5,  // 17: scidirector.v1.AiDirectorService.RunPipeline:input_type -> scidirector.v1.RunPipelineRequest
-	6,  // 18: scidirector.v1.AiDirectorService.PlanScript:input_type -> scidirector.v1.PlanScriptRequest
-	8,  // 19: scidirector.v1.AiDirectorService.GenerateShot:input_type -> scidirector.v1.GenerateShotRequest
-	10, // 20: scidirector.v1.AiDirectorService.CritiqueShot:input_type -> scidirector.v1.CritiqueShotRequest
-	12, // 21: scidirector.v1.AiDirectorService.ReviseShot:input_type -> scidirector.v1.ReviseShotRequest
-	2,  // 22: scidirector.v1.AiDirectorService.GetCheckpointSnapshot:input_type -> scidirector.v1.CheckpointSnapshotRequest
-	1,  // 23: scidirector.v1.AiDirectorService.RenderPresenter:output_type -> scidirector.v1.RenderPresenterResponse
-	18, // 24: scidirector.v1.AiDirectorService.Health:output_type -> scidirector.v1.HealthResponse
-	19, // 25: scidirector.v1.AiDirectorService.RunPipeline:output_type -> scidirector.v1.PipelineEvent
-	7,  // 26: scidirector.v1.AiDirectorService.PlanScript:output_type -> scidirector.v1.PlanScriptResponse
-	9,  // 27: scidirector.v1.AiDirectorService.GenerateShot:output_type -> scidirector.v1.GenerateShotResponse
-	11, // 28: scidirector.v1.AiDirectorService.CritiqueShot:output_type -> scidirector.v1.CritiqueShotResponse
-	13, // 29: scidirector.v1.AiDirectorService.ReviseShot:output_type -> scidirector.v1.ReviseShotResponse
-	3,  // 30: scidirector.v1.AiDirectorService.GetCheckpointSnapshot:output_type -> scidirector.v1.CheckpointSnapshotResponse
-	23, // [23:31] is the sub-list for method output_type
-	15, // [15:23] is the sub-list for method input_type
+	6,  // 0: scidirector.v1.CheckpointSnapshotResponse.shots:type_name -> scidirector.v1.CheckpointShotState
+	16, // 1: scidirector.v1.PlanScriptResponse.shots:type_name -> scidirector.v1.ShotSpec
+	16, // 2: scidirector.v1.GenerateShotRequest.shot:type_name -> scidirector.v1.ShotSpec
+	17, // 3: scidirector.v1.GenerateShotRequest.feedback:type_name -> scidirector.v1.CriticFeedback
+	16, // 4: scidirector.v1.GenerateShotResponse.shot:type_name -> scidirector.v1.ShotSpec
+	18, // 5: scidirector.v1.GenerateShotResponse.artifact:type_name -> scidirector.v1.RenderArtifact
+	16, // 6: scidirector.v1.CritiqueShotRequest.shot:type_name -> scidirector.v1.ShotSpec
+	18, // 7: scidirector.v1.CritiqueShotRequest.artifact:type_name -> scidirector.v1.RenderArtifact
+	17, // 8: scidirector.v1.CritiqueShotResponse.feedback:type_name -> scidirector.v1.CriticFeedback
+	16, // 9: scidirector.v1.ReviseShotRequest.shot:type_name -> scidirector.v1.ShotSpec
+	17, // 10: scidirector.v1.ReviseShotRequest.previous_feedback:type_name -> scidirector.v1.CriticFeedback
+	18, // 11: scidirector.v1.ReviseShotRequest.previous_artifact:type_name -> scidirector.v1.RenderArtifact
+	16, // 12: scidirector.v1.ReviseShotResponse.shot:type_name -> scidirector.v1.ShotSpec
+	18, // 13: scidirector.v1.ReviseShotResponse.artifact:type_name -> scidirector.v1.RenderArtifact
+	17, // 14: scidirector.v1.ReviseShotResponse.feedback:type_name -> scidirector.v1.CriticFeedback
+	0,  // 15: scidirector.v1.AiDirectorService.GetFyStyles:input_type -> scidirector.v1.FyStylesRequest
+	2,  // 16: scidirector.v1.AiDirectorService.RenderPresenter:input_type -> scidirector.v1.RenderPresenterRequest
+	19, // 17: scidirector.v1.AiDirectorService.Health:input_type -> scidirector.v1.HealthRequest
+	7,  // 18: scidirector.v1.AiDirectorService.RunPipeline:input_type -> scidirector.v1.RunPipelineRequest
+	8,  // 19: scidirector.v1.AiDirectorService.PlanScript:input_type -> scidirector.v1.PlanScriptRequest
+	10, // 20: scidirector.v1.AiDirectorService.GenerateShot:input_type -> scidirector.v1.GenerateShotRequest
+	12, // 21: scidirector.v1.AiDirectorService.CritiqueShot:input_type -> scidirector.v1.CritiqueShotRequest
+	14, // 22: scidirector.v1.AiDirectorService.ReviseShot:input_type -> scidirector.v1.ReviseShotRequest
+	4,  // 23: scidirector.v1.AiDirectorService.GetCheckpointSnapshot:input_type -> scidirector.v1.CheckpointSnapshotRequest
+	1,  // 24: scidirector.v1.AiDirectorService.GetFyStyles:output_type -> scidirector.v1.FyStylesResponse
+	3,  // 25: scidirector.v1.AiDirectorService.RenderPresenter:output_type -> scidirector.v1.RenderPresenterResponse
+	20, // 26: scidirector.v1.AiDirectorService.Health:output_type -> scidirector.v1.HealthResponse
+	21, // 27: scidirector.v1.AiDirectorService.RunPipeline:output_type -> scidirector.v1.PipelineEvent
+	9,  // 28: scidirector.v1.AiDirectorService.PlanScript:output_type -> scidirector.v1.PlanScriptResponse
+	11, // 29: scidirector.v1.AiDirectorService.GenerateShot:output_type -> scidirector.v1.GenerateShotResponse
+	13, // 30: scidirector.v1.AiDirectorService.CritiqueShot:output_type -> scidirector.v1.CritiqueShotResponse
+	15, // 31: scidirector.v1.AiDirectorService.ReviseShot:output_type -> scidirector.v1.ReviseShotResponse
+	5,  // 32: scidirector.v1.AiDirectorService.GetCheckpointSnapshot:output_type -> scidirector.v1.CheckpointSnapshotResponse
+	24, // [24:33] is the sub-list for method output_type
+	15, // [15:24] is the sub-list for method input_type
 	15, // [15:15] is the sub-list for extension type_name
 	15, // [15:15] is the sub-list for extension extendee
 	0,  // [0:15] is the sub-list for field type_name
@@ -1483,7 +1594,7 @@ func file_scidirector_v1_ai_service_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_scidirector_v1_ai_service_proto_rawDesc), len(file_scidirector_v1_ai_service_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   14,
+			NumMessages:   16,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

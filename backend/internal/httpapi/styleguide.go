@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/itJinYu/SciDirector/backend/internal/media"
@@ -35,10 +36,30 @@ func validateStyleGuide(sg map[string]any) error {
 	if _, exists := sg["scene_asset_sources"]; exists {
 		return fmt.Errorf("scene_asset_sources 为服务端内部字段")
 	}
+	if _, exists := sg["fy_style_source"]; exists {
+		return fmt.Errorf("fy_style_source 为服务端内部字段；只提交 fy_style_id")
+	}
 	if raw, exists := sg["animation_style"]; exists && raw != nil {
-		if value, ok := raw.(string); !ok || (value != "precise" && value != "anime") {
-			return fmt.Errorf("animation_style 必须为 precise 或 anime")
+		if value, ok := raw.(string); !ok || (value != "precise" && value != "anime" && value != "fy") {
+			return fmt.Errorf("animation_style 必须为 precise、anime 或 fy")
 		}
+	}
+	if sg["animation_style"] == "fy" {
+		id, ok := sg["fy_style_id"].(string)
+		if !ok || !regexp.MustCompile(`^[A-Z]+[0-9]+$`).MatchString(id) {
+			return fmt.Errorf("fy 模式需要明确画风编号，如 X17")
+		}
+		if assets, exists := sg["scene_assets"]; exists && assets != nil {
+			list, ok := assets.([]any)
+			if !ok || len(list) > 0 {
+				return fmt.Errorf("当前 fy Canvas 不支持分镜图片素材，请使用 Canvas 绘制或切换演出模式")
+			}
+		}
+		if ratio, exists := sg["aspect_ratio"]; exists && ratio != "16:9" {
+			return fmt.Errorf("当前 fy Canvas 仅支持 16:9")
+		}
+	} else if _, exists := sg["fy_style_id"]; exists {
+		return fmt.Errorf("fy_style_id 只能用于 fy 模式")
 	}
 	raw, present := sg["background_style"]
 	// JSON 的 null 与"字段不存在"等价：都表示没设置。

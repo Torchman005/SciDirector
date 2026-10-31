@@ -13,6 +13,30 @@ import (
 	pb "github.com/itJinYu/SciDirector/backend/internal/pb/scidirector/v1"
 )
 
+func TestFySourceSurvivesJobSerializationAndShotRevision(t *testing.T) {
+	job := &domain.Job{StyleGuide: map[string]any{"animation_style": "fy", "fy_style_id": "X17",
+		"fy_style_source": map[string]any{"id": "X17", "content": "完整原文", "sha256": "stable"}}}
+	data, err := json.Marshal(job)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restored domain.Job
+	if err := json.Unmarshal(data, &restored); err != nil {
+		t.Fatal(err)
+	}
+	p := &Processor{cfg: &config.Config{Media: config.MediaConfig{WorkDir: t.TempDir()}}}
+	for _, shot := range []*domain.Shot{nil, {BackgroundStyle: "grid"}} {
+		style, err := p.resolvedShotStyleGuide(&restored, shot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		source := style["fy_style_source"].(map[string]any)
+		if style["animation_style"] != "fy" || style["fy_style_id"] != "X17" || source["content"] != "完整原文" || source["sha256"] != "stable" {
+			t.Fatalf("lost fy source: %#v", style)
+		}
+	}
+}
+
 func TestSelectedVisualsSurviveJobSerializationAndShotRevision(t *testing.T) {
 	work := t.TempDir()
 	store, err := assets.NewStore(filepath.Join(work, "assets"))

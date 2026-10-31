@@ -35,11 +35,12 @@ interface Props {
   jobId: string
   shot: Shot
   onChanged: () => void
+  fyStyleId?: string
 }
 
 type Editor = 'none' | 'reject' | 'patch'
 
-export function ShotDetail({ jobId, shot, onChanged }: Props) {
+export function ShotDetail({ jobId, shot, onChanged, fyStyleId }: Props) {
   const { approve, reject, patch, busy, canApprove, canRepair } = useShotActions(jobId, shot, onChanged)
   const [editor, setEditor] = useState<Editor>('none')
   const [comment, setComment] = useState('')
@@ -261,9 +262,10 @@ export function ShotDetail({ jobId, shot, onChanged }: Props) {
               value={backgroundStyle}
               onChange={setBackgroundStyle}
               options={SHOT_BACKGROUND_OPTIONS}
+              disabled={!!fyStyleId}
             />
             <Text type="secondary" style={{ fontSize: 12 }}>
-              只影响这一镜的配色；「跟随全片」表示不覆盖。
+              {fyStyleId ? `由 fy 画风 ${fyStyleId} 控制背景；修复继续使用原画风快照。` : '只影响这一镜的配色；「跟随全片」表示不覆盖。'}
             </Text>
           </div>
           <Space>

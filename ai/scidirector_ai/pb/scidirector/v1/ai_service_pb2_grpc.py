@@ -16,6 +16,11 @@ class AiDirectorServiceStub(object):
         Args:
             channel: A grpc.Channel.
         """
+        self.GetFyStyles = channel.unary_unary(
+                '/scidirector.v1.AiDirectorService/GetFyStyles',
+                request_serializer=scidirector_dot_v1_dot_ai__service__pb2.FyStylesRequest.SerializeToString,
+                response_deserializer=scidirector_dot_v1_dot_ai__service__pb2.FyStylesResponse.FromString,
+                _registered_method=True)
         self.RenderPresenter = channel.unary_unary(
                 '/scidirector.v1.AiDirectorService/RenderPresenter',
                 request_serializer=scidirector_dot_v1_dot_ai__service__pb2.RenderPresenterRequest.SerializeToString,
@@ -61,6 +66,14 @@ class AiDirectorServiceStub(object):
 class AiDirectorServiceServicer(object):
     """服务端并发策略：Python 侧用线程池处理阻塞型渲染调用。
     """
+
+    def GetFyStyles(self, request, context):
+        """Empty style_id returns catalog metadata; an explicit ID returns a complete,
+        verified source snapshot. Only server-owned library paths are read.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
 
     def RenderPresenter(self, request, context):
         """Render a transparent presenter against Go's final aligned narration track.
@@ -140,6 +153,11 @@ class AiDirectorServiceServicer(object):
 
 def add_AiDirectorServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
+            'GetFyStyles': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetFyStyles,
+                    request_deserializer=scidirector_dot_v1_dot_ai__service__pb2.FyStylesRequest.FromString,
+                    response_serializer=scidirector_dot_v1_dot_ai__service__pb2.FyStylesResponse.SerializeToString,
+            ),
             'RenderPresenter': grpc.unary_unary_rpc_method_handler(
                     servicer.RenderPresenter,
                     request_deserializer=scidirector_dot_v1_dot_ai__service__pb2.RenderPresenterRequest.FromString,
@@ -191,6 +209,33 @@ def add_AiDirectorServiceServicer_to_server(servicer, server):
 class AiDirectorService(object):
     """服务端并发策略：Python 侧用线程池处理阻塞型渲染调用。
     """
+
+    @staticmethod
+    def GetFyStyles(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/scidirector.v1.AiDirectorService/GetFyStyles',
+            scidirector_dot_v1_dot_ai__service__pb2.FyStylesRequest.SerializeToString,
+            scidirector_dot_v1_dot_ai__service__pb2.FyStylesResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
 
     @staticmethod
     def RenderPresenter(request,

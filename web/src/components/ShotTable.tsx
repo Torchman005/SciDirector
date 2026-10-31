@@ -19,9 +19,10 @@ interface Props {
   jobId: string
   shots: Shot[]
   onChanged: () => void
+  fyStyleId?: string
 }
 
-export function ShotTable({ jobId, shots, onChanged }: Props) {
+export function ShotTable({ jobId, shots, onChanged, fyStyleId }: Props) {
   const columns: ColumnsType<Shot> = [
     {
       title: '#',
@@ -43,7 +44,7 @@ export function ShotTable({ jobId, shots, onChanged }: Props) {
       title: '引擎',
       dataIndex: 'engine',
       width: 110,
-      render: (engine: string) => <Text type="secondary">{engineLabel(engine)}</Text>,
+      render: (engine: string) => <Text type="secondary">{fyStyleId && engine === 'motion' ? `fy · ${fyStyleId}` : engineLabel(engine)}</Text>,
     },
     {
       title: '时长',
@@ -110,7 +111,7 @@ export function ShotTable({ jobId, shots, onChanged }: Props) {
       rowClassName={(shot) => (needsShotDecision(shot.status) ? 'row-actionable' : '')}
       expandable={{
         expandedRowRender: (shot) => (
-          <ShotDetail jobId={jobId} shot={shot} onChanged={onChanged} />
+          <ShotDetail jobId={jobId} shot={shot} onChanged={onChanged} fyStyleId={fyStyleId} />
         ),
         // 待人工或失败镜头默认展开，让重做与放行入口直接可见。
         defaultExpandedRowKeys: shots

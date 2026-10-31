@@ -305,6 +305,8 @@ def style_guide_from_json(raw: str) -> StyleGuide:
     try:
         return StyleGuide.model_validate(payload)
     except Exception as exc:  # noqa: BLE001 - 校验失败一律降级
+        if payload.get('animation_style') == 'fy' or 'fy_style_id' in payload or 'fy_style_source' in payload:
+            raise ValueError(f'fy 画风参数无效：{exc}') from exc
         logger.warning("style_guide 校验失败，使用默认风格", extra={"error": str(exc)[:300]})
         return StyleGuide()
 

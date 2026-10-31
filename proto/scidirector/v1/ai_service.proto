@@ -19,6 +19,9 @@ option go_package = "github.com/itJinYu/SciDirector/backend/internal/pb/scidirec
 
 // 服务端并发策略：Python 侧用线程池处理阻塞型渲染调用。
 service AiDirectorService {
+  // Empty style_id returns catalog metadata; an explicit ID returns a complete,
+  // verified source snapshot. Only server-owned library paths are read.
+  rpc GetFyStyles(FyStylesRequest) returns (FyStylesResponse);
   // Render a transparent presenter against Go's final aligned narration track.
   // All paths are server resolved shared-volume paths; no media bytes over gRPC.
   rpc RenderPresenter(RenderPresenterRequest) returns (RenderPresenterResponse);
@@ -60,6 +63,16 @@ service AiDirectorService {
   // 语义化字段。
   // ---------------------------------------------------------------------------
   rpc GetCheckpointSnapshot(CheckpointSnapshotRequest) returns (CheckpointSnapshotResponse);
+}
+
+message FyStylesRequest {
+  string style_id = 1;
+}
+
+message FyStylesResponse {
+  // JSON catalog or source snapshot (never both). See docs/FY_MAIN_WORKFLOW.md.
+  string catalog_json = 1;
+  string source_json = 2;
 }
 
 message RenderPresenterRequest {
@@ -125,6 +138,9 @@ message CheckpointShotState {
 // RunPipeline
 // -----------------------------------------------------------------------------
 // style_guide_json contract shared by all generation/review RPCs:
+// animation_style="fy" requires fy_style_id and fy_style_source, the verified
+// full snapshot resolved by GetFyStyles and persisted by Go. REST clients send
+// only fy_style_id; supplying fy_style_source from a client is rejected.
 // presenter_safe_area?: {x:number,y:number,width:number,height:number}, normalized
 // to [0,1]. Go derives it from enabled presenter effects; the full-size animation
 // must keep important content outside this LOCAL bottom-right overlay rectangle.

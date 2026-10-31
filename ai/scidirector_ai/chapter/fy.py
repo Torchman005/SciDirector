@@ -48,13 +48,14 @@ def _safe_script(code: str) -> str:
 
 def compile_fy(codes: list[tuple[str, str]], timing: dict, *, title: str = '', series: str = '',
                data: dict | None = None, fps: int = 30, width: int = 1920, height: int = 1080,
-               style: dict | None = None) -> str:
+               style: dict | None = None, chapter_chrome: bool = True, min_font: int = 25,
+               presenter_area: dict | None = None) -> str:
     """Inline the two pinned upstream modules and project adapter in an offline HTML."""
     engine_info(style)
     if not timing.get('lines') or not math.isfinite(timing['dur']) or timing['dur'] <= 0:
         raise ValueError('章节时间轴为空或时长无效')
-    if width != 1920 or height != 1080 or not isinstance(fps, int) or not 1 <= fps <= 60:
-        raise ValueError('当前 fy 试验固定 1920×1080，fps 必须为 1–60 整数')
+    if not all(isinstance(v, int) and v > 0 for v in (width, height, fps)) or width * 9 != height * 16 or fps > 60:
+        raise ValueError('fy Canvas 仅支持 16:9 正整数尺寸，fps 必须为 1–60 整数')
     ids = [key for key, _ in codes]
     line_ids = [line['id'] for line in timing['lines']]
     if not ids or len(ids) != len(set(ids)) or ids[0] != line_ids[0] or any(i not in line_ids for i in ids):
@@ -62,7 +63,8 @@ def compile_fy(codes: list[tuple[str, str]], timing: dict, *, title: str = '', s
     if [line_ids.index(i) for i in ids] != sorted(line_ids.index(i) for i in ids):
         raise ValueError('场景必须按旁白顺序注册')
     payload = {'timing': timing, 'first_ids': ids, 'width': width, 'height': height, 'fps': fps,
-               'vars': data or {}, 'palette': PAPER_PALETTE, 'font': FONT, 'require_theme': bool(style)}
+               'vars': data or {}, 'palette': PAPER_PALETTE, 'font': FONT, 'require_theme': bool(style),
+               'chapter_chrome': chapter_chrome, 'min_font': min_font, 'presenter_area': presenter_area}
     encoded = json.dumps(payload, ensure_ascii=False, allow_nan=False).replace('<', '\\u003c').replace('&', '\\u0026')
     license_text = (_ROOT / 'fy_vendor' / 'LICENSE.md').read_text(encoding='utf-8')
     scripts = ['<!-- fy-code-animation, authored by 《俯仰观照》; pinned upstream d9a545afa393b2ffab4f36e87371691daf8e502c.\n'
@@ -80,16 +82,21 @@ def compile_fy(codes: list[tuple[str, str]], timing: dict, *, title: str = '', s
         scripts.append('<script>window.__sceneTag=' + json.dumps(key) + ';</script>')
         scripts.append('<script>(()=>{const {' + EXPORTS + '}=FY;\n' + _safe_script(code) + '\n})();</script>')
     scripts.append("<script>window.__sceneTag='';window.__fyStart();</script>")
-    css = ('html,body{margin:0;width:1920px;height:1080px;overflow:hidden;background:var(--fy-paper,#F6EFDD)}'
+    css = (f'html,body{{margin:0;width:{width}px;height:{height}px;overflow:hidden;background:var(--fy-paper,#F6EFDD)}}'
            f'body{{font-family:{FONT}}}'
            '#film{position:absolute;inset:0}#tag{position:absolute;left:64px;top:35px;font-size:24px;color:var(--fy-mute,#8C8497)}'
            '#sub{position:absolute;left:120px;right:120px;bottom:60px;min-height:60px;text-align:center;'
            'font-size:40px;line-height:1.4;font-weight:700;color:var(--fy-ink,#2E2B3A);background:var(--fy-paper,#F6EFDD);white-space:pre-line}'
            '#progress{position:absolute;bottom:0;left:0;height:5px;background:var(--fy-blue,#3A6FD8)}')
     tag = html_module.escape(' · '.join(s for s in [series, title] if s))
+    chrome = ('<div id="tag">' + tag + '</div><div id="sub"></div><div id="progress"></div>') if chapter_chrome else ''
+    provenance = ''
+    if style:
+        provenance = '<script id="scid-fy-source" type="application/json">' + json.dumps(
+            style_summary(style), ensure_ascii=False).replace('<', '\\u003c') + '</script>'
     return ('<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><style>' + css + '</style></head><body>'
-            '<canvas id="film"></canvas><div id="tag">' + tag + '</div><div id="sub"></div><div id="progress"></div>'
-            '<script id="scid-fy-data" type="application/json">' + encoded + '</script>' + ''.join(scripts) + '</body></html>')
+            '<canvas id="film"></canvas>' + chrome + provenance
+            + '<script id="scid-fy-data" type="application/json">' + encoded + '</script>' + ''.join(scripts) + '</body></html>')
 
 
 async def _preflight(path: Path, timing: dict, executable: str) -> list[str]:

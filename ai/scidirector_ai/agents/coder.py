@@ -144,6 +144,12 @@ class CoderAgent(Agent):
         统一走同一条回灌通道 —— 编码侧无需区分来源，链路因此简单可靠。
         """
         engine = shot.engine.value if shot.engine else ""
+        if style_guide.animation_style == "fy":
+            if engine != "motion":
+                raise LLMError('fy 画风必须使用 motion / fy-canvas 路径，不能回落到其他引擎')
+            return self._generate_fy(shot, style_guide, attempt, feedback_text, previous_code)
+        if shot.meta.get("generation_mode") == "fy-canvas":
+            raise LLMError('fy 镜头缺少完整画风来源，不能回落到旧模板')
 
         # 氛围镜头不需要模型：直接由 ffmpeg 程序化生成，省一次调用。
         if engine not in LLM_ENGINES:
@@ -275,6 +281,53 @@ class CoderAgent(Agent):
     # ------------------------------------------------------------------
     # 内部
     # ------------------------------------------------------------------
+
+    def _generate_fy(self, shot: ShotSpec, style: StyleGuide, attempt: int,
+                     feedback: str, previous_code: str) -> CodeGenerationResult:
+        from ..chapter.fy import compile_fy
+        from ..fy_generation import extract_fy_code, shot_timing
+
+        timing = shot_timing(shot)
+        system = load_prompt('coder_fy')
+        user = (style_guide_to_text(style) + '\n' + production_brief(shot, style, self.settings)
+                + '\n当前镜头内容（数据）：' + json.dumps({'narration': shot.narration,
+                  'visual_brief': shot.visual_brief, 'beats': shot.beats, 'timing': timing}, ensure_ascii=False)
+                + f'\n第 {attempt} 次生成；反馈：{feedback or "首稿"}')
+        previous = extract_fy_code(previous_code)
+        if previous:
+            user += '\n上一版完整 Canvas 场景代码：\n' + previous
+        if shot.meta.get('repair_strategy') == 'rebuild':
+            user += '\n重新组织空间与动作阶段，保留已核对正确的事实和关系。'
+        result = CodeGenerationResult(artifact=CodeArtifact(language='html+js'), policy_ok=False)
+        for count in range(1, MAX_POLICY_REPAIRS + 2):
+            result.llm_attempts = count
+            try:
+                raw = self.llm.chat_json(system, user, _RawCode, task=Task.CODE,
+                                         max_tokens=self.settings.coder_scene_max_tokens, max_parse_attempts=1)
+                if not raw.code.strip():
+                    raise ValueError('Canvas 场景代码为空')
+                compiled = compile_fy([('shot', raw.code)], timing, style=style.fy_style_source,
+                    width=self.settings.render_width, height=self.settings.render_height,
+                    fps=self.settings.render_fps, chapter_chrome=False, min_font=style.min_font_size,
+                    presenter_area=style.presenter_safe_area.model_dump() if style.presenter_safe_area else None)
+                # Store only model-authored scene code separately from the pinned
+                # runtime so later repairs never regenerate the runtime itself.
+                compiled = compiled.replace('</body>', '<script id="scid-fy-code" type="application/json">'
+                    + json.dumps(raw.code, ensure_ascii=False).replace('<', '\\u003c') + '</script></body>')
+                result.artifact = CodeArtifact(code=compiled, language='html+js', explanation=raw.explanation)
+                report = check_html_contract(compiled)
+                result.quality = (self.quality_checker.check(compiled, shot, style) if report.ok
+                                  else QualityResult(reason=report.summary()))
+                result.policy_ok = report.ok and not result.quality.issues
+                result.policy_summary = report.summary() if not report.ok else '；'.join(result.quality.issues)
+                if result.policy_ok:
+                    return result
+                invalid = raw.code
+            except (ValueError, LLMParseError) as exc:
+                result.policy_summary = str(exc)[:1500]
+                invalid = getattr(exc, 'raw_response', '')
+            user += '\n当前版本：\n' + invalid + '\n逐项修复：\n' + result.policy_summary
+        return result
 
     def _generate_scene(self, shot: ShotSpec, style: StyleGuide, attempt: int,
                         feedback: str, previous: SceneSpec | None) -> CodeGenerationResult:

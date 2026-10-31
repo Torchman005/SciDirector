@@ -214,7 +214,11 @@ MEASURE_JS = r"""({minFont,presenterArea}) => {
     if(text.rects.some(r=>overlap(r,box)>area(r)*.25))
       issues.push(`${text.id} 文字与 #${shape.id} 遮挡；外部标签应放到独立区域，文字不能跨越其他图形边界；对应容器内的标签可调整前后层级`);
   }
-  if(document.querySelector('canvas')) warnings.push('Canvas 文字/图形布局未进行 DOM 测量，仍需视觉审核');
+  if(typeof window.__fyLayout === 'function') {
+    issues.push(...window.__fyLayout());
+    issues.push(...(window.__errors || []));
+    warnings.push('fy Canvas 已实测文字；任意图形碰撞、连线语义仍需视觉审核');
+  } else if(document.querySelector('canvas')) warnings.push('Canvas 文字/图形布局未进行 DOM 测量，仍需视觉审核');
   return {issues:issues.slice(0,12),warnings:warnings.slice(0,6)};
 }"""
 
@@ -378,13 +382,19 @@ def inspect(html: Path, width: int, height: int, duration: float, min_font: int,
                 page.evaluate("() => document.fonts.ready")
                 payload = page.evaluate("() => {const e=document.getElementById('scid-scene-v1');return e?JSON.parse(e.textContent):null}")
                 times = sample_times(duration, payload)
+                fy = page.evaluate("() => !!document.getElementById('scid-fy-data')")
+                if fy:
+                    times = sorted(set(times) | {duration * k / 32 for k in range(33)})
                 check_time = times[len(times) // 2]
                 def seek(t: float) -> None:
                     page.evaluate("t => window.__seek(t)", t)
                     page.evaluate("() => new Promise(r => requestAnimationFrame(() => r()))")
                 before: bytes | None = None
+                fy_pixels: dict[float, str] = {}
                 for t in times:
                     seek(t)
+                    if fy:
+                        fy_pixels[t] = page.evaluate('() => window.__fyPixels()')
                     measured = page.evaluate(MEASURE_JS, {"minFont": min_font, "presenterArea": presenter_area or (payload or {}).get("style", {}).get("presenterSafeArea")})
                     # Entry transitions may move opaque text in from outside the viewport.
                     destination = warnings if t < min(.25, duration * .1) else issues
@@ -392,6 +402,12 @@ def inspect(html: Path, width: int, height: int, duration: float, min_font: int,
                     warnings.extend(f"{t:.2f}s：{warning}" for warning in measured["warnings"])
                     if t == check_time:
                         before = page.screenshot(type="png")
+                if fy:
+                    for t in reversed(times):
+                        seek(t)
+                        if page.evaluate('() => window.__fyPixels()') != fy_pixels[t]:
+                            issues.append(f'{t:.2f}s fy Canvas 倒序 seek 像素不一致；每次从绝对时间重画')
+                            break
                 if payload and not issues:
                     scan_times, dynamic_ids = motion_scan_times(duration, payload, fps)
                     if scan_times:

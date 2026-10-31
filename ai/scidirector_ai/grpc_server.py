@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import time
+import json
 from concurrent import futures
 from typing import Any, Iterator
 
@@ -54,6 +55,17 @@ class AiDirectorServicer(pb_grpc.AiDirectorServiceServicer):
 
     def __init__(self, service: PipelineService) -> None:
         self.service = service
+
+    def GetFyStyles(self, request: Any, context: grpc.ServicerContext) -> Any:  # noqa: N802
+        from .chapter.fy_styles import list_fy_styles, load_fy_style
+        try:
+            if request.style_id:
+                return pb.FyStylesResponse(source_json=json.dumps(load_fy_style(request.style_id), ensure_ascii=False))
+            return pb.FyStylesResponse(catalog_json=json.dumps(list_fy_styles(), ensure_ascii=False))
+        except ValueError as exc:
+            context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(exc))
+        except (OSError, RuntimeError) as exc:
+            context.abort(grpc.StatusCode.UNAVAILABLE, f'画风库读取失败：{exc}')
 
     def RenderPresenter(self, request: Any, context: grpc.ServicerContext) -> Any:  # noqa: N802
         try:
@@ -126,6 +138,8 @@ class AiDirectorServicer(pb_grpc.AiDirectorServiceServicer):
             context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(exc))
         except (LLMError, LLMParseError) as exc:
             context.abort(grpc.StatusCode.INTERNAL, f"模型调用失败：{exc}")
+        except ValueError as exc:
+            context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
         except Exception as exc:  # noqa: BLE001 - 兜底，防止线程泄漏
             logger.exception("流水线异常")
             context.abort(grpc.StatusCode.INTERNAL, f"流水线内部错误：{exc}")
@@ -203,6 +217,8 @@ class AiDirectorServicer(pb_grpc.AiDirectorServiceServicer):
         except (LLMError, LLMParseError) as exc:
             logger.warning("剧本规划失败", extra={"job_id": job_id, "error": str(exc)})
             context.abort(grpc.StatusCode.INTERNAL, f"导演智能体失败：{exc}")
+        except ValueError as exc:
+            context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
         except Exception as exc:  # noqa: BLE001
             logger.exception("PlanScript 异常")
             context.abort(grpc.StatusCode.INTERNAL, f"内部错误：{exc}")
@@ -249,6 +265,8 @@ class AiDirectorServicer(pb_grpc.AiDirectorServiceServicer):
             context.abort(grpc.StatusCode.UNAVAILABLE, str(exc))
         except (LLMError, LLMParseError) as exc:
             context.abort(grpc.StatusCode.INTERNAL, f"模型调用失败：{exc}")
+        except ValueError as exc:
+            context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
         except Exception as exc:  # noqa: BLE001
             logger.exception("GenerateShot 异常")
             context.abort(grpc.StatusCode.INTERNAL, f"镜头生成失败：{exc}")
@@ -284,6 +302,8 @@ class AiDirectorServicer(pb_grpc.AiDirectorServiceServicer):
             context.abort(grpc.StatusCode.UNAVAILABLE, str(exc))
         except (LLMError, LLMParseError) as exc:
             context.abort(grpc.StatusCode.INTERNAL, f"模型调用失败：{exc}")
+        except ValueError as exc:
+            context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
         except Exception as exc:  # noqa: BLE001
             logger.exception("CritiqueShot 异常")
             context.abort(grpc.StatusCode.INTERNAL, f"审查失败：{exc}")
@@ -330,6 +350,8 @@ class AiDirectorServicer(pb_grpc.AiDirectorServiceServicer):
             context.abort(grpc.StatusCode.UNAVAILABLE, str(exc))
         except (LLMError, LLMParseError) as exc:
             context.abort(grpc.StatusCode.INTERNAL, f"模型调用失败：{exc}")
+        except ValueError as exc:
+            context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
         except Exception as exc:  # noqa: BLE001
             logger.exception("ReviseShot 异常")
             context.abort(grpc.StatusCode.INTERNAL, f"镜头重做失败：{exc}")

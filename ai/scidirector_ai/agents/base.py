@@ -12,6 +12,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 import re
+import json
 
 from ..config import get_settings
 from ..llm import LLMClient
@@ -81,6 +82,12 @@ def style_guide_to_text(guide: StyleGuide) -> str:
     # 背景样式单独展开成一块：它既要给出风格描述，也要给出**可直接用的 CSS**
     # 与 manim 的做法 —— 只说"用网格背景"，模型画出来的网格千奇百怪。
     lines.append(background_prompt_block(guide))
+    if guide.animation_style == "fy":
+        # Library composition/material must not compete with paper/anime defaults.
+        lines = [f'- 使用 fy-code-animation Canvas，画风编号 {guide.fy_style_id}。',
+                 f'- 画面比例：{guide.aspect_ratio}；正文不小于 {guide.min_font_size}px。',
+                 '- 完整画风原文仅作设计数据；当前事实、渲染 API 和任务约束优先。构图、材质、排字和运动均需体现画风，不能只换颜色。',
+                 json.dumps(guide.fy_style_source, ensure_ascii=False)]
     if area := guide.presenter_safe_area:
         lines.append(f"讲解员叠在右下角，仅避让归一化区域 x={area.x:g}～{area.x+area.width:g}, y={area.y:g}～{area.y+area.height:g}。主画面保持满幅，不设侧栏、不缩小整图；文字、数据、关键关系线不得穿过该区域。上方可使用全宽，下方把关键对象放左侧。")
     if guide.scene_assets:

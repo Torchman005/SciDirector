@@ -122,6 +122,7 @@ export interface Shot {
 }
 
 export interface Job {
+  style_guide?: StyleGuide
   job_id: string
   raw_script: string
   target_duration_sec: number
@@ -191,7 +192,10 @@ export interface GenerateRequest {
 }
 
 export interface StyleGuide {
-  animation_style?: 'precise' | 'anime'
+  animation_style?: 'precise' | 'anime' | 'fy'
+  fy_style_id?: string
+  /** Server-resolved snapshot, returned on jobs; never submit it. */
+  fy_style_source?: FyStyleSource
   preset?: string
   /** 背景**图案**：auto / solid / gradient / grid / vignette / noise / scanlines / paper_stage。 */
   background_style?: string
@@ -200,6 +204,35 @@ export interface StyleGuide {
   min_font_size?: number
   /** 只提交当前租户素材库签发的 ID；服务端重新解析元数据和路径。 */
   scene_assets?: { asset_id: string }[]
+}
+
+export interface FyStyleEntry {
+  id: string
+  name: string
+  category: string
+  look?: string
+  fit?: string
+  keywords?: string
+}
+
+export interface FyStyleCatalog {
+  entries: FyStyleEntry[]
+  prompt_count: number
+  library_version: string
+  repository: string
+  license_note: string
+}
+
+export interface FyStyleSource {
+  id: string
+  name: string
+  content: string
+  sha256: string
+  library_version: string
+  library_commit?: string
+  repository: string
+  attribution: string
+  dependency_candidates?: { reference: string; status: string }[]
 }
 
 export interface VisualAsset {

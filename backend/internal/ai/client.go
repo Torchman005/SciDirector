@@ -108,6 +108,16 @@ func NewClient(cfg config.AIConfig, logger *slog.Logger) (*Client, error) {
 // Close 关闭连接。
 func (c *Client) Close() error { return c.conn.Close() }
 
+func (c *Client) GetFyStyles(ctx context.Context, req *pb.FyStylesRequest) (*pb.FyStylesResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	resp, err := c.cli.GetFyStyles(ctx, req)
+	if err != nil {
+		return nil, wrapRPCError("GetFyStyles", err)
+	}
+	return resp, nil
+}
+
 // Health 探测 Python 服务与沙盒的可用性。
 func (c *Client) Health(ctx context.Context) (*pb.HealthResponse, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)

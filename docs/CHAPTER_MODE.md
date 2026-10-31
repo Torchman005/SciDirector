@@ -1,5 +1,7 @@
 # 章节模式与 fy 画风
 
+网页主任务现已接入同一 fy 画风读取器和 Canvas 编译器，使用方法见 [FY_MAIN_WORKFLOW.md](FY_MAIN_WORKFLOW.md)。本文的整章 CLI 仍为独立流程；下述“未接入”指整章工作流本身，不再表示网页完全不支持 fy。
+
 ## fy-code-animation / 341 画风库试验
 
 `--engine fy-canvas` 增加独立的 Canvas 章节后端；默认仍为 `svg`。
@@ -47,7 +49,7 @@ Canvas API 与旧 SVG API 不同：`scene('首句id', ({ctx,t,...}) => { ... })`
 浏览器预检在全章 33 个均布时刻与逐句阅读时刻测量实际 Canvas 文字，检查字号、边界、
 文字重叠与运行异常；倒序重复 seek 比较真实像素。静态及浏览器问题最多修复三轮，仍有问题
 则停止编码。这是采样检查，不能保证所有中间帧都正确，也不覆盖任意图形相撞、关系线语义、
-美感或内容事实。当前没有接入自动 VLM 审片、Live2D、Go/REST/前端及 fy 完整创作流程，
+美感或内容事实。此独立整章 CLI 没有接入主任务的自动 VLM 审片、Live2D、Go/REST/前端及 fy 完整创作流程，
 暂不接受 `--reuse-audio`。TTS 沿用原实现，本阶段没有改善音色或自然度。
 
 本机样片 `.data/fy-canvas-x17/chapter.mp4` 是 15.42 秒、1920×1080、24 fps 的手工无声试验，

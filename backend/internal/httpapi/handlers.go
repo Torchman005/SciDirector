@@ -144,6 +144,10 @@ func (s *Server) HandleGenerate(c *gin.Context) {
 		abortWith(c, http.StatusBadRequest, ErrCodeBadRequest, "风格参数非法", err)
 		return
 	}
+	if err := s.resolveFyStyle(c, req.StyleGuide); err != nil {
+		abortWith(c, http.StatusServiceUnavailable, ErrCodeUpstream, "所选画风无法加载，任务未创建；请检查画风库与 AI 服务版本", err)
+		return
+	}
 	if err := s.resolveVisualSelections(tenant, req.StyleGuide); err != nil {
 		abortWith(c, http.StatusBadRequest, ErrCodeBadRequest, "分镜图片素材无效", err)
 		return
@@ -183,6 +187,18 @@ func (s *Server) HandleGenerate(c *gin.Context) {
 		abortWith(c, http.StatusServiceUnavailable, ErrCodeUpstream,
 			"AI 服务当前不可用，无法接受新的生成任务", healthErr)
 		return
+	}
+	if req.StyleGuide["animation_style"] == "fy" {
+		browserOK := false
+		for _, capability := range health.Capabilities {
+			if capability == "tool:playwright=ok" {
+				browserOK = true
+			}
+		}
+		if !browserOK {
+			abortWith(c, http.StatusServiceUnavailable, ErrCodeUpstream, "fy Canvas 需要可用浏览器，任务未创建", nil)
+			return
+		}
 	}
 	for _, capability := range health.Capabilities {
 		if strings.HasPrefix(capability, "model:text=unavailable:") || strings.HasPrefix(capability, "model:vision=unavailable:") {

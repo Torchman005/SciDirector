@@ -31,6 +31,8 @@ import { EventTimeline } from './components/EventTimeline'
 import { ShotTable } from './components/ShotTable'
 import { PresenterSettings } from './components/PresenterSettings'
 import { SceneAssetSettings } from './components/SceneAssetSettings'
+import { FyStyleSettings } from './components/FyStyleSettings'
+import { generationStyle } from './generationStyle'
 import { deriveReviewSummary, deriveStat, shotsOf } from './stream'
 import { useJobStream } from './useJobStream'
 import { BACKGROUND_STYLES, STYLE_PRESETS, formatTime, jobStatus } from './display'
@@ -71,7 +73,8 @@ const GRADES = [
 ]
 
 interface SubmitForm {
-  animation_style: 'precise' | 'anime'
+  animation_style: 'precise' | 'anime' | 'fy'
+  fy_style_id?: string
   raw_script: string
   /** null = 留空 = 按脚本自动估算（提交时转成 0）。 */
   target_duration_sec: number | null
@@ -102,6 +105,7 @@ export function App() {
   const [presenterBusy, setPresenterBusy] = useState(false)
   const [sceneAssetIds, setSceneAssetIds] = useState<string[]>([])
   const [sceneAssetsBusy, setSceneAssetsBusy] = useState(false)
+  const [fyReady, setFyReady] = useState(false)
   const [refreshTick, setRefreshTick] = useState(0)
   const [estimate, setEstimate] = useState<number | null>(null)
   const [estimateBasis, setEstimateBasis] = useState('')
@@ -130,6 +134,8 @@ export function App() {
   // 表单联动：色调决定强度滑块是否可用，烧录开关决定字幕样式是否可用。
   // 用 useWatch 而不是自己再存一份 state —— 两份真相迟早会不一致。
   const script = Form.useWatch('raw_script', form) ?? ''
+  const animationStyle = Form.useWatch('animation_style', form) ?? 'fy'
+  const fyStyleId = Form.useWatch('fy_style_id', form) ?? 'X17'
   const grade = Form.useWatch('grade', form) ?? 'none'
   const burnSubtitles = Form.useWatch('burn_subtitles', form) ?? false
   const duration = Form.useWatch('target_duration_sec', form)
@@ -242,6 +248,10 @@ export function App() {
 
   async function submit(values: SubmitForm) {
     if (presenterBusy || bgmBusy || sceneAssetsBusy || submitting) return
+    if (values.animation_style === 'fy' && !fyReady) {
+      message.error('请先加载有效的 fy 画风原文')
+      return
+    }
     setSubmitting(true)
     try {
       const effects: Effects = {}
@@ -271,12 +281,7 @@ export function App() {
         // 留空传 0：服务端据此走"按脚本自动估算"。
         target_duration_sec: values.target_duration_sec ?? 0,
         locale: 'zh-CN',
-        style_guide: {
-          animation_style: values.animation_style,
-          preset: values.preset,
-          background_style: values.background_style,
-          scene_assets: sceneAssetIds.map(asset_id => ({ asset_id })),
-        },
+        style_guide: generationStyle(values, sceneAssetIds),
         effects,
       }
       const resp = await api.generate(req)
@@ -358,7 +363,8 @@ export function App() {
               initialValues={{
                 target_duration_sec: null,
                 preset: 'paper',
-                animation_style: 'anime',
+                animation_style: 'fy',
+                fy_style_id: 'X17',
                 background_style: 'paper_stage',
                 grade: 'none',
                 grade_strength: 1,
@@ -386,8 +392,8 @@ export function App() {
 
               <Row gutter={16} align="top">
                 <Col xs={24} sm={12} md={8}>
-                  <Form.Item name="animation_style" label="动画演出" extra="二次元模式使用分色轮廓与动作演出；导入立绘或 Live2D 后加入讲解员。">
-                    <Select options={[{value:'anime',label:'二次元科学剧场'}, {value:'precise',label:'严谨图解'}]} />
+                  <Form.Item name="animation_style" label="动画演出" extra={animationStyle === 'fy' ? '使用所选画风原文驱动 fy Canvas 生成。' : '沿用已有图解与二次元演出流程。'}>
+                    <Select options={[{value:'fy',label:'fy 画风库动画'}, {value:'anime',label:'二次元科学剧场'}, {value:'precise',label:'严谨图解'}]} />
                   </Form.Item>
                 </Col>
                 <Col xs={24} sm={12} md={4}>
@@ -412,7 +418,7 @@ export function App() {
                     label="配色预设"
                     tooltip="影响生成：决定模型画面用哪套颜色"
                   >
-                    <Select options={STYLE_PRESETS} />
+                    <Select options={STYLE_PRESETS} disabled={animationStyle === 'fy'} />
                   </Form.Item>
                 </Col>
                 <Col xs={12} sm={6} md={4}>
@@ -421,7 +427,7 @@ export function App() {
                     label="背景样式"
                     tooltip="影响生成：背景长什么样（纯色/网格/扫描线…）。与配色是两件独立的事"
                   >
-                    <Select options={BACKGROUND_STYLES} />
+                    <Select options={BACKGROUND_STYLES} disabled={animationStyle === 'fy'} />
                   </Form.Item>
                 </Col>
                 <Col xs={12} sm={6} md={6}>
@@ -435,6 +441,8 @@ export function App() {
                   </Form.Item>
                 </Col>
               </Row>
+
+              {animationStyle === 'fy' && <FyStyleSettings styleId={fyStyleId} onReady={setFyReady} />}
 
               <Divider orientation="left" plain style={{ marginTop: 0 }}>
                 后期效果
@@ -513,7 +521,9 @@ export function App() {
                 </Col>
               </Row>
 
-              <SceneAssetSettings selected={sceneAssetIds} onChange={setSceneAssetIds} onBusyChange={setSceneAssetsBusy} />
+              {animationStyle === 'fy'
+                ? <Alert type="info" showIcon message="fy 模式由画风原文控制配色与背景，当前使用 Canvas 绘制；分镜图片编排请切换到原演出模式。讲解员与后期效果仍可使用。" style={{ marginBottom: 16 }} />
+                : <SceneAssetSettings selected={sceneAssetIds} onChange={setSceneAssetIds} onBusyChange={setSceneAssetsBusy} />}
               <PresenterSettings value={presenter} onChange={setPresenter} onBusyChange={setPresenterBusy} />
               <Form.Item label="背景音乐" style={{ marginBottom: 8 }}>
                 {bgm ? (
@@ -607,7 +617,7 @@ export function App() {
               </Form.Item>
 
               <Button type="primary" size="large" htmlType="submit" aria-label="开始生成" aria-busy={submitting}
-                loading={submitting} disabled={submitting || bgmBusy || presenterBusy || sceneAssetsBusy}>
+                loading={submitting} disabled={submitting || bgmBusy || presenterBusy || sceneAssetsBusy || (animationStyle === 'fy' && !fyReady)}>
                 开始生成
               </Button>
             </Form>
@@ -620,6 +630,7 @@ export function App() {
               title={
                 <Space size={8} wrap>
                   <span>任务</span>
+                  {state.job?.style_guide?.animation_style === 'fy' && <Tag color="blue">fy · {state.job.style_guide.fy_style_id} {state.job.style_guide.fy_style_source?.name}</Tag>}
                   <Text code copyable style={{ fontSize: 13 }}>
                     {jobId}
                   </Text>
@@ -759,6 +770,7 @@ export function App() {
                 </Text>
               ) : (
                 <ShotTable
+                  fyStyleId={state.job?.style_guide?.animation_style === 'fy' ? state.job.style_guide.fy_style_id : undefined}
                   jobId={jobId}
                   shots={shots}
                   onChanged={() => setRefreshTick((n) => n + 1)}
@@ -789,6 +801,11 @@ export function App() {
                       children: formatTime(state.job.target_duration_sec),
                     },
                     { key: 'locale', label: '语言', children: state.job.locale },
+                    { key: 'style', label: '生成画风', children: state.job.style_guide?.animation_style === 'fy'
+                      ? <Space wrap><Tag color="blue">fy Canvas</Tag><Text>{state.job.style_guide.fy_style_id} · {state.job.style_guide.fy_style_source?.name}</Text></Space>
+                      : state.job.style_guide?.animation_style === 'anime' ? '二次元科学剧场' : '严谨图解（原流程）' },
+                    ...(state.job.style_guide?.fy_style_source ? [{ key: 'styleSource', label: '画风快照', children:
+                      <Text copyable={{ text: state.job.style_guide.fy_style_source.sha256 }}>{state.job.style_guide.fy_style_source.sha256.slice(0, 16)}…</Text> }] : []),
                     {
                       key: 'created',
                       label: '创建时间',

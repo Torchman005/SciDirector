@@ -30,6 +30,7 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
+	AiDirectorService_GetFyStyles_FullMethodName           = "/scidirector.v1.AiDirectorService/GetFyStyles"
 	AiDirectorService_RenderPresenter_FullMethodName       = "/scidirector.v1.AiDirectorService/RenderPresenter"
 	AiDirectorService_Health_FullMethodName                = "/scidirector.v1.AiDirectorService/Health"
 	AiDirectorService_RunPipeline_FullMethodName           = "/scidirector.v1.AiDirectorService/RunPipeline"
@@ -46,6 +47,9 @@ const (
 //
 // 服务端并发策略：Python 侧用线程池处理阻塞型渲染调用。
 type AiDirectorServiceClient interface {
+	// Empty style_id returns catalog metadata; an explicit ID returns a complete,
+	// verified source snapshot. Only server-owned library paths are read.
+	GetFyStyles(ctx context.Context, in *FyStylesRequest, opts ...grpc.CallOption) (*FyStylesResponse, error)
 	// Render a transparent presenter against Go's final aligned narration track.
 	// All paths are server resolved shared-volume paths; no media bytes over gRPC.
 	RenderPresenter(ctx context.Context, in *RenderPresenterRequest, opts ...grpc.CallOption) (*RenderPresenterResponse, error)
@@ -85,6 +89,16 @@ type aiDirectorServiceClient struct {
 
 func NewAiDirectorServiceClient(cc grpc.ClientConnInterface) AiDirectorServiceClient {
 	return &aiDirectorServiceClient{cc}
+}
+
+func (c *aiDirectorServiceClient) GetFyStyles(ctx context.Context, in *FyStylesRequest, opts ...grpc.CallOption) (*FyStylesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FyStylesResponse)
+	err := c.cc.Invoke(ctx, AiDirectorService_GetFyStyles_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *aiDirectorServiceClient) RenderPresenter(ctx context.Context, in *RenderPresenterRequest, opts ...grpc.CallOption) (*RenderPresenterResponse, error) {
@@ -182,6 +196,9 @@ func (c *aiDirectorServiceClient) GetCheckpointSnapshot(ctx context.Context, in 
 //
 // 服务端并发策略：Python 侧用线程池处理阻塞型渲染调用。
 type AiDirectorServiceServer interface {
+	// Empty style_id returns catalog metadata; an explicit ID returns a complete,
+	// verified source snapshot. Only server-owned library paths are read.
+	GetFyStyles(context.Context, *FyStylesRequest) (*FyStylesResponse, error)
 	// Render a transparent presenter against Go's final aligned narration track.
 	// All paths are server resolved shared-volume paths; no media bytes over gRPC.
 	RenderPresenter(context.Context, *RenderPresenterRequest) (*RenderPresenterResponse, error)
@@ -223,6 +240,9 @@ type AiDirectorServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedAiDirectorServiceServer struct{}
 
+func (UnimplementedAiDirectorServiceServer) GetFyStyles(context.Context, *FyStylesRequest) (*FyStylesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetFyStyles not implemented")
+}
 func (UnimplementedAiDirectorServiceServer) RenderPresenter(context.Context, *RenderPresenterRequest) (*RenderPresenterResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RenderPresenter not implemented")
 }
@@ -266,6 +286,24 @@ func RegisterAiDirectorServiceServer(s grpc.ServiceRegistrar, srv AiDirectorServ
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&AiDirectorService_ServiceDesc, srv)
+}
+
+func _AiDirectorService_GetFyStyles_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FyStylesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AiDirectorServiceServer).GetFyStyles(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AiDirectorService_GetFyStyles_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AiDirectorServiceServer).GetFyStyles(ctx, req.(*FyStylesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _AiDirectorService_RenderPresenter_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -412,6 +450,10 @@ var AiDirectorService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "scidirector.v1.AiDirectorService",
 	HandlerType: (*AiDirectorServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "GetFyStyles",
+			Handler:    _AiDirectorService_GetFyStyles_Handler,
+		},
 		{
 			MethodName: "RenderPresenter",
 			Handler:    _AiDirectorService_RenderPresenter_Handler,

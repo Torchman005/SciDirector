@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 from ..config import get_settings
 from ..llm import LLMClient, LLMError, LLMParseError, Task
 from ..logging import get_logger
-from ..schemas import SceneTag, ScriptPlan, ShotSpec, StyleGuide, TAG_TO_ENGINE
+from ..schemas import RenderEngine, SceneTag, ScriptPlan, ShotSpec, StyleGuide, TAG_TO_ENGINE
 from .base import Agent, render_prompt, style_guide_to_text
 
 logger = get_logger(__name__)
@@ -107,8 +107,13 @@ class DirectorAgent(Agent):
         )
 
         try:
+            system_prompt = self.system_prompt()
+            if style_guide.animation_style == 'fy':
+                system_prompt += ('\n本次为 fy Canvas 模式：标签只表示内容类别，所有镜头由同一 Canvas 2D 路径生成。'
+                                  '上表的多引擎路由仅适用于原模式；本次不使用 Manim/LaTeX、DOM、外部图片或三维渲染。'
+                                  '按所选画风的构图、材质和动作安排具体视觉意图，数学含义与数据必须保持正确。')
             parsed = self.llm.chat_json(
-                self.system_prompt(),
+                system_prompt,
                 user_prompt,
                 _RawPlan,
                 # 显式声明任务类型：mock 模式据此返回确定的结构，
@@ -138,6 +143,11 @@ class DirectorAgent(Agent):
             shots=shots,
             total_tokens=self.llm.usage.total_tokens,
         )
+        if style_guide.animation_style == "fy":
+            for shot in plan.shots:
+                shot.engine = RenderEngine.MOTION
+                shot.meta.update(generation_mode="fy-canvas", fy_style_id=style_guide.fy_style_id,
+                                 fy_style_sha256=style_guide.fy_style_source['sha256'])
         self.log.info(
             "导演智能体拆解完成",
             extra={

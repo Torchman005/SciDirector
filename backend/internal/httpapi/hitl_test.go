@@ -15,6 +15,8 @@ import (
 	"github.com/gin-gonic/gin"
 	goredis "github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/itJinYu/SciDirector/backend/internal/ai"
 	"github.com/itJinYu/SciDirector/backend/internal/config"
@@ -585,6 +587,16 @@ type fakeAIServer struct {
 
 func (f *fakeAIServer) Health(context.Context, *pb.HealthRequest) (*pb.HealthResponse, error) {
 	return &pb.HealthResponse{Healthy: true, Version: "test", LlmProvider: "mock", Capabilities: f.capabilities}, nil
+}
+
+func (f *fakeAIServer) GetFyStyles(_ context.Context, req *pb.FyStylesRequest) (*pb.FyStylesResponse, error) {
+	if req.StyleId == "" {
+		return &pb.FyStylesResponse{CatalogJson: `{"entries":[{"id":"X17","name":"蓝图"}],"prompt_count":1}`}, nil
+	}
+	if req.StyleId != "X17" {
+		return nil, status.Error(codes.FailedPrecondition, "STYLE_NOT_FOUND")
+	}
+	return &pb.FyStylesResponse{SourceJson: `{"id":"X17","name":"蓝图","content":"完整画风原文","sha256":"test-sha","library_version":"test-version"}`}, nil
 }
 
 // startFakeAIServer 起一个监听随机端口的假 AI 大脑，返回其地址。

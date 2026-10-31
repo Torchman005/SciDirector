@@ -411,7 +411,10 @@ class StyleGuide(BaseModel):
         description="术语表：保证同一概念在全片中的译名一致",
     )
     extra: dict[str, Any] = Field(default_factory=dict)
-    animation_style: Literal["precise", "anime"] = "precise"
+    animation_style: Literal["precise", "anime", "fy"] = "precise"
+    fy_style_id: str = ""
+    # Server-resolved full source, serialized in checkpoints and reused in repairs.
+    fy_style_source: dict[str, Any] | None = Field(default=None, repr=False)
     presenter_safe_area: SafeArea | None = None
     scene_assets: list[SceneAsset] = Field(default_factory=list, max_length=6)
     # Internal paths are created by the Go worker from tenant-owned IDs.
@@ -427,6 +430,13 @@ class StyleGuide(BaseModel):
         "用户选了暖色调，成片却是蓝色"，而且没有任何地方提示过 ——
         与本项目在调色方案上采取的态度一致。
         """
+        if self.animation_style == "fy":
+            from .chapter.fy_styles import validate_snapshot
+            validate_snapshot(self.fy_style_id, self.fy_style_source)
+            if self.aspect_ratio != "16:9" or self.scene_assets:
+                raise ValueError('当前 fy Canvas 仅支持 16:9 Canvas 绘制，不支持分镜图片素材')
+        elif self.fy_style_id or self.fy_style_source:
+            raise ValueError('fy 画风来源只能用于 fy 模式')
         if self.preset not in STYLE_PRESETS:
             raise ValueError(
                 f"未知的风格预设 {self.preset!r}；可用：{', '.join(sorted(STYLE_PRESETS))}"

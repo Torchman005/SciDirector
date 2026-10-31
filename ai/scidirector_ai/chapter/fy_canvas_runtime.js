@@ -72,8 +72,13 @@ window.__fyLayout = () => {
   const issues = [], add = (b, message) => issues.push(`[场景 ${b.scene}] ${message}：“${b.text.slice(0, 40)}”`);
   for (const b of textBoxes) {
     if (![b.x, b.y, b.right, b.bottom, b.size].every(Number.isFinite)) add(b, '文字边界非有限值');
-    if (b.size < 25) add(b, '文字字号过小');
-    if (b.x < 40 || b.right > W - 40 || b.y < 100 || b.bottom > H - 205) add(b, '文字出画或进入标题/字幕区域');
+    if (b.size < (D.min_font || 25)) add(b, '文字字号过小');
+    const margin = W * .02, top = D.chapter_chrome === false ? H * .03 : 100;
+    const bottom = D.chapter_chrome === false ? H * .85 : H - 205;
+    if (b.x < margin || b.right > W - margin || b.y < top || b.bottom > bottom) add(b, '文字出画或进入标题/字幕区域');
+    const a = D.presenter_area;
+    if (a && b.right > a.x*W && b.x < (a.x+a.width)*W && b.bottom > a.y*H && b.y < (a.y+a.height)*H)
+      add(b, '文字进入讲解员避让区域');
   }
   for (let i = 0; i < textBoxes.length; i++) for (let j = i + 1; j < textBoxes.length; j++) {
     const a = textBoxes[i], b = textBoxes[j];
@@ -94,8 +99,10 @@ function render({t}) {
     finally { ctx.restore(); }
   }
   const current = timing.lines.find(l => t >= l.start && t < l.end);
-  document.getElementById('sub').textContent = current?.sub || '';
-  document.getElementById('progress').style.width = `${100 * t / DUR}%`;
+  if (D.chapter_chrome !== false) {
+    document.getElementById('sub').textContent = current?.sub || '';
+    document.getElementById('progress').style.width = `${100 * t / DUR}%`;
+  }
 }
 window.__fyStart = async () => {
   started = true; Object.freeze(C);
@@ -109,7 +116,10 @@ window.__fyStart = async () => {
   try { await film.readyPromise; film.seek(0); window.__ready = true; }
   catch (error) { errors.push(`初始化失败：${error.message}`); window.__ready = true; }
 };
-window.__seek = t => film.seek(t);
+window.__seek = t => {
+  if (errors.length) fail(errors.join('\n'));
+  return film.seek(t);
+};
 window.__fyPixels = () => canvas.toDataURL('image/png');
 window.addEventListener('error', e => errors.push((window.__sceneTag ? `[场景 ${window.__sceneTag}] ` : '') + '脚本错误：' + e.message));
 })();

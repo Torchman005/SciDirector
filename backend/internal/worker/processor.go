@@ -883,7 +883,7 @@ func shotStyleGuide(job *domain.Job, shot *domain.Shot) map[string]any {
 	if job.Effects.Presenter != nil {
 		out["presenter_safe_area"] = media.PresenterSafeArea()
 	}
-	if shot != nil && strings.TrimSpace(shot.BackgroundStyle) != "" {
+	if out["animation_style"] != "fy" && shot != nil && strings.TrimSpace(shot.BackgroundStyle) != "" {
 		out["background_style"] = shot.BackgroundStyle
 	}
 	return out

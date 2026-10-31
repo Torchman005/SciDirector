@@ -25,6 +25,8 @@ import type {
   ShotsResponse,
   UploadAssetResponse,
   VisualAsset,
+  FyStyleCatalog,
+  FyStyleSource,
 } from './types'
 
 /** 后端不可用时的统一异常类型。 */
@@ -105,6 +107,8 @@ async function uploadPresenter(file: File, kind: 'live2d'|'portraits', signal?: 
 }
 
 export const api = {
+  fyStyles: () => request<FyStyleCatalog>('/api/v1/styles/fy'),
+  fyStyle: (id: string) => request<FyStyleSource>(`/api/v1/styles/fy/${encodeURIComponent(id)}`),
   uploadLive2D: (file: File, signal?: AbortSignal) => uploadPresenter(file,'live2d',signal),
   uploadPortrait: (file: File, signal?: AbortSignal) => uploadPresenter(file,'portraits',signal),
   listVisuals: () => request<VisualAsset[]>('/api/v1/assets/visuals'),

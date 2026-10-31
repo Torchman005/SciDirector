@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import subprocess
@@ -13,6 +14,47 @@ READER = Path(__file__).with_name('fy_vendor') / 'style_library.py'
 DEFAULT_ROOT = Path('.data/integrations/code-animation-341-styles')
 STYLE_REPOSITORY = 'https://github.com/wqb578/code-animation-341-styles'
 MAX_STYLE_CHARS = 24000
+
+
+def validate_snapshot(style_id: str, source: dict | None) -> None:
+    """Validate persisted sources without rereading an updated/missing library."""
+    if not re.fullmatch(r'[A-Z]+\d+', style_id) or not source or source.get('id') != style_id:
+        raise ValueError('fy 模式需要服务端解析的完整画风来源，编号必须一致')
+    content = source.get('content')
+    if not isinstance(content, str) or not content.strip() or len(content) > MAX_STYLE_CHARS:
+        raise ValueError('fy 画风原文为空或超过上下文预算')
+    raw = content.encode('utf-8')
+    if source.get('sha256') not in {hashlib.sha256(raw).hexdigest(), hashlib.sha256(b'\xef\xbb\xbf' + raw).hexdigest()}:
+        raise ValueError('fy 画风原文 SHA-256 不匹配')
+    if not re.fullmatch(r'[a-f0-9]{64}', source.get('library_version', '')):
+        raise ValueError('fy 画风库版本缺失')
+    if source.get('repository') != STYLE_REPOSITORY:
+        raise ValueError('fy 画风来源仓库不匹配')
+
+
+def library_root(root: str | Path | None = None) -> Path:
+    selected = Path(root or os.environ.get('FY_STYLE_LIBRARY_ROOT') or DEFAULT_ROOT)
+    if not selected.is_absolute():
+        selected = Path(__file__).resolve().parents[3] / selected
+    try:
+        library = selected.resolve(strict=True)
+    except FileNotFoundError as exc:
+        raise ValueError('画风库未安装；请安装 code-animation-341-styles 或配置 FY_STYLE_LIBRARY_ROOT') from exc
+    if not (library / '风格提示词').is_dir():
+        raise ValueError('画风库根目录下必须有 风格提示词/')
+    return library
+
+
+def list_fy_styles(root: str | Path | None = None) -> dict:
+    """Use the same pinned reader as generation; no separate Go catalog."""
+    library = library_root(root)
+    with tempfile.TemporaryDirectory(prefix='scid-fy-catalog-') as temp:
+        index = Path(temp) / 'index.json'
+        summary = style_command('build', library, index)
+        entries = style_command('list', library, index, '--kind', 'prompt')
+    return {'entries': entries, 'prompt_count': summary['prompt_count'],
+            'library_version': summary['library_version'], 'repository': STYLE_REPOSITORY,
+            'license_note': '整库按上游自定义非商业许可使用；L/V/X 系列保留 MIT，详见库内 LICENSE 与第三方许可。'}
 
 
 def style_command(command: str, root: Path, index: Path, *args: str) -> object:
@@ -27,9 +69,7 @@ def load_fy_style(style_id: str, root: str | Path | None = None, *, output: Path
     """Rebuild the index, then get one full prompt with SHA and dependency hints."""
     if not re.fullmatch(r'[A-Za-z]+\d+', style_id):
         raise ValueError('请用明确画风编号，如 X17 或 L36；不要用歧义名称')
-    library = Path(root or os.environ.get('FY_STYLE_LIBRARY_ROOT') or DEFAULT_ROOT).resolve(strict=True)
-    if not (library / '风格提示词').is_dir():
-        raise ValueError('画风库根目录下必须有 风格提示词/')
+    library = library_root(root)
     if output is not None and output.resolve().is_relative_to(library):
         raise ValueError('输出目录不能位于画风库内部')
     with tempfile.TemporaryDirectory(prefix='scid-fy-style-') as temp:

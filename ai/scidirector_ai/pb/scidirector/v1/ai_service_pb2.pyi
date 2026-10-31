@@ -6,6 +6,20 @@ from typing import ClassVar as _ClassVar, Iterable as _Iterable, Mapping as _Map
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
+class FyStylesRequest(_message.Message):
+    __slots__ = ("style_id",)
+    STYLE_ID_FIELD_NUMBER: _ClassVar[int]
+    style_id: str
+    def __init__(self, style_id: _Optional[str] = ...) -> None: ...
+
+class FyStylesResponse(_message.Message):
+    __slots__ = ("catalog_json", "source_json")
+    CATALOG_JSON_FIELD_NUMBER: _ClassVar[int]
+    SOURCE_JSON_FIELD_NUMBER: _ClassVar[int]
+    catalog_json: str
+    source_json: str
+    def __init__(self, catalog_json: _Optional[str] = ..., source_json: _Optional[str] = ...) -> None: ...
+
 class RenderPresenterRequest(_message.Message):
     __slots__ = ("model_path", "audio_path", "output_dir", "duration_sec", "width", "height", "fps", "mouth_parameter", "mouth_gain")
     MODEL_PATH_FIELD_NUMBER: _ClassVar[int]
