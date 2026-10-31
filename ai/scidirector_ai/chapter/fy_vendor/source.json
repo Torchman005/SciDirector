@@ -1,0 +1,22 @@
+{
+  "repository": "https://github.com/Akillll-DuoHe/fy-code-animation",
+  "commit": "d9a545afa393b2ffab4f36e87371691daf8e502c",
+  "files": {
+    "motion-core.mjs": {
+      "source": "implementations/motion-core.mjs",
+      "sha256": "f07b6f064630c7e1bd6cfef088f13ab9740ca37e12ad8f42d68060a7edae9fb7"
+    },
+    "canvas-contract.mjs": {
+      "source": "implementations/canvas-contract.mjs",
+      "sha256": "1604385eb3c2f82322e1b981ca99e9816a5a9ff83baafd13b75f98a0b0bf81e5"
+    },
+    "LICENSE.md": {
+      "source": "LICENSE.md",
+      "sha256": "18dceb8581694720001a6a1ec41bc956652de942c2267d721ad02783fb9c5df2"
+    },
+    "style_library.py": {
+      "source": "scripts/style_library.py",
+      "sha256": "f286210c0b2457fb4095630fd4db13c39b04a746f3c76448d74bdb732e0c44e8"
+    }
+  }
+}

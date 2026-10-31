@@ -1,5 +1,61 @@
 # 章节模式与成品参考库
 
+## fy-code-animation / 341 画风库试验
+
+`--engine fy-canvas` 增加独立的 Canvas 章节后端；默认仍为 `svg`。
+fy-code-animation 是创作规范与组件库，并非独立渲染器。本次固定采用
+[`Akillll-DuoHe/fy-code-animation`](https://github.com/Akillll-DuoHe/fy-code-animation)
+提交 `d9a545afa393b2ffab4f36e87371691daf8e502c` 的 `motion-core.mjs`、
+`canvas-contract.mjs` 和 `style_library.py`，SHA-256 随源码保留。
+
+外部画风库为 [`wqb578/code-animation-341-styles`](https://github.com/wqb578/code-animation-341-styles)，
+本机检查的提交为 `01576924a2b316d1f11ae33f75d3c005e8781451`，341 份提示词完整，
+上游 doctor 的 `ready` 为 true。只拉取文字与许可，没有下载参考视频或 JPG。
+索引版本是全部提示词的内容版本，不等同于 Git 提交。
+
+在仓库根目录运行；未安装 Python 包时先设置本页下方的 `PYTHONPATH`。
+
+```powershell
+# 默认位置为 .data/integrations/code-animation-341-styles；也可显式指定根目录。
+$env:FY_STYLE_LIBRARY_ROOT = "$PWD/.data/integrations/code-animation-341-styles"
+python scripts/fy-styles.py search --query "蓝图" --limit 5
+python scripts/fy-styles.py get --query X17
+
+# 不调用模型或 TTS：渲染手工 X17 蓝图候选样片，输出目录必须是新目录。
+python scripts/try-fy-canvas.py --fy-style X17 --output .data/fy-blueprint-new --chrome "C:/Program Files/Google/Chrome/Application/chrome.exe"
+
+# 真正的智能体生成入口：会调用已配置的文本/代码模型；这里仅省去配音。
+python scripts/make-chapter.py --engine fy-canvas --fy-style X17 --content "解释 MoE 专家路由" --output .data/fy-moe-new --no-tts --chrome "C:/Program Files/Google/Chrome/Application/chrome.exe"
+```
+
+画风选择要求明确编号，避免同名歧义。`--fy-style-root` 或环境变量指定根目录，目录中须有
+`风格提示词/`。每次重建索引并校验全文哈希；完整原文传入规划、逐场景生成及修复，超过
+24,000 字符则明确报错，不截断后冒称全文。输出保留 `style-source.json`、`style-index.json`、
+`style-licenses/` 与 `engine.json` 的来源摘要。依赖审计仅提供字面路径提示，
+`dependency_audit_complete=false`；没有缺失提示不代表字体、动态引用或效果依赖均已满足。
+省略编号时使用项目纸面配色，不声称使用外部画风。
+
+Canvas API 与旧 SVG API 不同：`scene('首句id', ({ctx,t,...}) => { ... })` 每次重画，
+不返回更新函数。第一场景可在注册前调用一次 `theme({...})`，完整设置
+`paper/card/ink/mute/line/q/k/v/gold/blue`；所选画风要求设置主题，开始绘制后配色冻结。
+字幕、系列标签与进度条同步采用主题色。`M` 来自上游 motion-core；`T/TE/K/KE`、`V`、
+文字测量适配器来自 SciDirector。场景切点是下一场首句，无自动交叉淡化。
+
+浏览器预检在全章 33 个均布时刻与逐句阅读时刻测量实际 Canvas 文字，检查字号、边界、
+文字重叠与运行异常；倒序重复 seek 比较真实像素。静态及浏览器问题最多修复三轮，仍有问题
+则停止编码。这是采样检查，不能保证所有中间帧都正确，也不覆盖任意图形相撞、关系线语义、
+美感或内容事实。当前没有接入自动 VLM 审片、Live2D、Go/REST/前端及 fy 完整创作流程，
+暂不接受 `--reference` 或 `--reuse-audio`。TTS 沿用原实现，本阶段没有改善音色或自然度。
+
+本机样片 `.data/fy-canvas-x17/chapter.mp4` 是 15.42 秒、1920×1080、24 fps 的手工无声试验，
+时间轴为估算。它演示 X17 的蓝底白线、黄色重点、制图网格、尺寸线、编号标注与图签；
+原文指定的字体以本机字体替代。它只是候选，不代表用户选定风格，也不证明智能体已能自动
+生成同等质量。后续应使用同一口播稿做真实生成对比。
+
+许可随来源保留：fy 组件采用原作者免费使用/分享条款；341 库总体为自定义非商业许可，
+其中 L/V/X 系列另适用原 MIT 条款。外部库不随本项目或 wheel 分发，分享输出时保留其
+来源说明与 `style-licenses/`。详细范围以各原文为准。
+
 章节模式以整章旁白为时间轴，让同一对象跨句连续变化。编剧、旁白、场景代码生成、浏览器预检修复及整章渲染已在 `scripts/make-chapter.py` 串联；它仍是独立的 Python CLI 工作流，尚未接入 Go/REST 任务入口与前端审核台。
 
 ## 流程

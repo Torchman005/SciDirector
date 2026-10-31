@@ -2,7 +2,7 @@
 name = "scidirector-ai"
 version = "0.1.0"
 description = "SciDirector AI 大脑：基于 LangGraph 的多智能体科学视频导演（导演/编码/审查）"
-readme = "../README.md"
+readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 
@@ -49,6 +49,7 @@ include = ["scidirector_ai*"]
 
 [tool.setuptools.package-data]
 scidirector_ai = ["*_runtime.js", "agents/prompts/*.md", "rag/corpus/*.json"]
+"scidirector_ai.chapter" = ["*_runtime.js", "examples/*.js", "fy_vendor/*.mjs", "fy_vendor/*.md", "fy_vendor/*.json", "fy_vendor/*.py"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
