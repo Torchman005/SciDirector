@@ -241,10 +241,8 @@ func (p *Processor) applyPipelineEvent(ctx context.Context, jobID string, ev *pb
 	job, err := p.store.UpdateJob(ctx, jobID, func(j *domain.Job) error {
 		// 导演节点会一次性带出分镜表，需要在此时把镜头**创建**出来。
 		if ev.GetNode() == "plan" && ev.GetPayloadJson() != "" {
-			if perr := syncShotsFromPayload(j, ev.GetPayloadJson()); perr != nil {
-				// 分镜表解析失败是严重问题（后续无从渲染），但不能静默吞掉：
-				// 记入任务错误字段，同时继续应用状态变更。
-				j.Error = "解析分镜表失败: " + perr.Error()
+			if perr := syncRecoveredPlan(ctx, j, ev.GetPayloadJson()); perr != nil {
+				return fmt.Errorf("解析分镜表失败: %w", perr)
 			}
 		}
 
@@ -262,77 +260,12 @@ func (p *Processor) applyPipelineEvent(ctx context.Context, jobID string, ev *pb
 
 		shot := j.FindShot(ev.GetShotId())
 		if shot == nil {
-			// 事件引用了未知镜头：通常是导演节点的事件先于分镜表同步到达。
-			// 这里不报错，仅等待 plan 事件补齐。
-			return nil
+			return fmt.Errorf("worker: 收到未同步分镜 %s 的 %s 事件；已停止消费，等待从检查点恢复分镜表", ev.GetShotId(), ev.GetNode())
 		}
 
-		// `code` 节点会把**生成的源码**放在 payload 里。必须把它落库。
-		//
-		// 这是"人工打回重做效果不好"的根因：Go 原先只在**重做路径**里回写代码
-		// （见 HandleRenderShot），主流水线从不保存 —— 于是镜头记录里的 `code`
-		// 一直是空的。打回时 `pbconv.ShotToPB(shot)` 带过去一个空 code，
-		// Python 侧 `previous_code=""`，提示词里**根本不会出现"上一版代码"**
-		// 那一块，模型只能凭一句意见从零重画。
-		// 那不是"重做"，是"重写"：已经画对的部分一并丢掉，
-		// 而用户看到的正是"打回之后效果反而更差"。
-		if ev.GetNode() == "code" && ev.GetPayloadJson() != "" {
-			if cerr := syncCodeFromPayload(shot, ev.GetPayloadJson()); cerr != nil {
-				// 与分镜表解析一致：不静默吞，但也**不该因此中断状态同步** ——
-				// 画面已经渲染出来了，丢的只是"下次重做时能参考的源码"。
-				logging.FromContext(ctx).Warn("解析 code 事件里的源码失败（不影响本次渲染，但下次重做会没有上一版可参考）",
-					"job_id", jobID, "shot_id", shot.ShotID, "error", cerr.Error())
-			}
+		if err := applyShotPipelineEvent(ctx, jobID, shot, ev, &domainEvent); err != nil {
+			return err
 		}
-
-		if next := pbconv.StatusFromPB(ev.GetStatus()); next != "" {
-			if _, terr := domain.Transition(shot.Status, next); terr != nil {
-				// 边界宽容策略：Python 是语义进度的产出方，若它报出一个我们的
-				// 迁移表尚未覆盖的路径，说明表不完整而不是事件错误。
-				// 记录告警后接受新状态，避免整条流水线因状态表不全而卡死。
-				logging.FromContext(ctx).Warn("收到未经登记的状态迁移，已接受",
-					"job_id", jobID, "shot_id", shot.ShotID,
-					"from", string(shot.Status), "to", string(next),
-				)
-			}
-			shot.Status = next
-		}
-		if a := ev.GetAttempt(); a > 0 {
-			shot.Attempt = int(a)
-		}
-		if art := pbconv.ArtifactFromPB(ev.GetArtifact()); art != nil {
-			if err := applyNarrationArtifact(shot, ev.GetNarrationPatch(), art, false); err != nil {
-				return err
-			}
-			shot.Artifact = art
-		}
-		if fb := ev.GetFeedback(); fb != nil {
-			shot.RecordFeedback(pbconv.FeedbackFromPB(fb))
-			if fb.GetKind() == domain.FeedbackReviewUnavailable {
-				shot.Error = "本次未能完成审查：" + fb.GetMessage()
-			}
-			if fb.GetPassed() && !shot.Feedbacks[len(shot.Feedbacks)-1].Passed {
-				shot.Status = domain.StatusAwaitingHuman
-				shot.Error = "仍有未关闭的修复任务，请核对原验收条件"
-				domainEvent.Status, domainEvent.Error = shot.Status, shot.Error
-			}
-		}
-		if e := ev.GetError(); e != "" {
-			shot.Error = e
-			if ev.GetFeedback() == nil && (ev.GetNode() == "code" || ev.GetNode() == "render") {
-				shot.RecordFeedback(domain.Feedback{Kind: domain.FeedbackSystemError, Source: domain.FeedbackSystem,
-					Attempt: int(ev.GetAttempt()), Message: e, CreatedAt: time.Now().UTC()})
-			}
-		}
-		if shot.Status == domain.StatusApproved {
-			if shot.Artifact == nil || shot.Artifact.VideoPath == "" {
-				shot.Status, shot.Error = domain.StatusAwaitingHuman, "审核通过事件缺少视频产物，请重新生成"
-				domainEvent.Status, domainEvent.Error = shot.Status, shot.Error
-			} else {
-				shot.Error = ""
-			}
-		}
-		shot.UpdatedAt = time.Now().UTC()
 
 		// 任务整体状态跟随镜头进度推进。
 		if j.Status == domain.JobPlanning {
@@ -352,6 +285,77 @@ func (p *Processor) applyPipelineEvent(ctx context.Context, jobID string, ev *pb
 	// 2) 落事件流（内含 Publish，api 侧订阅后推给浏览器）。
 	_, err = p.emit(ctx, &domainEvent)
 	return err
+}
+
+// applyShotPipelineEvent applies an actual emitted shot event, including during checkpoint recovery.
+func applyShotPipelineEvent(ctx context.Context, jobID string, shot *domain.Shot, ev *pb.PipelineEvent, domainEvent *domain.Event) error {
+	// `code` 节点会把**生成的源码**放在 payload 里。必须把它落库。
+	//
+	// 这是"人工打回重做效果不好"的根因：Go 原先只在**重做路径**里回写代码
+	// （见 HandleRenderShot），主流水线从不保存 —— 于是镜头记录里的 `code`
+	// 一直是空的。打回时 `pbconv.ShotToPB(shot)` 带过去一个空 code，
+	// Python 侧 `previous_code=""`，提示词里**根本不会出现"上一版代码"**
+	// 那一块，模型只能凭一句意见从零重画。
+	// 那不是"重做"，是"重写"：已经画对的部分一并丢掉，
+	// 而用户看到的正是"打回之后效果反而更差"。
+	if ev.GetNode() == "code" && ev.GetPayloadJson() != "" {
+		if cerr := syncCodeFromPayload(shot, ev.GetPayloadJson()); cerr != nil {
+			// 与分镜表解析一致：不静默吞，但也**不该因此中断状态同步** ——
+			// 画面已经渲染出来了，丢的只是"下次重做时能参考的源码"。
+			logging.FromContext(ctx).Warn("解析 code 事件里的源码失败（不影响本次渲染，但下次重做会没有上一版可参考）",
+				"job_id", jobID, "shot_id", shot.ShotID, "error", cerr.Error())
+		}
+	}
+
+	if next := pbconv.StatusFromPB(ev.GetStatus()); next != "" {
+		if _, terr := domain.Transition(shot.Status, next); terr != nil {
+			// 边界宽容策略：Python 是语义进度的产出方，若它报出一个我们的
+			// 迁移表尚未覆盖的路径，说明表不完整而不是事件错误。
+			// 记录告警后接受新状态，避免整条流水线因状态表不全而卡死。
+			logging.FromContext(ctx).Warn("收到未经登记的状态迁移，已接受",
+				"job_id", jobID, "shot_id", shot.ShotID,
+				"from", string(shot.Status), "to", string(next),
+			)
+		}
+		shot.Status = next
+	}
+	if a := ev.GetAttempt(); a > 0 {
+		shot.Attempt = int(a)
+	}
+	if art := pbconv.ArtifactFromPB(ev.GetArtifact()); art != nil {
+		if err := applyNarrationArtifact(shot, ev.GetNarrationPatch(), art, false); err != nil {
+			return err
+		}
+		shot.Artifact = art
+	}
+	if fb := ev.GetFeedback(); fb != nil {
+		shot.RecordFeedback(pbconv.FeedbackFromPB(fb))
+		if fb.GetKind() == domain.FeedbackReviewUnavailable {
+			shot.Error = "本次未能完成审查：" + fb.GetMessage()
+		}
+		if fb.GetPassed() && !shot.Feedbacks[len(shot.Feedbacks)-1].Passed {
+			shot.Status = domain.StatusAwaitingHuman
+			shot.Error = "仍有未关闭的修复任务，请核对原验收条件"
+			domainEvent.Status, domainEvent.Error = shot.Status, shot.Error
+		}
+	}
+	if e := ev.GetError(); e != "" {
+		shot.Error = e
+		if ev.GetFeedback() == nil && (ev.GetNode() == "code" || ev.GetNode() == "render") {
+			shot.RecordFeedback(domain.Feedback{Kind: domain.FeedbackSystemError, Source: domain.FeedbackSystem,
+				Attempt: int(ev.GetAttempt()), Message: e, CreatedAt: time.Now().UTC()})
+		}
+	}
+	if shot.Status == domain.StatusApproved {
+		if shot.Artifact == nil || shot.Artifact.VideoPath == "" {
+			shot.Status, shot.Error = domain.StatusAwaitingHuman, "审核通过事件缺少视频产物，请重新生成"
+			domainEvent.Status, domainEvent.Error = shot.Status, shot.Error
+		} else {
+			shot.Error = ""
+		}
+	}
+	shot.UpdatedAt = time.Now().UTC()
+	return nil
 }
 
 // syncShotsFromPayload 解析导演智能体返回的分镜表快照并同步进任务。
@@ -439,6 +443,9 @@ func syncShotsFromPayload(job *domain.Job, payloadJSON string) error {
 		if engine, err := domain.EngineForTag(shot.Tag); err == nil {
 			shot.Engine = engine
 		}
+		if job.StyleGuide["animation_style"] == "fy" {
+			shot.Engine = domain.EngineMotion
+		}
 		shot.Status = domain.StatusPending
 
 		// 保留已有进度：只补齐叙事的元数据，不重置渲染结果。
@@ -446,6 +453,7 @@ func syncShotsFromPayload(job *domain.Job, payloadJSON string) error {
 			shot.Status = old.Status
 			shot.Attempt = old.Attempt
 			shot.Artifact = old.Artifact
+			shot.Code, shot.Language = old.Code, old.Language
 			shot.Feedbacks = old.Feedbacks
 			shot.RepairTasks = old.RepairTasks
 			if len(old.NarrationRevisions) > 0 {

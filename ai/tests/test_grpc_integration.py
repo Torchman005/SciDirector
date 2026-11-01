@@ -243,6 +243,30 @@ class TestRunPipelineStreaming:
 # ===========================================================================
 
 
+@pytest.mark.parametrize('finished', [False, True])
+def test_resume_stream_restores_plan_before_any_other_event(grpc_stub, service, tmp_path, monkeypatch, finished):
+    """Checkpoint -> real gRPC -> JSON includes actual history, without generation."""
+    import json
+
+    from test_pipeline_resume import _runner
+    from test_plan_recovery import recovery_checkpoint
+
+    state = recovery_checkpoint()
+    state['finished'] = finished
+    runner, app = _runner(tmp_path, state)
+    monkeypatch.setattr(service, '_runner', runner)
+    events = list(grpc_stub.RunPipeline(pb.RunPipelineRequest(
+        job_id='job-x', raw_script='synthetic script', resume=True,
+        checkpoint_thread_id='job-x', target_duration_sec=15,
+    ), timeout=10))
+    assert events[0].node == 'plan'
+    assert events[0].shot_id == '' and events[0].status == common.SHOT_STATUS_UNSPECIFIED
+    payload = json.loads(events[0].payload_json)
+    assert len(payload['shots']) == 3 and len(payload['recovery_events']) == 9
+    assert events[-1].node == 'pipeline'
+    assert app.inputs == ([] if finished else [None])
+
+
 @pytest.mark.skipif(not HAS_FFMPEG, reason="需要 ffmpeg")
 class TestSingleShotRPCs:
     @staticmethod

@@ -1,5 +1,15 @@
 # 质量升级验证（2026-10-10）
 
+## 2026-11-01 导演检查点已有分镜但网页显示 0
+
+- 对 `job-e117c32bdabfc15a` 只读查询：REST 为 PLANNING、Shots/total 为 0；AI memory 检查点有 45 个分镜，诊断时 cursor=7、已有 6 个产物。任务事件含 `Unavailable: Too many pings`，重投后直接进入 code/render/critique，缺少已送达的完整 plan。后续 REST 复查仍为 0，未声称实际任务已经恢复。
+- 修复 gRPC 保活间隔；Python 从检查点继续或跳过已完成任务前补发任务级 plan。Go 原子恢复原来缺失的镜头及真实历史，保留已有进度和源码，fy 标签保持 motion；未知镜头不再静默丢失。恢复以原始 plan 加顺序 narration_patch 提交，继续遵守新旁白/新视频/新音轨与审核账本约束。恢复范围、JSON 格式和部署限制见 PLAN_RECOVERY.md/API.md/Agent.md。
+- 首轮工作区 Python 恢复/续跑/并行/图路由/对账/proto/gRPC/fy/旁白/健康检查回归 **145 passed / 1 skipped，202.30 秒**。包括真实本地 gRPC、真实 LangGraph 提交后中断、mock LLM 的现有渲染回归。随后发现旧 graph_routing 测试会继承本地 .env 的豆包 TTS 配置，可能访问外部配音服务，不能把该轮记为完全离线验证；其临时输出未发现旁白音频。已为图路由和续跑测试夹具明确设置 `_env_file=None`、`tts_provider=none`，防止后续继承本机配音配置。
+- 仅导出暂存版本到 `.data/plan-recovery-audit-a99a9cd6f838434e990e76086f9048f8` 后，恢复/续跑/并行/proto/非渲染 gRPC 专项 **61 passed / 11 deselected，18.48 秒**；11 项渲染相关用例在隔离专项中显式排除，未算通过。隔离版本 `go test ./internal/worker ./internal/ai ./internal/pbconv -count=1` 通过；新增 Redis 落库和未知镜头报错用例另以 verbose 确认实际通过，没有跳过。两批 Python 用例有重叠，不累计。
+- 同一隔离目录更新最终测试夹具后，以 `SCID_TTS_PROVIDER=none` 和显式 Chrome 路径重跑上述全部 Python 回归，最终 **145 passed / 1 skipped，195.82 秒**。唯一跳过为本机已安装 Manim，无法验证缺 Manim 路径；此轮未启用外部 TTS。与首轮和 61 项专项重叠，不累计为新增测试。
+- 共享合成夹具覆盖 protobuf int64 字符串、最新源码、两次审核及修复账本、带新媒体的旁白修订、失败转人工、未开始镜头保持待生成、fy 的数学/数据路由、幂等恢复、不覆盖已有新版本、错误历史拒绝且无部分写入。缺视频的通过事件仍转待人工。未改变前端计数或运行前端构建。
+- LLM 使用 mock，未以真实模型结果验收。本轮不评价 TTS 自然度；配音隔离问题和复测如上。未执行数分钟无数据的保活压力复现，也不把配置变更宣称为线上长期验证。未改既有产物、未重启在线 AI/worker；当前内存检查点未迁移，新代码尚未部署到旧进程。保留用户未提交的章节视觉审核改动并排除在本次提交之外。暂存差异格式检查通过。
+
 ## 2026-11-01 导演输出被 4096 token 截断
 
 - 用户报错明确包含 `finish_reason=length`，原导演两次解析均沿用通用 4096 token，重试没有增加容量。新增独立上限 `SCID_DIRECTOR_PLAN_MAX_TOKENS`；最终默认策略为首轮最多 4096、确认截断后第二次提高到 8192，其他解析错误不提额。通过独立错误类型识别服务商截断，保留原响应和用量，不触发额外传输重试、不接受残缺规划。

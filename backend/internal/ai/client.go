@@ -75,11 +75,12 @@ func NewClient(cfg config.AIConfig, logger *slog.Logger) (*Client, error) {
 			grpc.MaxCallRecvMsgSize(cfg.MaxRecvMsgSizeMB<<20),
 			grpc.MaxCallSendMsgSize(cfg.MaxRecvMsgSizeMB<<20),
 		),
-		// 长任务场景下保持连接活跃，避免被中间设备（如 k8s Service、LB）静默断连。
+		// Match the server's default minimum ping interval (5 minutes). A 30s
+		// client ping during a long model call can cause GOAWAY/Too many pings.
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			Time:                30 * time.Second,
+			Time:                5 * time.Minute,
 			Timeout:             10 * time.Second,
-			PermitWithoutStream: true,
+			PermitWithoutStream: false,
 		}),
 		// otelgrpc 负责把当前 span 上下文按 W3C 规范写进 gRPC metadata
 		// （`traceparent`），Python 侧据此把它的 span 挂到同一条链路上 ——

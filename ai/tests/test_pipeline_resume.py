@@ -36,8 +36,10 @@ def make_settings(tmp_path: Path, **overrides: object) -> Settings:
     在没跑数据库的机器上白白等待超时。
     """
     return Settings(
+        _env_file=None,
         env="test",
         llm_provider="mock",
+        tts_provider="none",
         postgres_dsn="",
         sandbox_work_dir=str(tmp_path / "sandbox"),
         render_width=320,

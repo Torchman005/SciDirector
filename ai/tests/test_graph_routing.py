@@ -66,8 +66,10 @@ HAS_FFMPEG = shutil.which("ffmpeg") is not None
 
 def make_settings(tmp_path: Path, **overrides: object) -> Settings:
     return Settings(
+        _env_file=None,
         env="test",
         llm_provider="mock",
+        tts_provider="none",
         # 显式置空：避免测试去尝试连 Postgres（默认 DSN 非空）。
         postgres_dsn="",
         sandbox_work_dir=str(tmp_path / "sandbox"),

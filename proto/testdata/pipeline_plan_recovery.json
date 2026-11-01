@@ -1,0 +1,200 @@
+{
+  "outline": "outline",
+  "shots": [
+    {
+      "shot_id": "job-x-s000",
+      "index": 0,
+      "narration": "original",
+      "visual_brief": "diagram",
+      "tag": 1,
+      "engine": 6,
+      "duration_sec": 5.0,
+      "keywords": []
+    },
+    {
+      "shot_id": "job-x-s001",
+      "index": 1,
+      "narration": "original",
+      "visual_brief": "diagram",
+      "tag": 2,
+      "engine": 6,
+      "duration_sec": 5.0,
+      "keywords": []
+    },
+    {
+      "shot_id": "job-x-s002",
+      "index": 2,
+      "narration": "original",
+      "visual_brief": "diagram",
+      "tag": 4,
+      "engine": 6,
+      "duration_sec": 5.0,
+      "keywords": []
+    }
+  ],
+  "recovery_events": [
+    {
+      "job_id": "job-x",
+      "shot_id": "job-x-s000",
+      "node": "render",
+      "status": 4,
+      "attempt": 1,
+      "artifact": {
+        "artifact_id": "v1",
+        "shot_id": "job-x-s000",
+        "video_path": "video-1.mp4",
+        "audio_path": "audio-1.mp3",
+        "attempt": 1,
+        "rendered_at_unix_ms": "1700000000001"
+      },
+      "ts_unix_ms": "1700000000000"
+    },
+    {
+      "job_id": "job-x",
+      "shot_id": "job-x-s000",
+      "node": "critique",
+      "status": 6,
+      "attempt": 1,
+      "feedback": {
+        "score": 0.4,
+        "suggestions": [
+          "move label"
+        ],
+        "source": 1,
+        "attempt": 1,
+        "created_at_unix_ms": "1700000000000",
+        "repair_tasks": [
+          {
+            "task_id": "r1",
+            "category": "layout",
+            "severity": "major",
+            "target": "label",
+            "evidence": "overlap",
+            "instruction": "move label",
+            "acceptance": "labels separate",
+            "status": "open"
+          }
+        ],
+        "kind": "content_review",
+        "artifact_id": "v1"
+      },
+      "ts_unix_ms": "1700000000000"
+    },
+    {
+      "job_id": "job-x",
+      "shot_id": "job-x-s000",
+      "node": "revise",
+      "status": 7,
+      "attempt": 1,
+      "ts_unix_ms": "1700000000000"
+    },
+    {
+      "job_id": "job-x",
+      "shot_id": "job-x-s000",
+      "node": "code",
+      "status": 2,
+      "attempt": 2,
+      "ts_unix_ms": "1700000000000",
+      "payload_json": "{\"patch\": {\"shot_id\": \"job-x-s000\", \"code\": \"latest source\", \"language\": \"html+js\"}}"
+    },
+    {
+      "job_id": "job-x",
+      "shot_id": "job-x-s000",
+      "node": "render",
+      "status": 4,
+      "attempt": 2,
+      "artifact": {
+        "artifact_id": "v2",
+        "shot_id": "job-x-s000",
+        "video_path": "video-2.mp4",
+        "audio_path": "audio-2.mp3",
+        "attempt": 2,
+        "rendered_at_unix_ms": "1700000000002"
+      },
+      "ts_unix_ms": "1700000000000",
+      "narration_patch": {
+        "shot_id": "job-x-s000",
+        "narration": "corrected",
+        "visual_brief": "diagram",
+        "tag": 1,
+        "engine": 6,
+        "duration_sec": 5.0,
+        "narration_revisions": [
+          {
+            "before": "original",
+            "after": "corrected",
+            "reason": "verified",
+            "task_ids": [
+              "r1"
+            ],
+            "attempt": 2
+          }
+        ]
+      }
+    },
+    {
+      "job_id": "job-x",
+      "shot_id": "job-x-s000",
+      "node": "critique",
+      "status": 5,
+      "attempt": 2,
+      "artifact": {
+        "artifact_id": "v2",
+        "shot_id": "job-x-s000",
+        "video_path": "video-2.mp4",
+        "audio_path": "audio-2.mp3",
+        "attempt": 2,
+        "rendered_at_unix_ms": "1700000000002"
+      },
+      "feedback": {
+        "passed": true,
+        "score": 0.9,
+        "source": 1,
+        "attempt": 2,
+        "created_at_unix_ms": "1700000000000",
+        "repair_tasks": [
+          {
+            "task_id": "r1",
+            "category": "layout",
+            "severity": "major",
+            "target": "label",
+            "evidence": "overlap",
+            "instruction": "move label",
+            "acceptance": "labels separate",
+            "status": "resolved",
+            "resolution_evidence": "current frame: labels separate"
+          }
+        ],
+        "kind": "content_review",
+        "artifact_id": "v2"
+      },
+      "ts_unix_ms": "1700000000000"
+    },
+    {
+      "job_id": "job-x",
+      "shot_id": "job-x-s001",
+      "node": "code",
+      "status": 2,
+      "attempt": 1,
+      "ts_unix_ms": "1700000000000",
+      "payload_json": "{\"patch\": {\"shot_id\": \"job-x-s001\", \"code\": \"second source\", \"language\": \"html+js\"}}"
+    },
+    {
+      "job_id": "job-x",
+      "shot_id": "job-x-s001",
+      "node": "render",
+      "status": 8,
+      "attempt": 1,
+      "error": "layout failed",
+      "ts_unix_ms": "1700000000000"
+    },
+    {
+      "job_id": "job-x",
+      "shot_id": "job-x-s001",
+      "node": "revise",
+      "status": 9,
+      "attempt": 1,
+      "ts_unix_ms": "1700000000000"
+    }
+  ]
+}

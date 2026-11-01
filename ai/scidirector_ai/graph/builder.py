@@ -20,6 +20,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Iterator
 
+from google.protobuf.json_format import MessageToDict
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Send
 from langgraph.config import get_stream_writer
@@ -30,6 +31,8 @@ from ..agents.director import DirectorAgent
 from ..config import Settings
 from ..llm import LLMClient
 from ..logging import get_logger
+from ..pbconv import event_to_pb, shots_payload_json
+from ..schemas import CriticFeedback, RenderArtifact, ShotSpec
 from ..sandbox.runner import SandboxRunner
 from ..tts.factory import build_tts_provider
 from .checkpoint import CheckpointHandle, build_checkpointer
@@ -362,6 +365,16 @@ class PipelineRunner:
         # 用户看到的正是"已通过审查的有时会重新生成"，而代价随失败次数成倍放大
         # （TaskTimeout 45 分钟 × MaxRetry 5 → 最坏把全部工作做 6 遍）。
         decision, note = self._resume_decision(request, config)
+        if decision in {_CONTINUE, _SKIP_FINISHED}:
+            try:
+                recovery = self._recovery_plan_event(job_id, config)
+            except Exception as exc:
+                yield _fatal_event(job_id, f"恢复分镜表失败，已停止续跑以保护已有产物：{exc}")
+                return
+            if recovery is not None:
+                # The checkpoint may have committed the plan before the old gRPC
+                # stream delivered it. Re-establish the consumer's baseline first.
+                yield recovery
         if decision == _SKIP_FINISHED:
             # 上一轮已经全部跑完：**什么都不做**才是对的。
             # 再喂一遍初始状态会清空进度；而"什么都不跑"是安全的 ——
@@ -420,6 +433,57 @@ class PipelineRunner:
 
         logger.info("流水线结束", extra={"job_id": job_id, "events_emitted": emitted})
         yield _final_event(job_id, self.llm)
+
+    def _recovery_plan_event(self, job_id: str, config: dict[str, Any]) -> dict[str, Any] | None:
+        values = self.app.get_state(config).values or {}
+        if values.get('job_id', job_id) != job_id:
+            raise ValueError('检查点不属于当前任务')
+        raw_shots = values.get('shots') or []
+        if not raw_shots:
+            return None  # Interrupted before planning; the plan node will run normally.
+        shots = [ShotSpec.model_validate(s) for s in raw_shots]
+        history = list(values.get('events') or [])
+        payload = json.loads(shots_payload_json(shots, values.get('outline') or ''))
+        # Start with the original plan so historical narration patches can be
+        # applied in order, rather than applying old artifacts to revised text.
+        start = 0
+        for i, event in enumerate(history):
+            if event.get('node') == NODE_PLAN and event.get('payload_json'):
+                original = json.loads(event['payload_json'])
+                if original.get('shots'):
+                    payload = original
+                    start = i + 1
+        history = history[start:]
+        shot_ids = {s['shot_id'] for s in payload['shots']}
+        if (not all(shot_ids) or len(shot_ids) != len(shots)
+                or shot_ids != {s.shot_id for s in shots}):
+            raise ValueError('检查点分镜 ID 与原始分镜表不一致')
+        latest_code = {e.get('shot_id'): i for i, e in enumerate(history) if e.get('node') == NODE_CODE}
+        recovery_events = []
+        for i, event in enumerate(history):
+            if event.get('shot_id') not in shot_ids or event.get('node') not in {
+                    NODE_CODE, NODE_RENDER, NODE_CRITIQUE, NODE_REVISE}:
+                continue
+            if event.get('node') == NODE_CODE and latest_code[event['shot_id']] != i:
+                continue  # Keep one full source per shot, plus actual reviews/artifacts.
+            if event.get('job_id') != job_id:
+                raise ValueError('检查点事件不属于当前任务')
+            event = dict(event)
+            # Durable checkpoints may deserialize nested models as dictionaries.
+            for key, model in [('artifact', RenderArtifact), ('feedback', CriticFeedback),
+                               ('narration_patch', ShotSpec)]:
+                if event.get(key) is not None:
+                    event[key] = model.model_validate(event[key])
+            pb_event = event_to_pb(event)
+            if pb_event.HasField('feedback'):
+                pb_event.feedback.created_at_unix_ms = pb_event.ts_unix_ms
+            recovery_events.append(MessageToDict(pb_event,
+                preserving_proto_field_name=True, use_integers_for_enums=True))
+        payload['recovery_events'] = recovery_events
+        return {**make_event({**values, 'job_id': job_id, 'shots': shots}, node=NODE_PLAN,
+                    message=f"从检查点恢复分镜表：{len(payload['shots'])} 个分镜"),
+                'shot_id': '', 'status': '',
+                'payload_json': json.dumps(payload, ensure_ascii=False, separators=(',', ':'))}
 
 
     def _recursion_limit(self, request: Any) -> int:

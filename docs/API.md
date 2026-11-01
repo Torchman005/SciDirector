@@ -1,5 +1,7 @@
 # SciDirector API 契约
 
+2026-11-01 分镜恢复：续跑或跳过已完成检查点前，Python 先发送任务级 `plan`（空 shot_id、未指定 status），`payload_json` 在原 shots/outline 上增加可选 `recovery_events`。shots 仍为 snake_case 与数字枚举；recovery_events 使用 protobuf JSON，int64 时间为字符串，Go 用 protojson 解码。历史只恢复后端原来缺失的镜头，不重复追加已有镜头的审核记录；同步异常返回错误而非丢事件。fy 标签统一 motion。现有 REST 字段不变，分镜数仍以实际 Job.Shots 派生。双方需协调更新；旧内存检查点不能靠重启迁移。详见 [PLAN_RECOVERY.md](PLAN_RECOVERY.md)。
+
 2026-10-31 fy：新增 `GET /api/v1/styles/fy` 目录、`GET /api/v1/styles/fy/:id` 全文详情，以及 Go→Python `GetFyStyles` RPC（空 id 返回 catalog_json，明确 id 返回 source_json）。新建任务仅提交 `style_guide={animation_style:"fy",fy_style_id:"X17"}`；Go 拒绝客户端 `fy_style_source`，经 Python 固定读取器解析全文、哈希、版本后保存到 Job.StyleGuide。所有主生成/单镜修订 RPC 沿原 JSON 字段传来源快照，fy 无效参数返回 INVALID_ARGUMENT，不回默认风格；库或浏览器缺失明确 503，参数缺失或不支持的图片/比例为 400。主路径统一使用 motion/fy-canvas，任务查询返回画风快照供展示。完整字段、部署与限制见 [FY_MAIN_WORKFLOW.md](FY_MAIN_WORKFLOW.md)。
 
 2026-10-20 旁白联动：`RepairTask.repair_scope=15` 为 visual / narration / both，空值兼容旧数据。只有有定位且未关闭的非 advisory 科学任务可触发旁白修订；旧 target=narration/旁白/画外音 的 logic 任务保留入口。纯画面任务不额外调用修稿模型。修订不能修改原任务验收条件或直接关闭任务，仍需实际科学/视觉复审。

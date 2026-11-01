@@ -383,9 +383,9 @@ def build_server(
             ("grpc.max_receive_message_length", 32 * 1024 * 1024),
             ("grpc.max_send_message_length", 32 * 1024 * 1024),
             # 长任务场景：保持连接活跃，避免被中间设备静默断开。
-            ("grpc.keepalive_time_ms", 30_000),
+            ("grpc.keepalive_time_ms", 300_000),
             ("grpc.keepalive_timeout_ms", 10_000),
-            ("grpc.keepalive_permit_without_calls", 1),
+            ("grpc.keepalive_permit_without_calls", 0),
         ],
     )
     pb_grpc.add_AiDirectorServiceServicer_to_server(AiDirectorServicer(svc), server)
