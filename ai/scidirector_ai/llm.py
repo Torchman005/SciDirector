@@ -48,6 +48,10 @@ class LLMParseError(LLMError):
         self.raw_response = raw_response
 
 
+class LLMTruncatedError(LLMParseError):
+    """The provider explicitly ended a structured response at its output limit."""
+
+
 @dataclass
 class Usage:
     """一次或多次调用的累计用量。"""
@@ -322,12 +326,15 @@ class LLMClient:
         task: str = Task.FREE,
         role: str = "text",
         max_parse_attempts: int = 2,
+        truncation_retry_max_tokens: int | None = None,
     ) -> BaseModel:
         """结构化对话：要求模型返回 JSON 并解析为给定 Pydantic 模型。
 
         默认解析或校验失败时**重试一次**（附带错误信息）；已有共享修复预算的
         场景生成可设 max_parse_attempts=1。失败则抛出
         ``LLMParseError``，由调用方决定降级策略（通常是转人工）。
+        显式传入 truncation_retry_max_tokens 时，仅 finish_reason=length 可在
+        原有解析重试内将输出预算提高至该上限；其他调用保持原预算。
         """
         # **按 role 选默认模型**，而不是一律用文本模型。
         # 我第一版这里写的是 `model or self.text.model`，于是
@@ -339,6 +346,7 @@ class LLMClient:
         if max_parse_attempts not in (1, 2):
             raise ValueError("max_parse_attempts 必须为 1 或 2")
         last_error: Exception | None = None
+        request_max_tokens = max_tokens
 
         while attempt < max_parse_attempts:
             attempt += 1
@@ -351,7 +359,7 @@ class LLMClient:
                     ],
                     model=model_name,
                     temperature=temperature,
-                    max_tokens=max_tokens,
+                    max_tokens=request_max_tokens,
                     json_mode=True,
                     task=task,
                     role=role,
@@ -362,8 +370,12 @@ class LLMClient:
                 if isinstance(exc, LLMParseError) and exc.raw_response:
                     raw = exc.raw_response
                 last_error = exc
+                if (isinstance(exc, LLMTruncatedError) and truncation_retry_max_tokens is not None
+                        and attempt < max_parse_attempts):
+                    current = request_max_tokens or self.settings.llm_max_tokens
+                    request_max_tokens = max(current, truncation_retry_max_tokens)
                 logger.warning(
-                    "模型输出解析失败，准备重试",
+                    "模型输出解析失败",
                     extra={"attempt": attempt, "schema": schema.__name__, "error": str(exc)[:400]},
                 )
                 # 把失败原因回灌给模型，比单纯重试成功率更高（模型能看到自己错在哪）。
@@ -372,7 +384,8 @@ class LLMClient:
                     f"【上一次输出无法解析，错误信息如下，请严格按要求输出 JSON】\n{exc}"
                 )
 
-        raise LLMParseError(f"模型输出解析/校验失败（本次调用已尝试 {attempt} 次）：{last_error}", raw_response=raw)
+        error_type = LLMTruncatedError if isinstance(last_error, LLMTruncatedError) else LLMParseError
+        raise error_type(f"模型输出解析/校验失败（本次调用已尝试 {attempt} 次）：{last_error}", raw_response=raw)
 
     def vision_json(
         self,
@@ -498,9 +511,11 @@ class LLMClient:
                 if json_mode and finish_reason == "length":
                     # This is a response defect, not a transport error. The caller's
                     # existing parse/scene repair budget handles it once with feedback.
-                    raise LLMParseError(
+                    hint = ('请保留完整旁白与分镜顺序，精简重复描述，从头输出完整 JSON；不要输出代码或关键帧'
+                            if task == Task.PLAN else '请省略默认字段、精简重复描述并输出完整 JSON')
+                    raise LLMTruncatedError(
                         f"模型输出被截断（finish_reason=length，max_tokens={body['max_tokens']}，"
-                        f"返回 {len(content)} 字符）；请省略默认字段、减少冗余关键帧并输出完整 JSON",
+                        f"返回 {len(content)} 字符）；{hint}",
                         raw_response=content,
                     )
                 if not content:

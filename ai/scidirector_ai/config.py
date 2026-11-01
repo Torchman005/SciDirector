@@ -169,6 +169,8 @@ class Settings(BaseSettings):
 
     llm_temperature: float = Field(default=0.2, ge=0.0, le=2.0)
     llm_max_tokens: int = Field(default=4096, ge=256, le=128_000)
+    #: 导演规划独立输出上限：首轮最多 4096，明确截断时在原两次调用内提高至此上限。
+    director_plan_max_tokens: int = Field(default=8192, ge=256, le=128_000)
     llm_timeout_sec: int = Field(default=120, ge=5, le=1800)
     llm_max_retries: int = Field(default=3, ge=0, le=10)
 
@@ -463,6 +465,7 @@ class Settings(BaseSettings):
             "manim_quality": self.sandbox_manim_quality,
             "critic_score_threshold": self.critic_score_threshold,
             "coder_scene_max_tokens": self.coder_scene_max_tokens,
+            "director_plan_max_tokens": self.director_plan_max_tokens,
         }
 
 

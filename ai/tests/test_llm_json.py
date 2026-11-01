@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 from scidirector_ai.config import Settings
-from scidirector_ai.llm import LLMClient, LLMParseError, Task, extract_json
+from scidirector_ai.llm import LLMClient, LLMParseError, LLMTruncatedError, Task, extract_json
 from scidirector_ai.scene import SceneSpec
 
 
@@ -45,11 +45,12 @@ def test_truncated_completion_uses_parse_budget_and_keeps_usage(monkeypatch: pyt
     client._text_client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
     with pytest.raises(LLMParseError) as error:
         client.chat_json("schema", "scene", SceneSpec, task=Task.SCENE,
-                         max_tokens=8192, max_parse_attempts=1)
+                         max_tokens=8192, max_parse_attempts=1, truncation_retry_max_tokens=16384)
     assert len(requests) == 1  # no hidden transport retries for a completed but truncated response
     assert "finish_reason=length" in str(error.value)
     assert "max_tokens=8192" in str(error.value)
     assert error.value.raw_response == content
+    assert isinstance(error.value, LLMTruncatedError)
     assert client.usage.calls == 1 and client.usage.completion_tokens == 8192
 
 
@@ -73,3 +74,4 @@ def test_length_response_can_recover_in_existing_parse_retry() -> None:
     assert parsed.elements[0].text == "主题" and len(requests) == 2
     assert "finish_reason=length" in requests[1]["messages"][1]["content"]
     assert client.usage.calls == 2
+    assert [r['max_tokens'] for r in requests] == [settings.llm_max_tokens] * 2

@@ -46,6 +46,9 @@ _SENTENCE_END = "。！？；!?;\n"
 # 更松会让「90 秒脚本生成出 70 秒视频」这种明显偏差被放过。
 DURATION_TOLERANCE = 0.10
 
+# 多镜头规划比单条审查意见长；首轮不超过此预算，明确截断时再在原重试内扩容。
+_INITIAL_PLAN_MAX_TOKENS = 4096
+
 
 class _RawShot(BaseModel):
     """模型直出的分镜结构。
@@ -119,6 +122,9 @@ class DirectorAgent(Agent):
                 # 显式声明任务类型：mock 模式据此返回确定的结构，
                 # 而不是从提示词里嗅探关键词（那曾导致返回错误结构并被静默解析）。
                 task=Task.PLAN,
+                max_tokens=min(_INITIAL_PLAN_MAX_TOKENS, settings.director_plan_max_tokens),
+                truncation_retry_max_tokens=settings.director_plan_max_tokens,
+                max_parse_attempts=2,
             )
         except (LLMParseError, LLMError) as exc:
             # 规划失败是**致命**的：没有分镜表，后面什么都做不了。
