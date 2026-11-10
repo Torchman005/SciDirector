@@ -460,6 +460,9 @@ func (s *Server) HandleRejectShot(c *gin.Context) {
 		if !canRequestRepair(shot.Status) {
 			return errRepairBusy
 		}
+		if err := checkFyRevisionBase(req.Comment, shot.Code); err != nil {
+			return err
+		}
 		next, err := domain.Transition(shot.Status, domain.StatusRetrying)
 		if err != nil {
 			return err

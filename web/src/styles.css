@@ -173,3 +173,57 @@ textarea { resize: none; }
 @media (max-width: 600px) {
   .repair-comparison { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* --- fy object workspace: original artwork stays inside the offline frame. --- */
+.fy-editor { display: flex; flex-direction: column; gap: 12px; }
+.fy-editor-modal { max-width: calc(100vw - 24px); top: 24px; padding-bottom: 24px; }
+.fy-editor-modal .ant-modal-body { max-height: calc(100dvh - 190px); overflow: auto; scrollbar-gutter: stable; }
+.fy-editor-layout { display: grid; grid-template-columns: 180px minmax(0, 1fr) 214px; min-width: 0; }
+.fy-editor-list { padding-right: 12px; border-right: 1px solid #1e2740; min-width: 0; }
+.fy-item-list { max-height: 410px; overflow: auto; margin: 12px 0; }
+.fy-item { display: flex; flex-direction: column; gap: 4px; width: 100%; min-height: 58px; padding: 9px 10px; margin: 0 0 4px; border: 1px solid transparent; border-radius: 4px; background: transparent; color: inherit; text-align: left; cursor: pointer; overflow-wrap: anywhere; font: inherit; }
+.fy-item small { color: #8a94a6; font-size: 11px; }
+.fy-item:hover { background: #0d1428; }
+.fy-item.is-selected { border-color: #4f8cff; background: #0d1428; }
+.fy-editor-canvas { min-width: 0; padding: 0 14px; }
+.fy-preview-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.fy-preview-stage { position: relative; width: 100%; aspect-ratio: 16 / 9; background: #000; overflow: hidden; }
+.fy-preview-stage iframe { width: 100%; height: 100%; display: block; border: 0; pointer-events: none; }
+.fy-preview-loading { position: absolute; inset: 0; display: grid; place-items: center; background: #0008; }
+.fy-preview-wrap { display: flex; flex-direction: column; gap: 8px; }
+.fy-object-bound { position: absolute; margin: 0; padding: 0; background: transparent; border: 1px solid transparent; border-radius: 0; cursor: grab; touch-action: none; }
+.fy-object-bound:hover { border-color: #4f8cff; }
+.fy-object-bound.is-selected { border: 2px solid #4f8cff; }
+.fy-object-bound span { position: absolute; bottom: 100%; left: -2px; max-width: min(200px, 100%); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 5px; background: #1659bf; color: #fff; font-size: 11px; opacity: 0; pointer-events: none; }
+.fy-object-bound.is-selected span { opacity: 1; }
+.fy-playback { display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; gap: 10px; align-items: center; margin: 8px 0 12px; }
+.fy-playback output { font-variant-numeric: tabular-nums; font-size: 11px; white-space: nowrap; color: #8a94a6; min-width: 91px; text-align: right; }
+.fy-editor-properties { display: flex; flex-direction: column; gap: 12px; min-width: 0; padding-left: 12px; border-left: 1px solid #1e2740; }
+.fy-editor-properties > * { min-width: 0; overflow-wrap: anywhere; }
+.fy-id, .fy-version { font-family: ui-monospace, Consolas, monospace; font-size: 11px; }
+.fy-numeric-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.fy-numeric-grid label, .fy-field { display: flex; flex-direction: column; gap: 6px; font-size: 12px; min-width: 0; }
+.fy-editor-properties .ant-input-number { width: 100%; }
+.fy-toggle { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 12px; }
+.fy-swatch { display: inline-block; width: 14px; height: 14px; border: 1px solid #8a94a6; border-radius: 2px; vertical-align: middle; }
+.fy-editor-footer { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; text-align: left; }
+.fy-diff { margin-top: 14px; }
+.fy-diff .ant-table-wrapper { margin-top: 8px; }
+.fy-diff td { overflow-wrap: anywhere; }
+.fy-issues { padding-left: 16px; margin: 6px 0 0; max-height: 110px; overflow: auto; overflow-wrap: anywhere; }
+.fy-issue-link { border: 0; padding: 0; font: inherit; color: inherit; text-decoration: underline; background: transparent; text-align: left; cursor: pointer; overflow-wrap: anywhere; }
+@media (max-width: 1050px) {
+  .fy-editor-layout { grid-template-columns: 155px minmax(0, 1fr); }
+  .fy-editor-properties { grid-column: 1 / -1; border-left: 0; border-top: 1px solid #1e2740; margin-top: 16px; padding: 16px 0 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 640px) {
+  .fy-editor-modal { top: 12px; }
+  .fy-editor-modal .ant-modal-content { padding: 16px 12px; }
+  .fy-editor-layout { grid-template-columns: minmax(0, 1fr); }
+  .fy-editor-list { padding: 0; border: 0; margin-bottom: 12px; }
+  .fy-item-list { display: flex; gap: 6px; margin: 8px 0; max-height: 96px; }
+  .fy-item { flex: 0 0 132px; margin: 0; }
+  .fy-editor-canvas { padding: 0; }
+  .fy-preview-toolbar { gap: 4px; }
+  .fy-editor-properties { grid-template-columns: minmax(0, 1fr); }
+}

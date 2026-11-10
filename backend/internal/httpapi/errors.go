@@ -113,6 +113,10 @@ func abortWith(c *gin.Context, status int, code, msg string, cause error) {
 // 集中映射的好处：不会出现「同一个错误在不同 handler 里返回不同状态码」。
 func mapError(c *gin.Context, err error) {
 	switch {
+	case errors.Is(err, errFyRevisionInvalid):
+		abortWith(c, http.StatusBadRequest, ErrCodeBadRequest, errFyRevisionInvalid.Error(), nil)
+	case errors.Is(err, errFyRevisionConflict):
+		abortWith(c, http.StatusConflict, ErrCodeConflict, errFyRevisionConflict.Error(), nil)
 	case errors.Is(err, errRepairBusy):
 		abortWith(c, http.StatusConflict, ErrCodeConflict, errRepairBusy.Error(), nil)
 	case errors.Is(err, domain.ErrTenantMismatch):

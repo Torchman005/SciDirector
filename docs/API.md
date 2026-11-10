@@ -490,6 +490,13 @@ JSON 严格遵循内部 `SceneRevision`（完整元素 upsert、id remove，合�
 非法 JSON、不存在的删除对象、无变化或预检失败返回不可重试的修订错误，保留原片；
 复审发现的问题仍走有界自动修复。普通 comment 行为不变。
 
+fy 对象工作台复用相同通道，协议为 `SCID_FY_REVISION_V1:` 加 `FyRevision` JSON，必须有当前
+`expect_revision`。支持已有对象位置/尺寸/层级/运动/叠放组与独立关系的精确编辑，不改变画笔和旁白。
+完整请求仍限 2000 字符。REST 与 WS 在任务更新锁内做版本提前检查：格式错误 400，
+版本过期/不支持的旧源码 409，均不消耗尝试次数或入队；Python 继续校验完整内容哈希与补丁，
+worker 最终写回继续检查竞争编辑。此路径只有一次受控修改，仍渲染、复审，不扩展为自动整镜重写。
+见 [FY_OBJECT_EDITOR.md](FY_OBJECT_EDITOR.md) 与 [FY_OBJECT_EDITS.md](FY_OBJECT_EDITS.md)。
+
 #### `POST /api/v1/jobs/:jobID/shots/:shotID/approve`
 
 人工放行。用于镜头处于 `AWAITING_HUMAN`，或旧任务仍为 `FAILED` / `REJECTED` 时

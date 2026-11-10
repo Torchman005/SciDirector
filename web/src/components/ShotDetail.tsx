@@ -17,6 +17,7 @@ import { SHOT_BACKGROUND_OPTIONS, backgroundLabel, shotStatus } from '../display
 import type { Shot } from '../types'
 import { ReviewHistory } from './ReviewHistory'
 import { ShotMedia } from './ShotMedia'
+import { FyObjectEditor } from './FyObjectEditor'
 import { needsShotDecision, useShotActions } from './useShotActions'
 
 const { Text, Paragraph } = Typography
@@ -41,7 +42,7 @@ interface Props {
 type Editor = 'none' | 'reject' | 'patch'
 
 export function ShotDetail({ jobId, shot, onChanged, fyStyleId }: Props) {
-  const { approve, reject, patch, busy, canApprove, canRepair } = useShotActions(jobId, shot, onChanged)
+  const { approve, reject, reviseObjects, patch, busy, canApprove, canRepair } = useShotActions(jobId, shot, onChanged)
   const [editor, setEditor] = useState<Editor>('none')
   const [comment, setComment] = useState('')
   const [narration, setNarration] = useState(shot.narration)
@@ -154,6 +155,8 @@ export function ShotDetail({ jobId, shot, onChanged, fyStyleId }: Props) {
       ]} />
 
       <Space wrap>
+        {(fyStyleId || shot.code?.includes('scid-fy-data')) && <FyObjectEditor jobId={jobId} shot={shot} busy={busy}
+          onChanged={onChanged} onSubmit={reviseObjects} />}
         <Button type="primary" loading={busy} disabled={!canRepair} onClick={() => void reject()}>
           自动诊断修复
         </Button>

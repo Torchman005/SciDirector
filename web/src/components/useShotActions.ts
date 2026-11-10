@@ -64,6 +64,11 @@ export function useShotActions(jobId: string, shot: Shot, onChanged: () => void)
         await api.reject(jobId, shot.shot_id, { comment: comment.trim() })
         return '已开始自动诊断、修复与复审，保留当前产物直到新版本生成。'
       }),
+    reviseObjects: (comment: string) =>
+      run(async () => {
+        await api.reject(jobId, shot.shot_id, { comment })
+        return '对象修改已提交，开始渲染与复审；新版本就绪前保留原视频。'
+      }),
     patch: (narration: string, visualBrief: string, redo: boolean, comment: string, backgroundStyle?: string) =>
       run(async () => {
         const resp = await api.patchShot(jobId, shot.shot_id, {

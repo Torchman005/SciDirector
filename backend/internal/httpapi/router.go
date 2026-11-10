@@ -270,6 +270,9 @@ func (s *Server) applyHumanFeedback(ctx context.Context, jobID, tenant, shotID, 
 		if !canRequestRepair(shot.Status) {
 			return errRepairBusy
 		}
+		if err := checkFyRevisionBase(comment, shot.Code); err != nil {
+			return err
+		}
 		next, err := domain.Transition(shot.Status, domain.StatusRetrying)
 		if err != nil {
 			return err
