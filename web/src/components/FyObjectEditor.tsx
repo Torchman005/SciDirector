@@ -127,7 +127,7 @@ function FyEditorSession({ base, shot, jobId, busy, onSubmit, onChanged, onClose
     finally { pending.current = false; setSaving(false) }
   }
 
-  const objectOptions = draft.objects.map(o => ({ value: o.id, label: o.name || o.id }))
+  const endpointOptions = draft.objects.filter(o => o.role !== 'backdrop').map(o => ({ value: o.id, label: o.name || o.id }))
   const portOptions = FY_PORTS.map(p => ({ value: p, label: PORT_LABELS[p] }))
   return <Modal open title={<Space wrap><span>镜头对象工作台</span><Tag>本地草稿</Tag><Text type="secondary" className="fy-version">{snapshot.styleId || 'fy'} · {snapshot.revision.slice(0, 10)}</Text></Space>}
     width={1360} className="fy-editor-modal" onCancel={close} maskClosable={false} closable={!saving && !busy}
@@ -158,12 +158,13 @@ function FyEditorSession({ base, shot, jobId, busy, onSubmit, onChanged, onClose
             </button>)}
             {kind === 'relations' && !draft.relations.length && <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无连线" />}
           </div>
-          {kind === 'relations' && <Button block icon={<PlusOutlined />} disabled={!editable || draft.objects.length < 2 || draft.relations.length >= 48}
+          {kind === 'relations' && <Button block icon={<PlusOutlined />} disabled={!editable || endpointOptions.length < 2 || draft.relations.length >= 48}
             onClick={() => {
               let i = 1
               const ids = new Set([...draft.objects, ...draft.relations].map(o => o.id))
               while (ids.has(`link-${i}`)) i++
-              const r: FyRelation = { id: `link-${i}`, source: selectedObject, target: draft.objects.find(o => o.id !== selectedObject)!.id,
+              const source = endpointOptions.some(o => o.value === selectedObject) ? selectedObject : endpointOptions[0].value
+              const r: FyRelation = { id: `link-${i}`, source, target: endpointOptions.find(o => o.value !== source)!.value,
                 source_port: 'auto', target_port: 'auto', color: 'ink', stroke_width: 3, arrow: true, flow: false }
               commit({ ...draft, relations: [...draft.relations, r] }); setSelectedRelation(r.id)
             }}>添加连线</Button>}
@@ -220,14 +221,21 @@ function FyEditorSession({ base, shot, jobId, busy, onSubmit, onChanged, onClose
               value={object.layer} onChange={value => value !== null && updateObject({ layer: value })} /></label>
             <label className="fy-field"><span>有意叠放组</span><Input aria-label="有意叠放组" disabled={!editable} maxLength={64}
               value={object.overlap_group} onChange={event => updateObject({ overlap_group: event.target.value })} /></label>
+            <label className="fy-field"><span>绘制角色</span>
+              <Tooltip title={!snapshot.supportsBackdrop ? '旧镜头需重新生成后才能调整背景角色' : undefined}>
+                <Select aria-label="绘制角色" value={object.role || 'content'} disabled={!editable || !snapshot.supportsBackdrop}
+                  options={[{ value: 'content', label: '内容' }, { value: 'backdrop', label: '背景', disabled: draft.relations.some(r => r.source === object.id || r.target === object.id) }]}
+                  onChange={role => updateObject({ role })} />
+              </Tooltip>
+            </label>
             <Text type="secondary">运动关键帧：{object.keyframes.length}</Text>
           </> : relation ? <>
             <label className="fy-field"><span>起点对象</span><Select aria-label="起点对象" value={relation.source} disabled={!editable}
-              options={objectOptions.map(o => ({ ...o, disabled: o.value === relation.target }))} onChange={source => updateRelation({ source })} /></label>
+              options={endpointOptions.map(o => ({ ...o, disabled: o.value === relation.target }))} onChange={source => updateRelation({ source })} /></label>
             <label className="fy-field"><span>起点端口</span><Select aria-label="起点端口" value={relation.source_port} disabled={!editable}
               options={portOptions} onChange={source_port => updateRelation({ source_port })} /></label>
             <label className="fy-field"><span>终点对象</span><Select aria-label="终点对象" value={relation.target} disabled={!editable}
-              options={objectOptions.map(o => ({ ...o, disabled: o.value === relation.source }))} onChange={target => updateRelation({ target })} /></label>
+              options={endpointOptions.map(o => ({ ...o, disabled: o.value === relation.source }))} onChange={target => updateRelation({ target })} /></label>
             <label className="fy-field"><span>终点端口</span><Select aria-label="终点端口" value={relation.target_port} disabled={!editable}
               options={portOptions} onChange={target_port => updateRelation({ target_port })} /></label>
             <label className="fy-field"><span>颜色</span><Select aria-label="连线颜色" value={relation.color} disabled={!editable}

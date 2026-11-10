@@ -58,6 +58,30 @@ describe('fy object editing contract', () => {
     draft.relations.push({ ...doc.relations[0], id: 'new-link' })
     expect(buildFyRevision(base, draft).patch.upsert_relations).toEqual([draft.relations[1]])
   })
+  it('preserves explicit backdrop roles and emits role-only revisions', () => {
+    const data = { ...payload, object_features: ['backdrop-v1', 'text-block-v1'],
+      object_document: { ...cloneDocument(doc), relations: [] } }
+    const snapshot = fySnapshotFromData(data)
+    const draft = cloneDocument(snapshot.document)
+    draft.objects[0].role = 'backdrop'
+    expect(validateFyDocument(draft).objects[0].role).toBe('backdrop')
+    expect(buildFyRevision(snapshot, draft).patch.update_objects).toEqual([{ id: 'left', role: 'backdrop' }])
+    expect(fyChanges(snapshot.document, draft)).toEqual([{ id: 'left', field: '绘制角色', before: '内容', after: '背景' }])
+  })
+  it('does not silently enable backdrop edits on old inline runtimes', () => {
+    const snapshot = fySnapshotFromData({ ...payload, object_document: { ...cloneDocument(doc), relations: [] } })
+    const draft = cloneDocument(snapshot.document)
+    draft.objects[0].role = 'backdrop'
+    expect(snapshot.supportsBackdrop).toBe(false)
+    expect(() => buildFyRevision(snapshot, draft)).toThrow('旧镜头运行时不支持')
+    expect(() => fySnapshotFromData({ ...payload, object_document: draft })).toThrow('运行时不支持')
+  })
+  it('rejects backdrop endpoints rather than dropping their relations', () => {
+    const draft = cloneDocument(doc)
+    draft.objects[0].role = 'backdrop'
+    expect(() => validateFyDocument(draft)).toThrow('端点不能是背景对象')
+    expect(draft.relations).toHaveLength(1)
+  })
   it('cannot add/remove painter objects or silently rename them', () => {
     const draft = cloneDocument(doc)
     draft.objects[0].name = 'renamed'

@@ -31,6 +31,7 @@ class FyObject(SceneModel):
     box: Box
     layer: int = Field(default=0, ge=-100, le=100)
     overlap_group: str = Field(default='', max_length=64)
+    role: Literal['content', 'backdrop'] = 'content'
     keyframes: list[FyFrame] = Field(default_factory=list, max_length=32)
 
     @model_validator(mode='after')
@@ -63,12 +64,14 @@ class FyDocument(SceneModel):
         ids = [o.id for o in self.objects] + [r.id for r in self.relations]
         if len(ids) != len(set(ids)):
             raise ValueError('对象和关系的 id 必须全局唯一')
-        objects = {o.id for o in self.objects}
+        objects = {o.id: o for o in self.objects}
         for relation in self.relations:
             if relation.source not in objects or relation.target not in objects:
                 raise ValueError(f'关系 {relation.id} 引用了不存在的对象')
             if relation.source == relation.target:
                 raise ValueError(f'关系 {relation.id} 不能连接同一个对象')
+            if any(objects[key].role == 'backdrop' for key in (relation.source, relation.target)):
+                raise ValueError(f'关系 {relation.id} 的端点必须是 content，不能连接背景对象 backdrop')
         return self
 
 
@@ -77,6 +80,7 @@ class FyObjectPatch(SceneModel):
     box: Box | None = None
     layer: int | None = Field(default=None, ge=-100, le=100)
     overlap_group: str | None = Field(default=None, max_length=64)
+    role: Literal['content', 'backdrop'] | None = None
     keyframes: list[FyFrame] | None = Field(default=None, max_length=32)
 
     @model_validator(mode='after')

@@ -27,6 +27,13 @@ window.SCIDFyObjects=Object.freeze({create({D,ctx,C,W,H,fail,setOwner}) {
   function check() {
     for(const o of doc?.objects||[])if(!painters.has(o.id))fail(`对象未注册：${o.id}`);
   }
+  function paint(s,t,api) {
+    if(s.opacity<=0)return;
+    ctx.save();ctx.globalAlpha=s.opacity;ctx.translate(s.rect.left,s.rect.top);ctx.scale(s.scale,s.scale);
+    ctx.beginPath();ctx.rect(0,0,s.w,s.h);ctx.clip();ctx.beginPath();setOwner(s.id);
+    try{painters.get(s.id)({...api,ctx,t,local:t,w:s.w,h:s.h});}
+    finally{setOwner('');ctx.restore();}
+  }
   function render(t,api,textBoxes) {
     states=[];edges=[];
     if(!doc)return;
@@ -37,7 +44,11 @@ window.SCIDFyObjects=Object.freeze({create({D,ctx,C,W,H,fail,setOwner}) {
         rect:{left:cx-w*m.scale/2,top:cy-h*m.scale/2,right:cx+w*m.scale/2,bottom:cy+h*m.scale/2}};
     });
     const byId=new Map(states.map(s=>[s.id,s]));
-    const obstacles=states.filter(visible).map(s=>({id:s.id,rect:s.rect}));
+    const ordered=[...states].sort((a,b)=>a.object.layer-b.object.layer);
+    // Explicit backdrops are painted below connectors, not silently ignored by
+    // overlap_group. Their measured text remains a real routing obstacle.
+    for(const s of ordered)if(s.object.role==='backdrop')paint(s,t,api);
+    const obstacles=states.filter(s=>visible(s)&&s.object.role!=='backdrop').map(s=>({id:s.id,rect:s.rect}));
     for(const [i,b] of textBoxes.entries())obstacles.push({id:'$text'+i,rect:{left:b.x,top:b.y,right:b.right,bottom:b.bottom}});
     const a=D.presenter_area;
     if(a)obstacles.push({id:'$presenter',rect:{left:a.x*W,top:a.y*H,right:(a.x+a.width)*W,bottom:(a.y+a.height)*H}});
@@ -70,13 +81,7 @@ window.SCIDFyObjects=Object.freeze({create({D,ctx,C,W,H,fail,setOwner}) {
       }
       ctx.restore();
     }
-    for(const s of [...states].sort((a,b)=>a.object.layer-b.object.layer)){
-      if(s.opacity<=0)continue;
-      ctx.save();ctx.globalAlpha=s.opacity;ctx.translate(s.rect.left,s.rect.top);ctx.scale(s.scale,s.scale);
-      ctx.beginPath();ctx.rect(0,0,s.w,s.h);ctx.clip();ctx.beginPath();setOwner(s.id);
-      try{painters.get(s.id)({...api,ctx,t,local:t,w:s.w,h:s.h});}
-      finally{setOwner('');ctx.restore();}
-    }
+    for(const s of ordered)if(s.object.role!=='backdrop')paint(s,t,api);
   }
   function layout(textBoxes) {
     const issues=[],byId=new Map(states.map(s=>[s.id,s]));
@@ -113,7 +118,7 @@ window.SCIDFyObjects=Object.freeze({create({D,ctx,C,W,H,fail,setOwner}) {
         const r=byId.get(id).rect,cx=(r.left+r.right)/2,cy=(r.top+r.bottom)/2;
         const ports={left:[r.left,cy],right:[r.right,cy],top:[cx,r.top],bottom:[cx,r.bottom]};
         const candidates=port==='auto'?Object.values(ports):[ports[port]];
-        for(const other of states.filter(visible)){
+        for(const other of states.filter(s=>visible(s)&&s.object.role!=='backdrop')){
           if(other.id===edge.source||other.id===edge.target)continue;
           const b=other.rect;
           if(candidates.every(([x,y])=>x>b.left&&x<b.right&&y>b.top&&y<b.bottom))

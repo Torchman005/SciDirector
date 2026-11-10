@@ -70,6 +70,73 @@ function label(text, x, y, {size = 36, color = C.ink, weight = 600, align = 'cen
   ctx.fillStyle = color; ctx.textAlign = align; ctx.textBaseline = 'middle';
   ctx.fillText(String(text), x, y); ctx.restore();
 }
+const wordSegments = new Intl.Segmenter('zh', {granularity:'word'});
+const glyphSegments = new Intl.Segmenter('zh', {granularity:'grapheme'});
+function textBlock(text, x, y, width, height, {size=36, color=C.ink, weight=600,
+  padding=8, lineHeight=1.2, align='center', vertical='middle'} = {}) {
+  const value=String(text), tr=ctx.getTransform();
+  const scale=Math.min(Math.hypot(tr.a,tr.b),Math.hypot(tr.c,tr.d));
+  if(![x,y,width,height,size,padding,lineHeight,scale].every(Number.isFinite)||
+     width<=0||height<=0||size<=0||size>4096||padding<0||lineHeight<1||scale<=0||
+     !['left','center','right'].includes(align)||!['top','middle','bottom'].includes(vertical))
+    fail('textBlock 参数无效：须提供有限的正尺寸、有效对齐与非负 padding');
+  // Canvas normalizes fractional font sizes when serializing ctx.font. Round
+  // upwards so this normalization cannot put measured type below the floor.
+  const minSize=Math.ceil((D.min_font||25)/scale*100)/100+.01, start=Math.max(size,minSize);
+  const innerWidth=width-2*padding, innerHeight=height-2*padding;
+  const noFit=()=>fail(`[场景 ${activeId}][对象 ${activeObject||'背景'}] textBlock 放不下完整文字“${value.slice(0,40)}”：`+
+    `区域 ${width.toFixed(1)}×${height.toFixed(1)}px，当前总缩放 ${scale.toFixed(3)}，实际字号至少 ${D.min_font||25}px；扩大文字区或调整构图/缩放，不能截字或压字`);
+  if(innerWidth<=0||innerHeight<=0||minSize>4096)noFit();
+  ctx.save();
+  try {
+    ctx.textAlign='left';ctx.textBaseline='alphabetic';ctx.fillStyle=color;
+    const measure=s=>{
+      const m=ctx.measureText(s), left=Math.min(0,-m.actualBoundingBoxLeft);
+      const right=Math.max(m.width,m.actualBoundingBoxRight);
+      return {left,width:right-left,ascent:Math.max(0,m.actualBoundingBoxAscent),descent:Math.max(0,m.actualBoundingBoxDescent)};
+    };
+    // Try the preferred size, then bounded steps down to the screen-pixel floor.
+    // All trials finish before drawing; an impossible fit never paints half a sentence.
+    const steps=Math.min(128,Math.ceil(start-minSize));
+    for(let attempt=0;attempt<=steps;attempt++){
+      const fontSize=steps?start-(start-minSize)*attempt/steps:start;
+      ctx.font=`${weight} ${fontSize}px ${D.font}`;
+      const lines=[];
+      let impossible=false;
+      for(const paragraph of value.split(/\r?\n/)){
+        let current='';
+        for(const {segment:token} of wordSegments.segment(paragraph)){
+          if(measure(current+token).width<=innerWidth){current+=token;continue;}
+          if(current){lines.push(current);current='';}
+          if(measure(token).width<=innerWidth){current=token;continue;}
+          for(const {segment:glyph} of glyphSegments.segment(token)){
+            if(measure(glyph).width>innerWidth){impossible=true;break;}
+            if(current&&measure(current+glyph).width>innerWidth){lines.push(current);current='';}
+            current+=glyph;
+          }
+          if(impossible)break;
+        }
+        lines.push(current);
+        if(impossible)break;
+      }
+      if(impossible)continue;
+      const measurements=lines.map(measure);
+      const ascent=Math.max(0,...measurements.map(m=>m.ascent));
+      const descent=Math.max(0,...measurements.map(m=>m.descent));
+      const step=Math.max(fontSize*lineHeight,ascent+descent);
+      const blockHeight=ascent+descent+(lines.length-1)*step;
+      if(blockHeight>innerHeight)continue;
+      const top=y+padding+(vertical==='top'?0:vertical==='bottom'?innerHeight-blockHeight:(innerHeight-blockHeight)/2);
+      lines.forEach((line,i)=>{
+        const m=measurements[i];
+        const offset=align==='left'?0:align==='right'?innerWidth-m.width:(innerWidth-m.width)/2;
+        ctx.fillText(line,x+padding+offset-m.left,top+ascent+i*step);
+      });
+      return {text:value,lines,size:fontSize,effectiveSize:fontSize*scale,lineHeight:step};
+    }
+    noFit();
+  } finally {ctx.restore();}
+}
 function box(x, y, w, h, {fill = C.card, stroke = C.line, radius = 18, lineWidth = 2} = {}) {
   ctx.beginPath(); ctx.roundRect(x, y, w, h, radius);
   ctx.fillStyle = fill; ctx.fill(); ctx.lineWidth = lineWidth; ctx.strokeStyle = stroke; ctx.stroke();
@@ -78,7 +145,7 @@ function scene(id, draw) {
   if (!D.first_ids.includes(id) || scenes.some(s => s.id === id) || typeof draw !== 'function') fail(`场景注册无效：${id}`);
   scenes.push({id, draw});
 }
-const api = {M, C, V, W, H, DUR, T, TE, K, KE, label, box, scene, theme, object};
+const api = {M, C, V, W, H, DUR, T, TE, K, KE, label, textBlock, box, scene, theme, object};
 window.FY = Object.freeze(api);
 window.__fyObjects = () => objects.snapshot();
 window.__fyLayoutDetails = () => {

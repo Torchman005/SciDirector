@@ -83,6 +83,7 @@ def compile_fy(codes: list[tuple[str, str]], timing: dict, *, title: str = '', s
             raise ValueError('fy 对象文档仅支持显式 palette、无章节 chrome 的单镜 shot')
         document = FyDocument.model_validate(document)
         payload.update(object_document=document.model_dump(),
+                       object_features=['backdrop-v1', 'text-block-v1'],
                        style_source=style_summary(style) if style else None,
                        object_runtime_sha256=hashlib.sha256(runtime.encode('utf-8')).hexdigest())
         revision = revision_hash(payload, codes[0][1])
@@ -100,7 +101,7 @@ def compile_fy(codes: list[tuple[str, str]], timing: dict, *, title: str = '', s
         code = re.sub(r'\bexport\s+', '', code)
         scripts.append(f'<script>window.{global_name}=(()=>{{{_safe_script(code)}\nreturn {{{",".join(names)}}};}})();</script>')
     scripts.append('<script>' + _safe_script(runtime) + '</script>')
-    exports = EXPORTS + (', object' if document is not None else '')
+    exports = EXPORTS + (', object, textBlock' if document is not None else '')
     for key, code in codes:
         scripts.append('<script>window.__sceneTag=' + json.dumps(key) + ';</script>')
         scripts.append('<script>(()=>{const {' + exports + '}=FY;\n' + _safe_script(code) + '\n})();</script>')

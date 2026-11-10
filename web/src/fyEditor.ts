@@ -8,7 +8,7 @@ export type FyPort = typeof FY_PORTS[number]
 export type FyColor = typeof FY_COLORS[number]
 export interface FyBox { x: number; y: number; width: number; height: number }
 export interface FyFrame { time: number; dx: number; dy: number; opacity: number; scale: number; easing: 'linear' | 'smooth' }
-export interface FyObject { id: string; name: string; box: FyBox; layer: number; overlap_group: string; keyframes: FyFrame[] }
+export interface FyObject { id: string; name: string; box: FyBox; layer: number; overlap_group: string; role?: 'content' | 'backdrop'; keyframes: FyFrame[] }
 export interface FyRelation {
   id: string; source: string; target: string; source_port: FyPort; target_port: FyPort
   color: FyColor; stroke_width: number; arrow: boolean; flow: boolean
@@ -17,6 +17,7 @@ export interface FyDocument { version: 1; objects: FyObject[]; relations: FyRela
 export interface FySnapshot {
   revision: string; document: FyDocument; width: number; height: number; duration: number; fps: number
   palette: Record<string, string>; styleId: string
+  supportsBackdrop: boolean
 }
 
 const idPattern = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/
@@ -66,7 +67,8 @@ export function validateFyDocument(value: unknown): FyDocument {
     if (keyframes.some((k, i) => i > 0 && k.time <= keyframes[i - 1].time)) throw new Error('运动时间点顺序无效')
     const layer = number(o.layer, -100, 100)
     if (!Number.isInteger(layer)) throw new Error('层级必须为整数')
-    return { id: identifier(o.id), name: text(o.name, 160), box, layer, overlap_group: text(o.overlap_group, 64), keyframes }
+    const role = o.role === undefined ? {} : { role: option(o.role, ['content', 'backdrop'] as const) }
+    return { id: identifier(o.id), name: text(o.name, 160), box, layer, overlap_group: text(o.overlap_group, 64), ...role, keyframes }
   })
   const relations = d.relations.map(value => {
     const r = record(value)
@@ -77,6 +79,7 @@ export function validateFyDocument(value: unknown): FyDocument {
   const ids = [...objects, ...relations].map(o => o.id), objectIds = new Set(objects.map(o => o.id))
   if (new Set(ids).size !== ids.length) throw new Error('对象与连线编号重复')
   if (relations.some(r => r.source === r.target || !objectIds.has(r.source) || !objectIds.has(r.target))) throw new Error('连线端点无效')
+  if (relations.some(r => objects.some(o => o.role === 'backdrop' && (o.id === r.source || o.id === r.target)))) throw new Error('连线端点不能是背景对象')
   return { version: 1, objects, relations }
 }
 
@@ -92,7 +95,10 @@ export function fySnapshotFromData(value: unknown): FySnapshot {
     if (typeof palette[key] !== 'string' || !/^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(palette[key] as string)) throw new Error('镜头配色不完整')
   }
   const style = d.style_source ? record(d.style_source) : {}
-  return { revision: d.revision, document: validateFyDocument(d.object_document), width, height, fps,
+  const supportsBackdrop = Array.isArray(d.object_features) && d.object_features.includes('backdrop-v1')
+  const document = validateFyDocument(d.object_document)
+  if (!supportsBackdrop && document.objects.some(o => o.role === 'backdrop')) throw new Error('镜头运行时不支持背景对象')
+  return { revision: d.revision, document, width, height, fps, supportsBackdrop,
     duration: number(record(d.timing).dur, .01, 3600), palette: palette as Record<string, string>, styleId: String(style.id ?? '') }
 }
 
@@ -103,6 +109,10 @@ export function buildFyRevision(base: FySnapshot, value: FyDocument) {
     const before = base.document.objects.find(b => b.id === o.id)!
     const patch: Record<string, unknown> = { id: o.id }
     for (const key of ['box', 'layer', 'overlap_group', 'keyframes'] as const) if (!equal(before[key], o[key])) patch[key] = o[key]
+    if ((before.role || 'content') !== (o.role || 'content')) {
+      if (!base.supportsBackdrop) throw new Error('旧镜头运行时不支持背景对象，请重新生成后再调整')
+      patch.role = o.role || 'content'
+    }
     return Object.keys(patch).length > 1 ? [patch] : []
   })
   const upsert_relations = draft.relations.filter(r => !equal(base.document.relations.find(b => b.id === r.id), r))
@@ -125,6 +135,8 @@ export function fyChanges(base: FyDocument, draft: FyDocument): FyChange[] {
     }
     if (o.layer !== b.layer) result.push({ id: o.id, field: '层级', before: String(b.layer), after: String(o.layer) })
     if (o.overlap_group !== b.overlap_group) result.push({ id: o.id, field: '叠放组', before: b.overlap_group || '无', after: o.overlap_group || '无' })
+    const roleLabel = (role: FyObject['role']) => role === 'backdrop' ? '背景' : '内容'
+    if ((o.role || 'content') !== (b.role || 'content')) result.push({ id: o.id, field: '绘制角色', before: roleLabel(b.role), after: roleLabel(o.role) })
   }
   for (const r of base.relations) if (!draft.relations.some(d => d.id === r.id)) result.push({ id: r.id, field: '连线', before: `${r.source} → ${r.target}`, after: '删除' })
   for (const r of draft.relations) {
