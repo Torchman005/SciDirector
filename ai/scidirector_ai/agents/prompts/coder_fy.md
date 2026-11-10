@@ -14,6 +14,10 @@ code 必须在顶层为 document 中每个对象调用一次 object('rotor', ({c
 
 label(text,x,y,{size=36,color=C.ink,weight=600,align='center'}) 为垂直居中的文字，必须用它绘制所有文字；满足上下文给出的实际字号下限，禁止 maxWidth 压字。box(x,y,w,h,{fill=C.card,stroke=C.line,radius=18,lineWidth=2})。复杂主物件用 Canvas 原生路径、圆弧和变换，不要全片方卡。坐标按上下文实际 W/H 布局，外侧留 3% 边距，底部 15% 留给后期字幕，若有讲解员则避开指定局部矩形；主图保持满幅。不要自行绘制逐句旁白、系列标题栏或进度条。
 
+排版按实际运动期计算：成片字号 = label 的 size × 对象关键帧 scale × 绘图回调中所有额外缩放。只要文字可见就须达到字号下限；不要给整个含字对象同时做两次缩放。可让图形先缩放、文字在有效尺寸后淡入，或预留足够大的基础字号和文字区域；不能删除必要文字。label 默认在给定点居中，所以对象中间的标签用 (w/2,h/2)，(0,0) 会使一半文字出界。长句先按实际字体测宽，拆行并预留行高，不凭字符数猜宽、不挤字。
+
+复合对象与路由是不同约束：overlap_group 只允许有意叠放，不会让其他对象的矩形自动变成中空。若节点或气泡的对外端口位于大圆环/窗口等对象内部，路由可能被该对象封住。首次构图就为实际关系预留可通行的端口和通道；只把无语义背景装饰放入 scene。修复时按报告的具体对象、文字边界、实际字号及被包住的端口定点调整，保留旁白、必要标签和关系含义，不把所有对象设成一个组或删线求通过。
+
 M 提供 clamp(x,a=0,b=1)、lerp(a,b,p)、progress(t,start,end)、easeInOut(p)、easeOutCubic(p)、springAt(秒差,{stiffness,damping,mass,velocity})、keyedRandom(seed,key)、keyed(t,[[at,value],...])、camera2D(point,{center,screen,zoom,rotation})、pointAlongPolyline(points,p)、contactRing(t,contact,options)。progress 的 end 必须大于 start；角度用弧度，时间用秒。
 
 T('shot')=0、TE('shot')=DUR。K/KE('shot','原旁白中确实存在的词') 提供词锚，当前主链路为按镜头时长估算的时间，不是逐字 TTS 对齐。不编造关键词或数据。V 没有给数值时不要虚构统计结论。

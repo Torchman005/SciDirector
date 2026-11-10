@@ -3,6 +3,8 @@
 'use strict';
 window.SCIDFyObjects=Object.freeze({create({D,ctx,C,W,H,fail,setOwner}) {
   const doc=D.object_document, painters=new Map(), routeCache=new Map();
+  // Sub-micropixel arithmetic noise is not visible overflow at a safe-area edge.
+  const GEOMETRY_EPSILON=1e-6;
   let states=[], edges=[];
   const visible=s=>s.opacity>.15;
   const overlap=(a,b)=>Math.min(a.right,b.right)-Math.max(a.left,b.left)>3&&
@@ -78,34 +80,53 @@ window.SCIDFyObjects=Object.freeze({create({D,ctx,C,W,H,fail,setOwner}) {
   }
   function layout(textBoxes) {
     const issues=[],byId=new Map(states.map(s=>[s.id,s]));
+    const add=(parts,message)=>issues.push({key:JSON.stringify(parts),message});
+    const bounds=r=>`[${r.left.toFixed(1)},${r.top.toFixed(1)}]-[${r.right.toFixed(1)},${r.bottom.toFixed(1)}]px`;
     for(const s of states.filter(visible)){
       const r=s.rect,margin=W*.02;
-      if(r.left<margin||r.right>W-margin||r.top<H*.03||r.bottom>H*.85)
-        issues.push(`[对象 ${s.id}] 出画或进入字幕区域`);
+      if(r.left<margin-GEOMETRY_EPSILON||r.right>W-margin+GEOMETRY_EPSILON||
+         r.top<H*.03-GEOMETRY_EPSILON||r.bottom>H*.85+GEOMETRY_EPSILON)
+        add(['object-bounds',s.id],`[对象 ${s.id}] 出画或进入字幕区域：当前边界 ${bounds(r)}；允许 x=${margin.toFixed(1)}..${(W-margin).toFixed(1)}，y=${(H*.03).toFixed(1)}..${(H*.85).toFixed(1)}px；检查 box 和运动后的边界`);
       const a=D.presenter_area;
       if(a&&overlap(r,{left:a.x*W,top:a.y*H,right:(a.x+a.width)*W,bottom:(a.y+a.height)*H}))
-        issues.push(`[对象 ${s.id}] 进入讲解员避让区域`);
+        add(['presenter',s.id],`[对象 ${s.id}] 进入讲解员避让区域`);
       for(const other of states.filter(visible)){
         if(other.id<=s.id||!overlap(r,other.rect))continue;
         if(s.object.overlap_group&&s.object.overlap_group===other.object.overlap_group)continue;
-        issues.push(`[对象 ${s.id}] 与 ${other.id} 重叠；有意复合须显式共享 overlap_group`);
+        add(['object-overlap',s.id,other.id],`[对象 ${s.id}] 与 ${other.id} 重叠；有意复合须显式共享 overlap_group`);
       }
     }
     for(const b of textBoxes){
       const r={left:b.x,top:b.y,right:b.right,bottom:b.bottom};
       const owner=byId.get(b.owner);
       if(owner&&(r.left<owner.rect.left-1||r.top<owner.rect.top-1||r.right>owner.rect.right+1||r.bottom>owner.rect.bottom+1))
-        issues.push(`[对象 ${b.owner}] 文字超出对象边界，不能依靠裁切隐藏`);
+        add(['text-owner-bounds',b.owner,b.text],`[对象 ${b.owner}] 文字超出对象边界，不能依靠裁切隐藏：文字“${b.text.slice(0,40)}”边界 ${bounds(r)}，对象边界 ${bounds(owner.rect)}；label 默认水平/垂直居中，局部中心为 (w/2,h/2)，不是 (0,0)`);
       for(const other of states.filter(visible)){
         if(other.id===b.owner||!overlap(r,other.rect))continue;
         if(owner?.object.overlap_group&&owner.object.overlap_group===other.object.overlap_group)continue;
-        issues.push(`[对象 ${other.id}] 遮挡其他对象或背景文字：${b.text.slice(0,30)}`);
+        add(['text-occlusion',other.id,b.owner,b.text],`[对象 ${other.id}] 遮挡其他对象或背景文字：${b.text.slice(0,30)}`);
       }
     }
-    for(const edge of edges)if(edge.status==='blocked')issues.push(`[关系 ${edge.id}] 无可用路径（${edge.source} -> ${edge.target}），已隐藏连线`);
+    for(const edge of edges)if(edge.status==='blocked'){
+      const trapped=[];
+      for(const [id,port] of [[edge.source,edge.source_port],[edge.target,edge.target_port]]){
+        const r=byId.get(id).rect,cx=(r.left+r.right)/2,cy=(r.top+r.bottom)/2;
+        const ports={left:[r.left,cy],right:[r.right,cy],top:[cx,r.top],bottom:[cx,r.bottom]};
+        const candidates=port==='auto'?Object.values(ports):[ports[port]];
+        for(const other of states.filter(visible)){
+          if(other.id===edge.source||other.id===edge.target)continue;
+          const b=other.rect;
+          if(candidates.every(([x,y])=>x>b.left&&x<b.right&&y>b.top&&y<b.bottom))
+            trapped.push(`${id}.${port} 位于 ${other.id} 内`);
+        }
+      }
+      const detail=trapped.length?`；端口被其他对象包住：${trapped.join('，')}。overlap_group 只允许叠放，不允许连线穿过障碍；调整对象占用区或对外端口布局`:
+        '；检查端口朝向、对象间距和运动期障碍，当前直线/折线候选未找到路线，不代表几何上绝对无解';
+      add(['route-blocked',edge.id],`[关系 ${edge.id}] 无可用路径（${edge.source} -> ${edge.target}），已隐藏连线${detail}`);
+    }
     return issues;
   }
-  return Object.freeze({register,check,render,layout,
+  return Object.freeze({register,check,render,layout:boxes=>layout(boxes).map(issue=>issue.message),layoutDetails:layout,
     snapshot:()=>JSON.parse(JSON.stringify({revision:D.revision||'',objects:states.map(({object,...s})=>s),relations:edges}))});
 }});
 })();

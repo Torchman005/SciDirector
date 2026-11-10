@@ -9,10 +9,29 @@ from pathlib import Path
 import pytest
 
 from scidirector_ai import generation_quality as quality
+from scidirector_ai.browser_preflight import _append_measured_issues
 from scidirector_ai.config import Settings, reset_browser_probe_cache
 from scidirector_ai.generation_quality import BrowserPreflight
 from scidirector_ai.rag import load_corpus
 from scidirector_ai.schemas import SceneTag, ShotSpec, StyleGuide
+
+
+def test_feedback_deduplicates_stable_keys_not_changing_measurements() -> None:
+    issues, seen = [], set()
+    for time in (1, 2, 3):
+        _append_measured_issues(issues, seen, {
+            'issues': [f'actual font {20+time}px'], 'issue_keys': ['font|subject|label']}, time)
+    _append_measured_issues(issues, seen, {
+        'issues': ['actual font 21px', 'late clipped text'],
+        'issue_keys': ['font|other|label', 'bounds|other|label']}, 3.5)
+    assert issues == ['1.00s：actual font 21px', '3.50s：actual font 21px', '3.50s：late clipped text']
+
+
+def test_legacy_feedback_and_frame_scan_keep_first_failure_time() -> None:
+    issues, seen = [], set()
+    _append_measured_issues(issues, seen, {'issues': ['legacy collision']}, .9, precision=3)
+    _append_measured_issues(issues, seen, {'issues': ['legacy collision']}, 1)
+    assert issues == ['0.900s：legacy collision']
 
 
 def test_entry_point_imports_without_shadowing_logging() -> None:

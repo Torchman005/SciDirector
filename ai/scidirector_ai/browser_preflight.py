@@ -214,12 +214,15 @@ MEASURE_JS = r"""({minFont,presenterArea}) => {
     if(text.rects.some(r=>overlap(r,box)>area(r)*.25))
       issues.push(`${text.id} 文字与 #${shape.id} 遮挡；外部标签应放到独立区域，文字不能跨越其他图形边界；对应容器内的标签可调整前后层级`);
   }
+  const issueKeys=new Map();
   if(typeof window.__fyLayout === 'function') {
-    issues.push(...window.__fyLayout());
+    const details=typeof window.__fyLayoutDetails==='function'?window.__fyLayoutDetails():
+      window.__fyLayout().map(message=>({key:message,message}));
+    for(const {key,message} of details){issues.push(message);issueKeys.set(message,key);}
     issues.push(...(window.__errors || []));
     warnings.push('fy Canvas 已实测文字；任意图形碰撞、连线语义仍需视觉审核');
   } else if(document.querySelector('canvas')) warnings.push('Canvas 文字/图形布局未进行 DOM 测量，仍需视觉审核');
-  return {issues:issues.slice(0,12),warnings:warnings.slice(0,6)};
+  return {issues:issues.slice(0,12),issue_keys:issues.slice(0,12).map(message=>issueKeys.get(message)||message),warnings:warnings.slice(0,6)};
 }"""
 
 
@@ -353,12 +356,25 @@ def _different(before: bytes, after: bytes) -> bool:
         return changed / max(1, a.width * a.height) > DETERMINISM_CHANGE_RATIO
 
 
+def _append_measured_issues(issues: list[str], seen: set[str], measured: dict[str, Any],
+                            time: float, precision: int = 2) -> None:
+    # A changing numeric measurement is still the same repair target. Keep its
+    # first failing frame without letting repeated samples crowd out other defects.
+    keys = measured.get('issue_keys', [])
+    for index, message in enumerate(measured['issues']):
+        key = keys[index] if index < len(keys) else message
+        if key not in seen:
+            seen.add(key)
+            issues.append(f'{time:.{precision}f}s：{message}')
+
+
 def inspect(html: Path, width: int, height: int, duration: float, min_font: int,
             executable: str = "", presenter_area: dict | None = None,
             fps: int = MOTION_SCAN_FPS) -> dict[str, Any]:
     from playwright.sync_api import sync_playwright
 
     issues: list[str] = []
+    measured_seen: set[str] = set()
     warnings: list[str] = []
     launch: dict[str, Any] = {"args": ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]}
     if executable:
@@ -405,8 +421,10 @@ def inspect(html: Path, width: int, height: int, duration: float, min_font: int,
                         fy_pixels[t] = page.evaluate('() => window.__fyPixels()')
                     measured = page.evaluate(MEASURE_JS, {"minFont": min_font, "presenterArea": presenter_area or (payload or {}).get("style", {}).get("presenterSafeArea")})
                     # Entry transitions may move opaque text in from outside the viewport.
-                    destination = warnings if t < min(.25, duration * .1) else issues
-                    destination.extend(f"{t:.2f}s：{issue}" for issue in measured["issues"])
+                    if t < min(.25, duration * .1):
+                        warnings.extend(f"{t:.2f}s：{issue}" for issue in measured["issues"])
+                    else:
+                        _append_measured_issues(issues, measured_seen, measured, t)
                     warnings.extend(f"{t:.2f}s：{warning}" for warning in measured["warnings"])
                     if t == check_time:
                         before = page.screenshot(type="png")
@@ -423,26 +441,27 @@ def inspect(html: Path, width: int, height: int, duration: float, min_font: int,
                             const seen=new Map(), start=Math.min(.25,duration*.1);
                             for(let i=Math.ceil(start*fps);i<Math.ceil(duration*fps);i++){
                                 const t=i/fps;window.__seek(t);
-                                for(const issue of window.__fyLayout())if(!seen.has(issue))seen.set(issue,`${t.toFixed(3)}s：${issue}`);
+                                const details=typeof window.__fyLayoutDetails==='function'?window.__fyLayoutDetails():
+                                  window.__fyLayout().map(message=>({key:message,message}));
+                                for(const {key,message} of details)if(!seen.has(key))seen.set(key,{time:t,key,message});
                                 if(seen.size>=12)break;
                             }
                             return [...seen.values()];
                         }''', {'duration': duration, 'fps': fps})
-                        issues.extend(swept)
+                        for record in swept:
+                            _append_measured_issues(issues, measured_seen,
+                                {'issues': [record['message']], 'issue_keys': [record['key']]},
+                                record['time'], precision=3)
                 if payload and not issues:
                     scan_times, dynamic_ids = motion_scan_times(duration, payload, fps)
                     if scan_times:
                         candidates = page.evaluate(MOTION_CANDIDATES_JS,
                                                    {"times": scan_times, "dynamicIds": dynamic_ids})
-                        seen: set[str] = set()
                         for t in candidates:
                             seek(t)
                             measured = page.evaluate(MEASURE_JS, {"minFont": min_font,
                                 "presenterArea": presenter_area or payload.get("style", {}).get("presenterSafeArea")})
-                            for issue in measured["issues"]:
-                                if issue not in seen:
-                                    issues.append(f"{t:.2f}s：{issue}")
-                                    seen.add(issue)
+                            _append_measured_issues(issues, measured_seen, measured, t)
                             if len(issues) >= MAX_ISSUES:
                                 break
                 seek(check_time)  # Backwards seek, then repeat: parallel capture needs both properties.

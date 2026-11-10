@@ -335,3 +335,81 @@ def test_preflight_catches_brief_crossing_between_sparse_samples(style, tmp_path
     path.write_text(compile_it(style, FyDocument.model_validate(doc), art=art), encoding='utf-8')
     result = inspect(path, 1920, 1080, 4, 32, executable=os.environ['SCID_CHROME'])
     assert any('0.900s' in issue and '重叠' in issue for issue in result['issues']), result
+
+
+def test_font_diagnostics_report_owner_and_total_scale_with_stable_key(style, browser, tmp_path):
+    doc = document().model_dump()
+    doc['objects'][0]['keyframes'] = [{'time': 0, 'scale': .7}, {'time': 1, 'scale': .8}]
+    page = open_page(browser, tmp_path, compile_it(style, FyDocument.model_validate(doc)))
+    try:
+        failures = []
+        for time in (0, 2, 4, 0):
+            page.evaluate('t=>window.__seek(t)', time)
+            details = page.evaluate('window.__fyLayoutDetails()')
+            failures.append(next(d for d in details if json.loads(d['key'])[:3] == ['font-size','shot','input']))
+            assert page.evaluate('window.__fyLayout()') == [d['message'] for d in details]
+        assert len({d['key'] for d in failures}) == 1
+        assert failures[0] == failures[-1]
+        assert '26.6px' in failures[0]['message'] and '38.0px' in failures[0]['message']
+        assert '0.700' in failures[0]['message'] and '[对象 input]' in failures[0]['message']
+        assert failures[0]['message'] != failures[1]['message']
+    finally:
+        page.close()
+
+
+@pytest.mark.parametrize('port', ['right', 'auto'])
+def test_blocked_relation_names_enclosing_object_without_exempting_group(style, browser, tmp_path, port):
+    doc = document().model_dump()
+    doc['objects'][0].update(box={'x': .12, 'y': .3, 'width': .1, 'height': .15}, overlap_group='container')
+    doc['objects'][1].update(box={'x': .07, 'y': .2, 'width': .3, 'height': .4},
+                             overlap_group='container', keyframes=[])
+    doc['relations'] = [{'id': 'feed', 'source': 'input', 'target': 'output',
+                         'source_port': port, 'target_port': 'left'}]
+    art = ("object('input',({w,h,label})=>label('IN',w/2,h/2,{size:38}));"
+           "object('rotor',({ctx,w,h})=>ctx.strokeRect(1,1,w-2,h-2));"
+           "object('output',({w,h,label})=>label('OUT',w/2,h/2,{size:38}));scene('shot',()=>{});")
+    page = open_page(browser, tmp_path, compile_it(style, FyDocument.model_validate(doc), art))
+    try:
+        details = page.evaluate('window.__fyLayoutDetails()')
+        failure = next(d for d in details if json.loads(d['key']) == ['route-blocked','feed'])
+        assert f'input.{port} 位于 rotor 内' in failure['message']
+        assert 'overlap_group' in failure['message']
+        assert page.evaluate('window.__fyObjects().relations[0].status') == 'blocked'
+        assert page.evaluate('window.__fyObjects().relations[0].points') == []
+    finally:
+        page.close()
+
+
+def test_preflight_repeated_defect_does_not_hide_late_different_failure(style, tmp_path):
+    if not os.environ.get('SCID_CHROME'):
+        pytest.skip('Set SCID_CHROME for actual deduplication preflight')
+    doc = document().model_dump()
+    doc['objects'] = [doc['objects'][0], {**doc['objects'][2], 'keyframes': [{'time': .75}]}]
+    doc['relations'] = []
+    art = ("object('input',({w,h,label})=>label('SMALL',w/2,h/2,{size:20}));"
+           "object('output',({label})=>label('CLIPPED',0,0,{size:38}));scene('shot',()=>{});")
+    path = tmp_path / 'diagnostics.html'
+    path.write_text(compile_it(style, FyDocument.model_validate(doc), art), encoding='utf-8')
+    result = inspect(path, 1920, 1080, 4, 32, executable=os.environ['SCID_CHROME'])
+    assert len([i for i in result['issues'] if '文字字号过小' in i and 'SMALL' in i]) == 1, result
+    clipped = next(i for i in result['issues'] if '[对象 output]' in i and '文字超出对象边界' in i)
+    assert clipped.startswith('3.00s') and '(w/2,h/2)' in clipped, result
+    assert '对象边界' in clipped and 'px' in clipped
+
+
+@pytest.mark.parametrize('overflow_pixels', [0, .01])
+def test_exact_safe_area_boundary_tolerates_only_arithmetic_noise(style, browser, tmp_path, overflow_pixels):
+    doc = document().model_dump()
+    doc['objects'] = [{'id': 'input', 'box': {
+        'x': .3, 'y': .76 + overflow_pixels/1080, 'width': .4, 'height': .09}}]
+    doc['relations'] = []
+    art = "object('input',({w,h,label})=>label('CAPTION',w/2,h/2,{size:38}));scene('shot',()=>{});"
+    page = open_page(browser, tmp_path, compile_it(style, FyDocument.model_validate(doc), art))
+    try:
+        issues = page.evaluate('window.__fyLayout()')
+        if overflow_pixels:
+            assert any('[对象 input] 出画或进入字幕区域' in issue for issue in issues)
+        else:
+            assert not issues
+    finally:
+        page.close()

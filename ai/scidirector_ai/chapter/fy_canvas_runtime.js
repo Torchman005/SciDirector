@@ -60,6 +60,8 @@ ctx.fillText = function(text, x, y, maxWidth) {
   const xs = points.map(p => p.x), ys = points.map(p => p.y);
   if (ctx.globalAlpha > .15 && String(text).trim()) textBoxes.push({scene: activeId, owner: activeObject, text: String(text),
     x: Math.min(...xs), y: Math.min(...ys), right: Math.max(...xs), bottom: Math.max(...ys),
+    fontSize: parseFloat(ctx.font.match(/([\d.]+)px/)?.[1]) || 0,
+    scale: Math.min(Math.hypot(tr.a, tr.b), Math.hypot(tr.c, tr.d)),
     size: (parseFloat(ctx.font.match(/([\d.]+)px/)?.[1]) || 0) * Math.min(Math.hypot(tr.a, tr.b), Math.hypot(tr.c, tr.d))});
   originalText(text, x, y);
 };
@@ -79,25 +81,28 @@ function scene(id, draw) {
 const api = {M, C, V, W, H, DUR, T, TE, K, KE, label, box, scene, theme, object};
 window.FY = Object.freeze(api);
 window.__fyObjects = () => objects.snapshot();
-window.__fyLayout = () => {
-  const issues = [], add = (b, message) => issues.push(`[场景 ${b.scene}] ${message}：“${b.text.slice(0, 40)}”`);
+window.__fyLayoutDetails = () => {
+  const issues = [], add = (b, code, message, related='') => issues.push({
+    key: JSON.stringify([code,b.scene,b.owner,b.text,related]),
+    message: `[场景 ${b.scene}]${b.owner?`[对象 ${b.owner}]`:''} ${message}：“${b.text.slice(0, 40)}”`});
   for (const b of textBoxes) {
-    if (![b.x, b.y, b.right, b.bottom, b.size].every(Number.isFinite)) add(b, '文字边界非有限值');
-    if (b.size < (D.min_font || 25)) add(b, '文字字号过小');
+    if (![b.x, b.y, b.right, b.bottom, b.size].every(Number.isFinite)) add(b, 'text-nonfinite', '文字边界非有限值');
+    if (b.size < (D.min_font || 25)) add(b, 'font-size', `文字字号过小：实际 ${b.size.toFixed(1)}px，要求至少 ${D.min_font||25}px；源码 ${b.fontSize.toFixed(1)}px × 当前总缩放 ${b.scale.toFixed(3)}。放大字号或在文字可见前完成缩放，检查对象 scale 与回调内 ctx.scale 的叠乘`);
     const margin = W * .02, top = D.chapter_chrome === false ? H * .03 : 100;
     const bottom = D.chapter_chrome === false ? H * .85 : H - 205;
-    if (b.x < margin || b.right > W - margin || b.y < top || b.bottom > bottom) add(b, '文字出画或进入标题/字幕区域');
+    if (b.x < margin || b.right > W - margin || b.y < top || b.bottom > bottom) add(b, 'text-bounds', '文字出画或进入标题/字幕区域');
     const a = D.presenter_area;
     if (a && b.right > a.x*W && b.x < (a.x+a.width)*W && b.bottom > a.y*H && b.y < (a.y+a.height)*H)
-      add(b, '文字进入讲解员避让区域');
+      add(b, 'text-presenter', '文字进入讲解员避让区域');
   }
   for (let i = 0; i < textBoxes.length; i++) for (let j = i + 1; j < textBoxes.length; j++) {
     const a = textBoxes[i], b = textBoxes[j];
     if (a.scene === b.scene && Math.min(a.right, b.right) - Math.max(a.x, b.x) > 3 &&
-        Math.min(a.bottom, b.bottom) - Math.max(a.y, b.y) > 3) add(a, `独立文字重叠（另一个：${b.text.slice(0, 30)}）`);
+        Math.min(a.bottom, b.bottom) - Math.max(a.y, b.y) > 3) add(a, 'text-overlap', `独立文字重叠（另一个：${b.text.slice(0, 30)}）`,[b.owner,b.text]);
   }
-  return issues.concat(objects.layout(textBoxes));
+  return issues.concat(objects.layoutDetails(textBoxes));
 };
+window.__fyLayout = () => window.__fyLayoutDetails().map(issue=>issue.message);
 function render({t}) {
   textBoxes = []; activeId = '';
   ctx.fillStyle = C.paper; ctx.fillRect(0, 0, W, H);
