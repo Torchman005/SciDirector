@@ -22,6 +22,9 @@ service AiDirectorService {
   // Empty style_id returns catalog metadata; an explicit ID returns a complete,
   // verified source snapshot. Only server-owned library paths are read.
   rpc GetFyStyles(FyStylesRequest) returns (FyStylesResponse);
+  rpc RecommendFyStyle(RecommendFyStyleRequest) returns (RecommendFyStyleResponse);
+  rpc GetImageProviders(ImageProvidersRequest) returns (ImageProvidersResponse);
+  rpc GenerateIllustration(GenerateIllustrationRequest) returns (GenerateIllustrationResponse);
   // Render a transparent presenter against Go's final aligned narration track.
   // All paths are server resolved shared-volume paths; no media bytes over gRPC.
   rpc RenderPresenter(RenderPresenterRequest) returns (RenderPresenterResponse);
@@ -67,6 +70,26 @@ service AiDirectorService {
 
 message FyStylesRequest {
   string style_id = 1;
+}
+
+message RecommendFyStyleRequest { string raw_script = 1; }
+message RecommendFyStyleResponse { string recommendation_json = 1; }
+message ImageProvidersRequest {}
+message ImageProvidersResponse { string providers_json = 1; }
+message GenerateIllustrationRequest {
+  string provider_id = 1;
+  string prompt = 2;
+  string size = 3;
+  string fy_style_id = 4;
+  // Go-created unique staging directory in the shared volume, never client input.
+  string output_dir = 5;
+}
+message GenerateIllustrationResponse {
+  string image_path = 1;
+  string provider_id = 2;
+  string model = 3;
+  string fy_style_id = 4;
+  string fy_style_sha256 = 5;
 }
 
 message FyStylesResponse {

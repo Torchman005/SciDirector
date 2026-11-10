@@ -100,53 +100,13 @@ func (s *Server) HandleUploadVisual(c *gin.Context) {
 		mapError(c, fmt.Errorf("关闭图片临时文件失败: %w", err))
 		return
 	}
-	info, err := os.Stat(tmpPath)
-	if err != nil || info.Size() <= 0 || info.Size() > maxVisualUploadBytes {
-		abortWith(c, http.StatusBadRequest, ErrCodeBadRequest, "图片为空或超过 2 MB", err)
-		return
-	}
-	file, err := os.Open(tmpPath)
+	asset, storedExt, err := inspectVisual(tmpPath, header.Filename)
 	if err != nil {
-		mapError(c, fmt.Errorf("打开图片临时文件失败: %w", err))
+		abortWith(c, http.StatusBadRequest, ErrCodeBadRequest, err.Error(), nil)
 		return
 	}
-	config, format, decodeErr := image.DecodeConfig(file)
-	_ = file.Close()
-	if decodeErr != nil || (format != "png" && format != "jpeg") {
-		abortWith(c, http.StatusBadRequest, ErrCodeBadRequest, "文件内容不是有效的 PNG/JPEG 图片", decodeErr)
-		return
-	}
-	if (format == "png" && ext != ".png") || (format == "jpeg" && ext != ".jpg" && ext != ".jpeg") {
-		abortWith(c, http.StatusBadRequest, ErrCodeBadRequest, "图片内容与文件扩展名不匹配", nil)
-		return
-	}
-	if config.Width < 1 || config.Height < 1 || config.Width > maxVisualDimension || config.Height > maxVisualDimension || int64(config.Width)*int64(config.Height) > maxVisualPixels {
-		abortWith(c, http.StatusBadRequest, ErrCodeBadRequest, "图片尺寸超过 4096 × 4096 或 1200 万像素限制", nil)
-		return
-	}
-	// Decode the complete bounded image so a valid header with corrupt pixel data
-	// cannot become a broken asset that fails only during video rendering.
-	file, err = os.Open(tmpPath)
-	if err == nil {
-		_, _, err = image.Decode(file)
-		_ = file.Close()
-	}
-	if err != nil {
-		abortWith(c, http.StatusBadRequest, ErrCodeBadRequest, "图片像素数据损坏或无法解码", err)
-		return
-	}
-	mimeType, storedExt := "image/jpeg", ".jpg"
-	if format == "png" {
-		mimeType, storedExt = "image/png", ".png"
-	}
-	name := filepath.Base(header.Filename)
-	if utf8.RuneCountInString(name) > 180 {
-		name = string([]rune(name)[:180])
-	}
-	asset, _, err := store.SaveVisual(tenantOf(c), tmpPath, storedExt, assets.VisualAsset{
-		Filename: name, MIMEType: mimeType, Role: role, Description: description, Subject: subject, Pose: pose,
-		Width: config.Width, Height: config.Height, SizeBytes: info.Size(),
-	})
+	asset.Role, asset.Description, asset.Subject, asset.Pose = role, description, subject, pose
+	asset, _, err = store.SaveVisual(tenantOf(c), tmpPath, storedExt, asset)
 	if err != nil {
 		if strings.Contains(err.Error(), "素材库已满") {
 			abortWith(c, http.StatusConflict, ErrCodeConflict, err.Error(), nil)
@@ -156,6 +116,52 @@ func (s *Server) HandleUploadVisual(c *gin.Context) {
 		return
 	}
 	respondOK(c, visualUploadResponse{VisualAsset: asset, PreviewURL: "/api/v1/assets/visuals/" + asset.AssetID})
+}
+
+// Both uploads and generated images must pass the same bounded full decode.
+func inspectVisual(tmpPath, filename string) (assets.VisualAsset, string, error) {
+	ext := strings.ToLower(filepath.Ext(filename))
+	info, err := os.Stat(tmpPath)
+	if err != nil || info.Size() <= 0 || info.Size() > maxVisualUploadBytes {
+		return assets.VisualAsset{}, "", fmt.Errorf("图片为空或超过 2 MB")
+	}
+	file, err := os.Open(tmpPath)
+	if err != nil {
+		return assets.VisualAsset{}, "", fmt.Errorf("打开图片临时文件失败")
+	}
+	config, format, decodeErr := image.DecodeConfig(file)
+	_ = file.Close()
+	if decodeErr != nil || (format != "png" && format != "jpeg") {
+		return assets.VisualAsset{}, "", fmt.Errorf("文件内容不是有效的 PNG/JPEG 图片")
+	}
+	if (format == "png" && ext != ".png") || (format == "jpeg" && ext != ".jpg" && ext != ".jpeg") {
+		return assets.VisualAsset{}, "", fmt.Errorf("图片内容与文件扩展名不匹配")
+	}
+	if config.Width < 1 || config.Height < 1 || config.Width > maxVisualDimension || config.Height > maxVisualDimension || int64(config.Width)*int64(config.Height) > maxVisualPixels {
+		return assets.VisualAsset{}, "", fmt.Errorf("图片尺寸超过 4096 × 4096 或 1200 万像素限制")
+	}
+	// Decode the complete bounded image so a valid header with corrupt pixel data
+	// cannot become a broken asset that fails only during video rendering.
+	file, err = os.Open(tmpPath)
+	if err == nil {
+		_, _, err = image.Decode(file)
+		_ = file.Close()
+	}
+	if err != nil {
+		return assets.VisualAsset{}, "", fmt.Errorf("图片像素数据损坏或无法解码")
+	}
+	mimeType, storedExt := "image/jpeg", ".jpg"
+	if format == "png" {
+		mimeType, storedExt = "image/png", ".png"
+	}
+	name := filepath.Base(filename)
+	if utf8.RuneCountInString(name) > 180 {
+		name = string([]rune(name)[:180])
+	}
+	return assets.VisualAsset{
+		Filename: name, MIMEType: mimeType,
+		Width: config.Width, Height: config.Height, SizeBytes: info.Size(),
+	}, storedExt, nil
 }
 
 func (s *Server) HandleListVisuals(c *gin.Context) {

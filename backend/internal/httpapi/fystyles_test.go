@@ -59,7 +59,6 @@ func TestFyRequestAcceptsOnlyServerResolvedSources(t *testing.T) {
 		{"animation_style": "fy", "fy_style_id": "../X17"},
 		{"animation_style": "fy", "fy_style_id": "X17", "fy_style_source": map[string]any{"content": "client prompt"}},
 		{"animation_style": "anime", "fy_style_id": "X17"},
-		{"animation_style": "fy", "fy_style_id": "X17", "scene_assets": []any{map[string]any{"asset_id": "image"}}},
 	}
 	for _, sg := range cases {
 		if err := validateStyleGuide(sg); err == nil {

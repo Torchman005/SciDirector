@@ -110,6 +110,22 @@ class PipelineService:
         self._coder: CoderAgent | None = None
         self._critic: CriticAgent | None = None
         self._sandbox: SandboxRunner | None = None
+        from .illustrations import ImageGenerator
+        self.images = ImageGenerator(self.settings)
+
+    def recommend_fy_style(self, script: str) -> dict:
+        from .chapter.fy_styles import list_fy_styles
+        from .style_matching import recommend_style
+        return recommend_style(script, list_fy_styles())
+
+    def generate_illustration(self, *, provider_id: str, prompt: str, size: str,
+                              fy_style_id: str, output_dir: str, timeout_sec: float | None) -> dict:
+        from .chapter.fy_styles import load_fy_style
+        source = load_fy_style(fy_style_id) if fy_style_id else None
+        result = self.images.generate(provider_id=provider_id, prompt=prompt, size=size,
+                                      output_dir=output_dir, style_source=source, timeout_sec=timeout_sec)
+        result.update(fy_style_id=source['id'] if source else '', fy_style_sha256=source['sha256'] if source else '')
+        return result
 
     # ------------------------------------------------------------------
     # 惰性构造的重型组件

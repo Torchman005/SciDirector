@@ -119,6 +119,36 @@ func (c *Client) GetFyStyles(ctx context.Context, req *pb.FyStylesRequest) (*pb.
 	return resp, nil
 }
 
+func (c *Client) RecommendFyStyle(ctx context.Context, req *pb.RecommendFyStyleRequest) (*pb.RecommendFyStyleResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	resp, err := c.cli.RecommendFyStyle(ctx, req)
+	if err != nil {
+		return nil, wrapRPCError("RecommendFyStyle", err)
+	}
+	return resp, nil
+}
+
+func (c *Client) GetImageProviders(ctx context.Context) (*pb.ImageProvidersResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	resp, err := c.cli.GetImageProviders(ctx, &pb.ImageProvidersRequest{})
+	if err != nil {
+		return nil, wrapRPCError("GetImageProviders", err)
+	}
+	return resp, nil
+}
+
+func (c *Client) GenerateIllustration(ctx context.Context, req *pb.GenerateIllustrationRequest) (*pb.GenerateIllustrationResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, 310*time.Second)
+	defer cancel()
+	resp, err := c.cli.GenerateIllustration(ctx, req)
+	if err != nil {
+		return nil, wrapRPCError("GenerateIllustration", err)
+	}
+	return resp, nil
+}
+
 // Health 探测 Python 服务与沙盒的可用性。
 func (c *Client) Health(ctx context.Context) (*pb.HealthResponse, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)

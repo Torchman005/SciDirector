@@ -433,8 +433,8 @@ class StyleGuide(BaseModel):
         if self.animation_style == "fy":
             from .chapter.fy_styles import validate_snapshot
             validate_snapshot(self.fy_style_id, self.fy_style_source)
-            if self.aspect_ratio != "16:9" or self.scene_assets:
-                raise ValueError('当前 fy Canvas 仅支持 16:9 Canvas 绘制，不支持分镜图片素材')
+            if self.aspect_ratio != "16:9":
+                raise ValueError('当前 fy Canvas 仅支持 16:9')
         elif self.fy_style_id or self.fy_style_source:
             raise ValueError('fy 画风来源只能用于 fy 模式')
         if self.preset not in STYLE_PRESETS:

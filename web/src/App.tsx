@@ -75,6 +75,7 @@ const GRADES = [
 interface SubmitForm {
   animation_style: 'precise' | 'anime' | 'fy'
   fy_style_id?: string
+  fy_auto_style?: boolean
   raw_script: string
   /** null = 留空 = 按脚本自动估算（提交时转成 0）。 */
   target_duration_sec: number | null
@@ -365,6 +366,7 @@ export function App() {
                 preset: 'paper',
                 animation_style: 'fy',
                 fy_style_id: 'X17',
+                fy_auto_style: true,
                 background_style: 'paper_stage',
                 grade: 'none',
                 grade_strength: 1,
@@ -442,7 +444,7 @@ export function App() {
                 </Col>
               </Row>
 
-              {animationStyle === 'fy' && <FyStyleSettings styleId={fyStyleId} onReady={setFyReady} />}
+              {animationStyle === 'fy' && <FyStyleSettings styleId={fyStyleId} script={script} onReady={setFyReady} />}
 
               <Divider orientation="left" plain style={{ marginTop: 0 }}>
                 后期效果
@@ -521,9 +523,8 @@ export function App() {
                 </Col>
               </Row>
 
-              {animationStyle === 'fy'
-                ? <Alert type="info" showIcon message="fy 模式由画风原文控制配色与背景，当前使用 Canvas 绘制；分镜图片编排请切换到原演出模式。讲解员与后期效果仍可使用。" style={{ marginBottom: 16 }} />
-                : <SceneAssetSettings selected={sceneAssetIds} onChange={setSceneAssetIds} onBusyChange={setSceneAssetsBusy} />}
+              <SceneAssetSettings selected={sceneAssetIds} onChange={setSceneAssetIds} onBusyChange={setSceneAssetsBusy}
+                fyStyleId={animationStyle === 'fy' ? fyStyleId : undefined} />
               <PresenterSettings value={presenter} onChange={setPresenter} onBusyChange={setPresenterBusy} />
               <Form.Item label="背景音乐" style={{ marginBottom: 8 }}>
                 {bgm ? (

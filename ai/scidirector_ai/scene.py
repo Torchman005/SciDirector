@@ -6,7 +6,6 @@ No model supplied HTML, CSS, expressions or asset URLs are executed.
 from __future__ import annotations
 
 import json
-import base64
 import math
 import re
 from functools import lru_cache
@@ -834,24 +833,12 @@ def compile_scene(scene: SceneSpec, *, width: int, height: int, duration: float,
         return "#" + "".join(c * 2 for c in value[1:]) if len(value) == 4 else value
     background = resolve_background_style(scene.background if style.background_style == "auto" else style.background_style)
     background_css = background.css.format(bg=full_hex(style.background_color), primary=full_hex(style.primary_color))
-    image_data: dict[str, str] = {}
+    from .image_assets import image_asset_data
     allowed = {asset.asset_id: asset for asset in style.scene_assets}
     image_ids = {el.asset_id for el in scene.elements if el.kind == "image"}
     image_ids.update(frame.asset_id for el in scene.elements if el.kind == "image"
                      for frame in el.keyframes if frame.asset_id)
-    for asset_id in sorted(image_ids):
-        asset = allowed[asset_id]
-        source = style.scene_asset_sources.get(asset_id)
-        if not source:
-            raise ValueError(f"图片素材 {asset_id} 缺少服务端解析路径")
-        path = Path(source).resolve()
-        suffix = ".png" if asset.mime_type == "image/png" else ".jpg"
-        if (path.stem != asset_id or path.suffix.lower() != suffix or
-                path.parent.parent.name != "visuals" or not re.fullmatch(r"[0-9a-f]{64}", path.parent.name)):
-            raise ValueError(f"图片素材 {asset_id} 的路径无效")
-        if not path.is_file() or path.stat().st_size != asset.size_bytes or asset.size_bytes > 2 << 20:
-            raise ValueError(f"图片素材 {asset_id} 已丢失或内容被改动")
-        image_data[asset_id] = f"data:{asset.mime_type};base64,{base64.b64encode(path.read_bytes()).decode('ascii')}"
+    image_data = image_asset_data(style, image_ids)
     # Reserve the final reading hold in the compiler rather than forcing the LLM
     # to calculate a duration-specific fraction. An end keyframe at 1 is legal.
     animated_until = 1 - min(FINAL_HOLD_SEC, duration * FINAL_HOLD_RATIO) / duration

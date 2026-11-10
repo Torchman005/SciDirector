@@ -21,6 +21,21 @@ class AiDirectorServiceStub(object):
                 request_serializer=scidirector_dot_v1_dot_ai__service__pb2.FyStylesRequest.SerializeToString,
                 response_deserializer=scidirector_dot_v1_dot_ai__service__pb2.FyStylesResponse.FromString,
                 _registered_method=True)
+        self.RecommendFyStyle = channel.unary_unary(
+                '/scidirector.v1.AiDirectorService/RecommendFyStyle',
+                request_serializer=scidirector_dot_v1_dot_ai__service__pb2.RecommendFyStyleRequest.SerializeToString,
+                response_deserializer=scidirector_dot_v1_dot_ai__service__pb2.RecommendFyStyleResponse.FromString,
+                _registered_method=True)
+        self.GetImageProviders = channel.unary_unary(
+                '/scidirector.v1.AiDirectorService/GetImageProviders',
+                request_serializer=scidirector_dot_v1_dot_ai__service__pb2.ImageProvidersRequest.SerializeToString,
+                response_deserializer=scidirector_dot_v1_dot_ai__service__pb2.ImageProvidersResponse.FromString,
+                _registered_method=True)
+        self.GenerateIllustration = channel.unary_unary(
+                '/scidirector.v1.AiDirectorService/GenerateIllustration',
+                request_serializer=scidirector_dot_v1_dot_ai__service__pb2.GenerateIllustrationRequest.SerializeToString,
+                response_deserializer=scidirector_dot_v1_dot_ai__service__pb2.GenerateIllustrationResponse.FromString,
+                _registered_method=True)
         self.RenderPresenter = channel.unary_unary(
                 '/scidirector.v1.AiDirectorService/RenderPresenter',
                 request_serializer=scidirector_dot_v1_dot_ai__service__pb2.RenderPresenterRequest.SerializeToString,
@@ -71,6 +86,24 @@ class AiDirectorServiceServicer(object):
         """Empty style_id returns catalog metadata; an explicit ID returns a complete,
         verified source snapshot. Only server-owned library paths are read.
         """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def RecommendFyStyle(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetImageProviders(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GenerateIllustration(self, request, context):
+        """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
@@ -158,6 +191,21 @@ def add_AiDirectorServiceServicer_to_server(servicer, server):
                     request_deserializer=scidirector_dot_v1_dot_ai__service__pb2.FyStylesRequest.FromString,
                     response_serializer=scidirector_dot_v1_dot_ai__service__pb2.FyStylesResponse.SerializeToString,
             ),
+            'RecommendFyStyle': grpc.unary_unary_rpc_method_handler(
+                    servicer.RecommendFyStyle,
+                    request_deserializer=scidirector_dot_v1_dot_ai__service__pb2.RecommendFyStyleRequest.FromString,
+                    response_serializer=scidirector_dot_v1_dot_ai__service__pb2.RecommendFyStyleResponse.SerializeToString,
+            ),
+            'GetImageProviders': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetImageProviders,
+                    request_deserializer=scidirector_dot_v1_dot_ai__service__pb2.ImageProvidersRequest.FromString,
+                    response_serializer=scidirector_dot_v1_dot_ai__service__pb2.ImageProvidersResponse.SerializeToString,
+            ),
+            'GenerateIllustration': grpc.unary_unary_rpc_method_handler(
+                    servicer.GenerateIllustration,
+                    request_deserializer=scidirector_dot_v1_dot_ai__service__pb2.GenerateIllustrationRequest.FromString,
+                    response_serializer=scidirector_dot_v1_dot_ai__service__pb2.GenerateIllustrationResponse.SerializeToString,
+            ),
             'RenderPresenter': grpc.unary_unary_rpc_method_handler(
                     servicer.RenderPresenter,
                     request_deserializer=scidirector_dot_v1_dot_ai__service__pb2.RenderPresenterRequest.FromString,
@@ -227,6 +275,87 @@ class AiDirectorService(object):
             '/scidirector.v1.AiDirectorService/GetFyStyles',
             scidirector_dot_v1_dot_ai__service__pb2.FyStylesRequest.SerializeToString,
             scidirector_dot_v1_dot_ai__service__pb2.FyStylesResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def RecommendFyStyle(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/scidirector.v1.AiDirectorService/RecommendFyStyle',
+            scidirector_dot_v1_dot_ai__service__pb2.RecommendFyStyleRequest.SerializeToString,
+            scidirector_dot_v1_dot_ai__service__pb2.RecommendFyStyleResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetImageProviders(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/scidirector.v1.AiDirectorService/GetImageProviders',
+            scidirector_dot_v1_dot_ai__service__pb2.ImageProvidersRequest.SerializeToString,
+            scidirector_dot_v1_dot_ai__service__pb2.ImageProvidersResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GenerateIllustration(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/scidirector.v1.AiDirectorService/GenerateIllustration',
+            scidirector_dot_v1_dot_ai__service__pb2.GenerateIllustrationRequest.SerializeToString,
+            scidirector_dot_v1_dot_ai__service__pb2.GenerateIllustrationResponse.FromString,
             options,
             channel_credentials,
             insecure,

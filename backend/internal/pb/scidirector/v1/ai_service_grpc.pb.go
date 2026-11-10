@@ -31,6 +31,9 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	AiDirectorService_GetFyStyles_FullMethodName           = "/scidirector.v1.AiDirectorService/GetFyStyles"
+	AiDirectorService_RecommendFyStyle_FullMethodName      = "/scidirector.v1.AiDirectorService/RecommendFyStyle"
+	AiDirectorService_GetImageProviders_FullMethodName     = "/scidirector.v1.AiDirectorService/GetImageProviders"
+	AiDirectorService_GenerateIllustration_FullMethodName  = "/scidirector.v1.AiDirectorService/GenerateIllustration"
 	AiDirectorService_RenderPresenter_FullMethodName       = "/scidirector.v1.AiDirectorService/RenderPresenter"
 	AiDirectorService_Health_FullMethodName                = "/scidirector.v1.AiDirectorService/Health"
 	AiDirectorService_RunPipeline_FullMethodName           = "/scidirector.v1.AiDirectorService/RunPipeline"
@@ -50,6 +53,9 @@ type AiDirectorServiceClient interface {
 	// Empty style_id returns catalog metadata; an explicit ID returns a complete,
 	// verified source snapshot. Only server-owned library paths are read.
 	GetFyStyles(ctx context.Context, in *FyStylesRequest, opts ...grpc.CallOption) (*FyStylesResponse, error)
+	RecommendFyStyle(ctx context.Context, in *RecommendFyStyleRequest, opts ...grpc.CallOption) (*RecommendFyStyleResponse, error)
+	GetImageProviders(ctx context.Context, in *ImageProvidersRequest, opts ...grpc.CallOption) (*ImageProvidersResponse, error)
+	GenerateIllustration(ctx context.Context, in *GenerateIllustrationRequest, opts ...grpc.CallOption) (*GenerateIllustrationResponse, error)
 	// Render a transparent presenter against Go's final aligned narration track.
 	// All paths are server resolved shared-volume paths; no media bytes over gRPC.
 	RenderPresenter(ctx context.Context, in *RenderPresenterRequest, opts ...grpc.CallOption) (*RenderPresenterResponse, error)
@@ -95,6 +101,36 @@ func (c *aiDirectorServiceClient) GetFyStyles(ctx context.Context, in *FyStylesR
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(FyStylesResponse)
 	err := c.cc.Invoke(ctx, AiDirectorService_GetFyStyles_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *aiDirectorServiceClient) RecommendFyStyle(ctx context.Context, in *RecommendFyStyleRequest, opts ...grpc.CallOption) (*RecommendFyStyleResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RecommendFyStyleResponse)
+	err := c.cc.Invoke(ctx, AiDirectorService_RecommendFyStyle_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *aiDirectorServiceClient) GetImageProviders(ctx context.Context, in *ImageProvidersRequest, opts ...grpc.CallOption) (*ImageProvidersResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ImageProvidersResponse)
+	err := c.cc.Invoke(ctx, AiDirectorService_GetImageProviders_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *aiDirectorServiceClient) GenerateIllustration(ctx context.Context, in *GenerateIllustrationRequest, opts ...grpc.CallOption) (*GenerateIllustrationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GenerateIllustrationResponse)
+	err := c.cc.Invoke(ctx, AiDirectorService_GenerateIllustration_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -199,6 +235,9 @@ type AiDirectorServiceServer interface {
 	// Empty style_id returns catalog metadata; an explicit ID returns a complete,
 	// verified source snapshot. Only server-owned library paths are read.
 	GetFyStyles(context.Context, *FyStylesRequest) (*FyStylesResponse, error)
+	RecommendFyStyle(context.Context, *RecommendFyStyleRequest) (*RecommendFyStyleResponse, error)
+	GetImageProviders(context.Context, *ImageProvidersRequest) (*ImageProvidersResponse, error)
+	GenerateIllustration(context.Context, *GenerateIllustrationRequest) (*GenerateIllustrationResponse, error)
 	// Render a transparent presenter against Go's final aligned narration track.
 	// All paths are server resolved shared-volume paths; no media bytes over gRPC.
 	RenderPresenter(context.Context, *RenderPresenterRequest) (*RenderPresenterResponse, error)
@@ -242,6 +281,15 @@ type UnimplementedAiDirectorServiceServer struct{}
 
 func (UnimplementedAiDirectorServiceServer) GetFyStyles(context.Context, *FyStylesRequest) (*FyStylesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetFyStyles not implemented")
+}
+func (UnimplementedAiDirectorServiceServer) RecommendFyStyle(context.Context, *RecommendFyStyleRequest) (*RecommendFyStyleResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RecommendFyStyle not implemented")
+}
+func (UnimplementedAiDirectorServiceServer) GetImageProviders(context.Context, *ImageProvidersRequest) (*ImageProvidersResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetImageProviders not implemented")
+}
+func (UnimplementedAiDirectorServiceServer) GenerateIllustration(context.Context, *GenerateIllustrationRequest) (*GenerateIllustrationResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GenerateIllustration not implemented")
 }
 func (UnimplementedAiDirectorServiceServer) RenderPresenter(context.Context, *RenderPresenterRequest) (*RenderPresenterResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RenderPresenter not implemented")
@@ -302,6 +350,60 @@ func _AiDirectorService_GetFyStyles_Handler(srv interface{}, ctx context.Context
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(AiDirectorServiceServer).GetFyStyles(ctx, req.(*FyStylesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AiDirectorService_RecommendFyStyle_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RecommendFyStyleRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AiDirectorServiceServer).RecommendFyStyle(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AiDirectorService_RecommendFyStyle_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AiDirectorServiceServer).RecommendFyStyle(ctx, req.(*RecommendFyStyleRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AiDirectorService_GetImageProviders_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ImageProvidersRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AiDirectorServiceServer).GetImageProviders(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AiDirectorService_GetImageProviders_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AiDirectorServiceServer).GetImageProviders(ctx, req.(*ImageProvidersRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AiDirectorService_GenerateIllustration_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GenerateIllustrationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AiDirectorServiceServer).GenerateIllustration(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AiDirectorService_GenerateIllustration_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AiDirectorServiceServer).GenerateIllustration(ctx, req.(*GenerateIllustrationRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -453,6 +555,18 @@ var AiDirectorService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetFyStyles",
 			Handler:    _AiDirectorService_GetFyStyles_Handler,
+		},
+		{
+			MethodName: "RecommendFyStyle",
+			Handler:    _AiDirectorService_RecommendFyStyle_Handler,
+		},
+		{
+			MethodName: "GetImageProviders",
+			Handler:    _AiDirectorService_GetImageProviders_Handler,
+		},
+		{
+			MethodName: "GenerateIllustration",
+			Handler:    _AiDirectorService_GenerateIllustration_Handler,
 		},
 		{
 			MethodName: "RenderPresenter",

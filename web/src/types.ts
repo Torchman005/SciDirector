@@ -247,6 +247,26 @@ export interface VisualAsset {
   height: number
   size_bytes: number
   preview_url?: string
+  generated?: { provider: string; model: string; fy_style_id?: string; fy_style_sha256?: string }
+}
+
+export interface FyStyleRecommendation {
+  style_id: string
+  reason: string
+  method: 'catalog_keyword_match'
+  library_version: string
+  alternatives: { style_id: string; name: string }[]
+}
+
+export interface ImageProvider {
+  id: string; label: string; protocol: 'openai_images'; model: string
+  sizes: string[]; configured: boolean
+}
+
+export interface IllustrationRequest {
+  provider_id: string; prompt: string; size: string; fy_style_id?: string
+  role: VisualAsset['role']; description: string; subject: string; pose: string
+  confirm_cost: true
 }
 
 export interface Effects {

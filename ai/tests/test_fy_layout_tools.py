@@ -52,7 +52,7 @@ def test_main_coder_carries_layout_apis_and_roles_through_compilation(style, bro
     assert 'textBlock' in llm.calls[0][0] and 'backdrop' in llm.calls[0][0]
     snapshot = extract_fy_snapshot(result.code)
     assert snapshot.document == doc
-    assert snapshot.context['object_features'] == ['backdrop-v1', 'text-block-v1']
+    assert snapshot.context['object_features'] == ['backdrop-v1', 'text-block-v1', 'image-asset-v1']
     page = open_page(browser, tmp_path, result.code)
     try:
         assert page.evaluate('window.__fyLayout()') == []

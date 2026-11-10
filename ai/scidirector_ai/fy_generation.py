@@ -17,6 +17,7 @@ class FySceneOutput(BaseModel):
 
     palette: FyPalette
     document: FyDocument
+    asset_ids: list[str] = Field(default_factory=list, max_length=6)
     code: str = Field(min_length=1)
     explanation: str = ''
 

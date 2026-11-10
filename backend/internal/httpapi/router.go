@@ -62,6 +62,9 @@ func NewRouter(s *Server, deps Deps) *gin.Engine {
 		v1.POST("/generate", s.HandleGenerate)
 		v1.GET("/styles/fy", s.HandleFyStyles)
 		v1.GET("/styles/fy/:id", s.HandleFyStyles)
+		v1.POST("/styles/fy/recommend", s.HandleRecommendFyStyle)
+		v1.GET("/image-providers", s.HandleImageProviders)
+		v1.POST("/assets/visuals/generate", s.HandleGenerateIllustration)
 
 		// 时长估算独立成端点：用户把时长留空时界面要能提前显示"预计约 XX 秒"，
 		// 而不是提交完才发现成片长度和自己想的不一样。

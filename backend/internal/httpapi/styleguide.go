@@ -49,12 +49,6 @@ func validateStyleGuide(sg map[string]any) error {
 		if !ok || !regexp.MustCompile(`^[A-Z]+[0-9]+$`).MatchString(id) {
 			return fmt.Errorf("fy 模式需要明确画风编号，如 X17")
 		}
-		if assets, exists := sg["scene_assets"]; exists && assets != nil {
-			list, ok := assets.([]any)
-			if !ok || len(list) > 0 {
-				return fmt.Errorf("当前 fy Canvas 不支持分镜图片素材，请使用 Canvas 绘制或切换演出模式")
-			}
-		}
 		if ratio, exists := sg["aspect_ratio"]; exists && ratio != "16:9" {
 			return fmt.Errorf("当前 fy Canvas 仅支持 16:9")
 		}

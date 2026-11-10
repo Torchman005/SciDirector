@@ -16,6 +16,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 // stageFiveSwitches 是**必须能透传到容器**的阶段五开关。
@@ -39,6 +41,11 @@ var stageFiveSwitches = []string{
 	"SCID_CODER_PREFLIGHT_ENABLED",
 	"SCID_CODER_SCENE_MODE",
 	"SCID_DIRECTOR_PLAN_MAX_TOKENS",
+	// 配图服务配置和独立密钥。
+	"SCID_IMAGE_PROVIDERS_JSON",
+	"SCID_IMAGE_API_KEYS",
+	"SCID_IMAGE_TIMEOUT_SEC",
+	"SCID_IMAGE_MAX_PARALLEL",
 	// 可观测性（本轮之前就已透传，一起钉住防止回退）
 	"SCID_OTEL_ENDPOINT",
 	"SCID_METRICS_PATH",
@@ -107,6 +114,43 @@ func TestStageFiveSwitchesAreDocumented(t *testing.T) {
 	for _, name := range stageFiveSwitches {
 		if !strings.Contains(doc, name) {
 			t.Errorf(".env.example 里没有 %s：部署的人不知道该配什么", name)
+		}
+	}
+}
+
+func TestIllustrationProxyWaitsWithoutReplaying(t *testing.T) {
+	content, err := os.ReadFile(filepath.Join(repoRoot(t), "deploy", "nginx", "default.conf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	location := regexp.MustCompile(`(?s)location\s*=\s*/api/v1/assets/visuals/generate\s*\{([^}]+)\}`).FindStringSubmatch(string(content))
+	if len(location) != 2 {
+		t.Fatal("生图接口缺少独立代理配置")
+	}
+	for _, directive := range []string{"proxy_read_timeout 320s;", "proxy_next_upstream off;", "client_max_body_size 32k;"} {
+		if !strings.Contains(location[1], directive) {
+			t.Errorf("生图代理缺少 %s", directive)
+		}
+	}
+}
+
+func TestImageProviderComposeStructure(t *testing.T) {
+	content, err := os.ReadFile(filepath.Join(repoRoot(t), "docker-compose.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var deployment struct {
+		Services map[string]struct {
+			Environment map[string]any `yaml:"environment"`
+		} `yaml:"services"`
+	}
+	if err := yaml.Unmarshal(content, &deployment); err != nil {
+		t.Fatalf("Compose 文件结构无效: %v", err)
+	}
+	for _, name := range []string{"SCID_IMAGE_PROVIDERS_JSON", "SCID_IMAGE_API_KEYS", "SCID_IMAGE_TIMEOUT_SEC", "SCID_IMAGE_MAX_PARALLEL"} {
+		value, ok := deployment.Services["ai"].Environment[name].(string)
+		if !ok || !strings.HasPrefix(value, "${"+name+":-") {
+			t.Errorf("%s 必须作为 AI 服务的环境变量透传", name)
 		}
 	}
 }

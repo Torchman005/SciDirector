@@ -46,6 +46,24 @@ const KE = (id, word, n = 0) => {
 const canvas = document.getElementById('film'), ctx = canvas.getContext('2d');
 const objects = SCIDFyObjects.create({D,ctx,C,W,H,fail,setOwner:id=>{activeObject=id;}});
 const object = (id,draw) => {if(started)fail('对象只能在播放前注册');objects.register(id,draw);};
+const images = new Map();
+const imageReady = Promise.all(Object.entries(D.image_data || {}).map(async ([id, source]) => {
+  const image = new Image();
+  image.src = source;
+  await image.decode();
+  images.set(id, image);
+}));
+function imageAsset(id, x, y, width, height, {fit='contain'} = {}) {
+  if (!activeObject) fail('imageAsset 必须在已声明对象的画笔内使用');
+  const image = images.get(id);
+  if (!image) fail(`图片素材未选用或未就绪：${id}`);
+  if (![x,y,width,height].every(Number.isFinite) || width<=0 || height<=0 || !['contain','cover'].includes(fit))
+    fail('imageAsset 的尺寸或 fit 无效');
+  const scale = (fit==='cover'?Math.max:Math.min)(width/image.naturalWidth,height/image.naturalHeight);
+  const w=image.naturalWidth*scale,h=image.naturalHeight*scale;
+  ctx.save();ctx.beginPath();ctx.rect(x,y,width,height);ctx.clip();
+  ctx.drawImage(image,x+(width-w)/2,y+(height-h)/2,w,h);ctx.restore();
+}
 const originalText = ctx.fillText.bind(ctx);
 // Record measured glyph bounds, including current camera/rotation/scale. This is
 // a text layout check; arbitrary Canvas shapes and relationship semantics need review.
@@ -145,7 +163,7 @@ function scene(id, draw) {
   if (!D.first_ids.includes(id) || scenes.some(s => s.id === id) || typeof draw !== 'function') fail(`场景注册无效：${id}`);
   scenes.push({id, draw});
 }
-const api = {M, C, V, W, H, DUR, T, TE, K, KE, label, textBlock, box, scene, theme, object};
+const api = {M, C, V, W, H, DUR, T, TE, K, KE, label, textBlock, box, scene, theme, object, imageAsset};
 window.FY = Object.freeze(api);
 window.__fyObjects = () => objects.snapshot();
 window.__fyLayoutDetails = () => {
@@ -199,7 +217,7 @@ window.__fyStart = async () => {
   for (const id of D.first_ids) if (!scenes.some(s => s.id === id)) errors.push(`[场景 ${id}] 未注册`);
   scenes.sort((a, b) => D.first_ids.indexOf(a.id) - D.first_ids.indexOf(b.id));
   film = FYC.createCanvasContract({canvas, width: W, height: H, duration: DUR, fps: D.fps,
-    draw: render, resources: document.fonts.ready});
+    draw: render, resources: Promise.all([document.fonts.ready, imageReady])});
   try { objects.check(); await film.readyPromise; film.seek(0); window.__ready = true; }
   catch (error) { errors.push(`初始化失败：${error.message}`); window.__ready = true; }
 };

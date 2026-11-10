@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react'
-import { Alert, Button, Checkbox, Form, Input, Radio, Space, Spin, Tag, Typography, Upload } from 'antd'
+import { useEffect, useRef, useState } from 'react'
+import { Alert, Button, Checkbox, Form, Input, Radio, Segmented, Space, Spin, Tag, Typography, Upload } from 'antd'
 import { InboxOutlined, ReloadOutlined } from '@ant-design/icons'
 import { api, errorText } from '../api'
 import { inspectSceneAssets } from '../sceneAssetReadiness'
 import type { VisualAsset } from '../types'
+import { IllustrationSettings } from './IllustrationSettings'
 
 const MAX_SELECTED = 6
 const MAX_TOTAL = 8 * 1024 * 1024
@@ -11,10 +12,11 @@ const roleName: Record<VisualAsset['role'], string> = {
   character: '人物', prop: '道具', background: '背景',
 }
 
-export function SceneAssetSettings({ selected, onChange, onBusyChange }: {
+export function SceneAssetSettings({ selected, onChange, onBusyChange, fyStyleId }: {
   selected: string[]
   onChange: (ids: string[]) => void
   onBusyChange: (busy: boolean) => void
+  fyStyleId?: string
 }) {
   const [items, setItems] = useState<VisualAsset[]>([])
   const [role, setRole] = useState<VisualAsset['role']>('character')
@@ -24,10 +26,21 @@ export function SceneAssetSettings({ selected, onChange, onBusyChange }: {
   const [busy, setBusy] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [mode, setMode] = useState<'upload' | 'generate'>('upload')
+  const libraryRevision = useRef(0)
+
+  function addAsset(asset: VisualAsset) {
+    libraryRevision.current++
+    setItems(current => [...current.filter(item => item.asset_id !== asset.asset_id), asset])
+  }
 
   async function refresh() {
+    const revision = libraryRevision.current
     setLoading(true)
-    try { setItems(await api.listVisuals()); setError('') }
+    try {
+      const result = await api.listVisuals()
+      if (revision === libraryRevision.current) { setItems(result); setError('') }
+    }
     catch (err) { setError(errorText(err)) }
     finally { setLoading(false) }
   }
@@ -46,7 +59,7 @@ export function SceneAssetSettings({ selected, onChange, onBusyChange }: {
     setBusy(true); onBusyChange(true); setError('')
     try {
       const asset = await api.uploadVisual(file, role, description.trim(), subject.trim(), pose.trim())
-      setItems(current => [...current, asset])
+      addAsset(asset)
       setDescription('')
       setPose('')
       const current = items.filter(item => selected.includes(item.asset_id))
@@ -88,16 +101,21 @@ export function SceneAssetSettings({ selected, onChange, onBusyChange }: {
           aria-label="姿态或状态" placeholder="姿态/状态，例如：思考" />
       </Space.Compact>
       <Typography.Text type="secondary" style={{ fontSize: 12 }}>同一角色的多张立绘填相同对象名称，各自填写待机、讲解、思考等状态；图片需使用相同画布尺寸，才能在镜头中无跳位切换。</Typography.Text>
+      <Segmented value={mode} disabled={busy} onChange={value => setMode(value as typeof mode)}
+        options={[{ value: 'upload', label: '导入图片' }, { value: 'generate', label: '生成配图' }]} />
+      {mode === 'generate' ? <IllustrationSettings fyStyleId={fyStyleId} role={role} description={description}
+        subject={subject} pose={pose} disabled={busy} onBusyChange={value => { setBusy(value); onBusyChange(value) }}
+        onCreated={addAsset} /> :
       <Upload.Dragger accept=".png,.jpg,.jpeg,image/png,image/jpeg" multiple={false} showUploadList={false} disabled={busy}
         beforeUpload={file => { void upload(file); return false }}>
         <p className="ant-upload-drag-icon"><InboxOutlined /></p>
         <p className="ant-upload-text">{busy ? '正在校验并导入图片…' : '点击或拖拽 PNG / JPEG 图片'}</p>
         <p className="ant-upload-hint">单张不超过 2 MB，最长边不超过 4096 像素</p>
-      </Upload.Dragger>
-      {error && <Alert type="error" showIcon role="alert" message={error} action={<Button size="small" icon={<ReloadOutlined />} onClick={() => void refresh()}>刷新素材库</Button>} />}
+      </Upload.Dragger>}
+      {error && <Alert type="error" showIcon role="alert" message={error} action={<Button size="small" icon={<ReloadOutlined />} disabled={busy} onClick={() => void refresh()}>刷新素材库</Button>} />}
       <Space><Typography.Text strong>本次选用 {chosen.length}/{MAX_SELECTED} 张</Typography.Text>
         <Typography.Text type="secondary">{(chosen.reduce((sum, item) => sum + item.size_bytes, 0) / 1024 / 1024).toFixed(2)} / 8 MB</Typography.Text>
-        <Button size="small" loading={loading} onClick={() => void refresh()}>刷新</Button></Space>
+        <Button size="small" loading={loading} disabled={busy} onClick={() => void refresh()}>刷新</Button></Space>
       {!loading && <Alert type={readiness.warnings.length ? 'warning' : 'info'} showIcon message="分镜素材准备"
         description={<Space direction="vertical" size={6} style={{ width: '100%' }}>
           {readiness.warnings.map(warning => <Typography.Text key={warning}>{warning}</Typography.Text>)}
@@ -118,6 +136,7 @@ export function SceneAssetSettings({ selected, onChange, onBusyChange }: {
             <div style={{ marginTop: 7 }}><Checkbox checked={selected.includes(item.asset_id)} disabled={busy}
               onChange={event => toggle(item, event.target.checked)}>{item.filename}</Checkbox></div>
             <Space size={5} wrap><Tag>{roleName[item.role]}</Tag>{item.subject && <Tag color="blue">{item.subject} · {item.pose || '默认'}</Tag>}<Typography.Text type="secondary" style={{ fontSize: 12 }}>{item.width} × {item.height}</Typography.Text></Space>
+            {item.generated && <Typography.Text type="secondary" style={{ display: 'block', fontSize: 12 }}>{item.generated.provider} · {item.generated.model}{item.generated.fy_style_id ? ` · ${item.generated.fy_style_id}` : ''}</Typography.Text>}
             {item.description && <Typography.Paragraph ellipsis={{ rows: 2 }} style={{ marginBottom: 0, fontSize: 12 }}>{item.description}</Typography.Paragraph>}
           </label>)}
         </div>}

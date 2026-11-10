@@ -59,7 +59,7 @@ def compile_fy(codes: list[tuple[str, str]], timing: dict, *, title: str = '', s
                style: dict | None = None, chapter_chrome: bool = True, min_font: int = 25,
                presenter_area: dict | None = None, palette: dict | None = None,
                document: FyDocument | None = None, parent_revision: str = '',
-               changes: list[dict] | None = None) -> str:
+               changes: list[dict] | None = None, image_data: dict[str, str] | None = None) -> str:
     """Inline the two pinned upstream modules and project adapter in an offline HTML."""
     engine_info(style)
     if not timing.get('lines') or not math.isfinite(timing['dur']) or timing['dur'] <= 0:
@@ -78,12 +78,20 @@ def compile_fy(codes: list[tuple[str, str]], timing: dict, *, title: str = '', s
                'font': FONT, 'require_theme': bool(style),
                'chapter_chrome': chapter_chrome, 'min_font': min_font, 'presenter_area': presenter_area}
     runtime = fy_runtime()
+    if image_data:
+        if sum(len(value) for value in image_data.values()) > 5 << 20:
+            raise ValueError('本镜图片内嵌数据超过 5 MB，请减少本镜素材；不自动截断或压缩图片')
+        if document is None or any(not re.fullmatch(r'[a-f0-9]{32}', key) or
+                not re.fullmatch(r'data:image/(?:png|jpeg);base64,[A-Za-z0-9+/]+=*', value)
+                for key, value in image_data.items()):
+            raise ValueError('fy 图片必须来自单镜对象模式的受信任素材快照')
+        payload['image_data'] = image_data
     if document is not None:
         if ids != ['shot'] or chapter_chrome or palette is None:
             raise ValueError('fy 对象文档仅支持显式 palette、无章节 chrome 的单镜 shot')
         document = FyDocument.model_validate(document)
         payload.update(object_document=document.model_dump(),
-                       object_features=['backdrop-v1', 'text-block-v1'],
+                       object_features=['backdrop-v1', 'text-block-v1', 'image-asset-v1'],
                        style_source=style_summary(style) if style else None,
                        object_runtime_sha256=hashlib.sha256(runtime.encode('utf-8')).hexdigest())
         revision = revision_hash(payload, codes[0][1])
@@ -101,7 +109,7 @@ def compile_fy(codes: list[tuple[str, str]], timing: dict, *, title: str = '', s
         code = re.sub(r'\bexport\s+', '', code)
         scripts.append(f'<script>window.{global_name}=(()=>{{{_safe_script(code)}\nreturn {{{",".join(names)}}};}})();</script>')
     scripts.append('<script>' + _safe_script(runtime) + '</script>')
-    exports = EXPORTS + (', object, textBlock' if document is not None else '')
+    exports = EXPORTS + (', object, textBlock, imageAsset' if document is not None else '')
     for key, code in codes:
         scripts.append('<script>window.__sceneTag=' + json.dumps(key) + ';</script>')
         scripts.append('<script>(()=>{const {' + exports + '}=FY;\n' + _safe_script(code) + '\n})();</script>')

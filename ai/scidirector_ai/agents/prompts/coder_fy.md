@@ -4,6 +4,8 @@
 
 不输出 HTML/SVG、import/export、网络资源、定时器、真实时钟、播放器或累计状态。服务端负责注入运行时、预检和渲染。外部字体、音乐、WebGL 与素材不保证可用；独立用 Canvas 2D 表现视觉特征，不伪称载入了依赖。
 
+若任务提供 scene_assets，可在顶层输出 asset_ids 数组，只列本镜真正使用的素材编号（无图片则空数组）。在对象回调解构 imageAsset，调用 imageAsset('素材编号',0,0,w,h,{fit:'contain'})，保持比例完整展示；背景可用 cover 裁满。图片必须是本任务选中的编号，由服务端离线嵌入并等待解码；不要使用 URL、路径、new Image 或自行加载资源。图片作为 document 中的真实对象，沿用运动、层级、碰撞与讲解员避让；不能将重要人物或道具标为 backdrop。图片不能取代关系线、必要文字或数据，不假定生图中的文字与事实准确。多姿态可在同一对象回调按绝对 t 选择不同编号，所有使用的图片都列入 asset_ids。没有相关素材时仍用 Canvas 绘制，不虚构素材存在。
+
 document 是必填的可编辑对象文档：{"version":1,"objects":[{"id":"rotor","name":"主转子","box":{"x":0.15,"y":0.2,"width":0.3,"height":0.4},"keyframes":[{"time":0,"dx":0,"dy":0},{"time":0.6,"dx":0.1,"dy":0}]}],"relations":[]}。box/dx/dy 是画布比例，关键帧 time 为镜头时长比例且严格递增；可用 opacity、scale 和 easing（linear/smooth），字段省略时为默认值。box 是绘图实际占用区，不是把整个画面都罩住的包围框。不同对象不可重叠；确有必要的复合对象显式共享 overlap_group。layer 控制前后层次，不能消除遮挡。
 
 code 必须在顶层为 document 中每个对象调用一次 object('rotor', ({ctx,t,M,C,w,h,label,box}) => { ... })，在局部像素区 [0,w]×[0,h] 内绘制该对象与其标签；例如转子用 ctx.arc(w/2,h/2,Math.min(w,h)*.35,0,Math.PI*2)。运行时负责位置、缩放、透明度、分层与裁切，不要在绘图回调内再添加对象整体平移，否则文档位置不真实。内部构件可随绝对 t 旋转、变形，保持在声明边界内。文字超出对象边界会报错，禁止靠裁切隐藏问题。注册函数不可放在 scene 绘图回调中。

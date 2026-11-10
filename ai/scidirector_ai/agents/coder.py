@@ -288,6 +288,7 @@ class CoderAgent(Agent):
         from ..chapter.fy import compile_fy
         from ..fy_generation import FySceneOutput, extract_fy_code, extract_fy_palette, shot_timing
         from ..fy_objects import extract_fy_snapshot
+        from ..image_assets import image_asset_data
 
         timing = shot_timing(shot)
         system = load_prompt('coder_fy')
@@ -320,7 +321,8 @@ class CoderAgent(Agent):
                     width=self.settings.render_width, height=self.settings.render_height,
                     fps=self.settings.render_fps, chapter_chrome=False, min_font=style.min_font_size,
                     presenter_area=style.presenter_safe_area.model_dump() if style.presenter_safe_area else None,
-                    palette=raw.palette.model_dump(), document=raw.document)
+                    palette=raw.palette.model_dump(), document=raw.document,
+                    image_data=image_asset_data(style, raw.asset_ids))
                 result.artifact = CodeArtifact(code=compiled, language='html+js', explanation=raw.explanation)
                 report = check_html_contract(compiled)
                 result.quality = (self.quality_checker.check(compiled, shot, style) if report.ok
@@ -344,6 +346,7 @@ class CoderAgent(Agent):
         from ..chapter.fy_styles import style_summary
         from ..fy_generation import shot_timing
         from ..fy_objects import apply_fy_revision, document_changes, extract_fy_snapshot
+        from ..image_assets import image_asset_data
 
         previous = extract_fy_snapshot(shot.code)
         if previous is None:
@@ -357,13 +360,16 @@ class CoderAgent(Agent):
                     'style_source': style_summary(style_guide.fy_style_source) if style_guide.fy_style_source else None}
         if any(context.get(key) != value for key, value in expected.items()):
             raise ValueError('fy 镜头时序、输出规格、画风或运行时已变化，请重新生成后再精确修改')
+        images = image_asset_data(style_guide, context.get('image_data', {}).keys())
+        if images != context.get('image_data', {}):
+            raise ValueError('fy 图片素材已变化，请重新生成后再精确修改')
         document = apply_fy_revision(previous, revision)
         code = compile_fy([('shot', previous.code)], context['timing'], data=context['vars'],
             width=context['width'], height=context['height'], fps=context['fps'],
             style=style_guide.fy_style_source, chapter_chrome=False, min_font=context['min_font'],
             presenter_area=context['presenter_area'], palette=context['palette'],
             document=document, parent_revision=previous.revision,
-            changes=document_changes(previous.document, document))
+            changes=document_changes(previous.document, document), image_data=images)
         report = check_html_contract(code)
         if not report.ok:
             raise ValueError('精确 fy 修订未通过源码检查：' + report.summary())

@@ -4,10 +4,28 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	pb "github.com/itJinYu/SciDirector/backend/internal/pb/scidirector/v1"
 )
+
+func (s *Server) HandleRecommendFyStyle(c *gin.Context) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 128<<10)
+	var req struct {
+		RawScript string `json:"raw_script"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || utf8.RuneCountInString(req.RawScript) < 20 || utf8.RuneCountInString(req.RawScript) > 30000 {
+		abortWith(c, http.StatusBadRequest, ErrCodeBadRequest, "脚本需为 20～30000 字", nil)
+		return
+	}
+	resp, err := s.deps.AI.RecommendFyStyle(c.Request.Context(), &pb.RecommendFyStyleRequest{RawScript: req.RawScript})
+	if err != nil || !json.Valid([]byte(resp.GetRecommendationJson())) {
+		abortWith(c, http.StatusServiceUnavailable, ErrCodeUpstream, "自动画风匹配不可用，请手动选择画风", nil)
+		return
+	}
+	respondOK(c, json.RawMessage(resp.RecommendationJson))
+}
 
 // Catalog and source resolution share Python's pinned library reader.
 func (s *Server) HandleFyStyles(c *gin.Context) {

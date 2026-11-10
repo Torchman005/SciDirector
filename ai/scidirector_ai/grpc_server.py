@@ -79,6 +79,32 @@ class AiDirectorServicer(pb_grpc.AiDirectorServiceServicer):
         except (RuntimeError,OSError) as exc:
             context.abort(grpc.StatusCode.INTERNAL,str(exc))
 
+    def RecommendFyStyle(self, request: Any, context: grpc.ServicerContext) -> Any:  # noqa: N802
+        try:
+            return pb.RecommendFyStyleResponse(recommendation_json=json.dumps(
+                self.service.recommend_fy_style(request.raw_script), ensure_ascii=False))
+        except ValueError as exc:
+            context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(exc))
+        except (OSError, RuntimeError):
+            context.abort(grpc.StatusCode.UNAVAILABLE, '画风匹配不可用，请检查画风库')
+
+    def GetImageProviders(self, request: Any, context: grpc.ServicerContext) -> Any:  # noqa: N802
+        return pb.ImageProvidersResponse(providers_json=json.dumps(self.service.images.catalog(), ensure_ascii=False))
+
+    def GenerateIllustration(self, request: Any, context: grpc.ServicerContext) -> Any:  # noqa: N802
+        from .illustrations import ImageGenerationError
+        try:
+            result = self.service.generate_illustration(provider_id=request.provider_id, prompt=request.prompt,
+                size=request.size, fy_style_id=request.fy_style_id, output_dir=request.output_dir,
+                timeout_sec=context.time_remaining())
+            return pb.GenerateIllustrationResponse(**result)
+        except ValueError as exc:
+            context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(exc))
+        except ImageGenerationError as exc:
+            context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(exc))
+        except (OSError, RuntimeError):
+            context.abort(grpc.StatusCode.INTERNAL, '生图素材保存失败，请检查共享目录；不会自动重试')
+
     # ------------------------------------------------------------------
     # Health
     # ------------------------------------------------------------------

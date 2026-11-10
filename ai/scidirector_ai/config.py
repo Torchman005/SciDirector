@@ -19,7 +19,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .providers import PROVIDERS, LLMTarget, resolve_target
@@ -37,6 +37,7 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,
+        hide_input_in_errors=True,
     )
 
     # ------------------------------------------------------------------
@@ -74,6 +75,18 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------
     # LLM / VLM
     # ------------------------------------------------------------------
+    image_providers_json: str = Field(default='[]', repr=False)
+    image_api_keys: dict[str, SecretStr] = Field(default_factory=dict, repr=False)
+    image_timeout_sec: int = Field(default=180, ge=5, le=300)
+    image_max_parallel: int = Field(default=2, ge=1, le=8)
+
+    @field_validator('image_providers_json')
+    @classmethod
+    def _image_profiles(cls, value: str) -> str:
+        from .illustrations import parse_providers
+        parse_providers(value)
+        return value
+
     # ---------- 语音合成（TTS） ----------
     #
     # 默认**不合成**：缺省必须是一条能跑通的路径，没配 TTS 不该让流水线失败。

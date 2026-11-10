@@ -1,5 +1,7 @@
 # SciDirector API 契约
 
+2026-11-10 配图准备：新增 `POST /api/v1/styles/fy/recommend`（raw_script，返回离线用词匹配及版本）、`GET /api/v1/image-providers`（无密钥/地址的服务清单）、`POST /api/v1/assets/visuals/generate`（provider_id/prompt/size/可选 fy_style_id/素材元数据/confirm_cost=true）。对应新增 RecommendFyStyle/GetImageProviders/GenerateIllustration RPC；图像仅通过共享文件路径交接，入库复用原导入校验和租户素材 ID。fy 主工作流现在可提交 scene_assets，使用服务端内嵌图，不支持的旧“fy 不接受图片”限制由本条替代；比例限制不变。生图无自动重试/付费降级，参数错误 400、素材满 409、服务列表不可用 503、生成失败 502；不会因失败伪造素材。完整配置、字段及尚未验证的 Vankit 兼容性见 [VISUAL_PREPARATION.md](VISUAL_PREPARATION.md)。
+
 2026-11-01 分镜恢复：续跑或跳过已完成检查点前，Python 先发送任务级 `plan`（空 shot_id、未指定 status），`payload_json` 在原 shots/outline 上增加可选 `recovery_events`。shots 仍为 snake_case 与数字枚举；recovery_events 使用 protobuf JSON，int64 时间为字符串，Go 用 protojson 解码。历史只恢复后端原来缺失的镜头，不重复追加已有镜头的审核记录；同步异常返回错误而非丢事件。fy 标签统一 motion。现有 REST 字段不变，分镜数仍以实际 Job.Shots 派生。双方需协调更新；旧内存检查点不能靠重启迁移。详见 [PLAN_RECOVERY.md](PLAN_RECOVERY.md)。
 
 2026-10-31 fy：新增 `GET /api/v1/styles/fy` 目录、`GET /api/v1/styles/fy/:id` 全文详情，以及 Go→Python `GetFyStyles` RPC（空 id 返回 catalog_json，明确 id 返回 source_json）。新建任务仅提交 `style_guide={animation_style:"fy",fy_style_id:"X17"}`；Go 拒绝客户端 `fy_style_source`，经 Python 固定读取器解析全文、哈希、版本后保存到 Job.StyleGuide。所有主生成/单镜修订 RPC 沿原 JSON 字段传来源快照，fy 无效参数返回 INVALID_ARGUMENT，不回默认风格；库或浏览器缺失明确 503，参数缺失或不支持的图片/比例为 400。主路径统一使用 motion/fy-canvas，任务查询返回画风快照供展示。完整字段、部署与限制见 [FY_MAIN_WORKFLOW.md](FY_MAIN_WORKFLOW.md)。

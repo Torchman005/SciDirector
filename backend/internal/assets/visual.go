@@ -12,19 +12,27 @@ import (
 
 const MaxVisualAssetsPerTenant = 48
 
-// VisualAsset contains only user-authored descriptive metadata. File paths are
+type VisualGeneration struct {
+	Provider      string `json:"provider"`
+	Model         string `json:"model"`
+	FyStyleID     string `json:"fy_style_id,omitempty"`
+	FyStyleSHA256 string `json:"fy_style_sha256,omitempty"`
+}
+
+// VisualAsset contains descriptive metadata and optional generation provenance. File paths are
 // always resolved from the tenant-scoped, server-issued asset ID.
 type VisualAsset struct {
-	AssetID     string `json:"asset_id"`
-	Filename    string `json:"filename"`
-	MIMEType    string `json:"mime_type"`
-	Role        string `json:"role"`
-	Description string `json:"description,omitempty"`
-	Subject     string `json:"subject,omitempty"`
-	Pose        string `json:"pose,omitempty"`
-	Width       int    `json:"width"`
-	Height      int    `json:"height"`
-	SizeBytes   int64  `json:"size_bytes"`
+	AssetID     string            `json:"asset_id"`
+	Filename    string            `json:"filename"`
+	MIMEType    string            `json:"mime_type"`
+	Role        string            `json:"role"`
+	Description string            `json:"description,omitempty"`
+	Subject     string            `json:"subject,omitempty"`
+	Pose        string            `json:"pose,omitempty"`
+	Width       int               `json:"width"`
+	Height      int               `json:"height"`
+	SizeBytes   int64             `json:"size_bytes"`
+	Generated   *VisualGeneration `json:"generated,omitempty"`
 }
 
 // SaveVisual stores a validated PNG/JPEG and its manifest in a directory

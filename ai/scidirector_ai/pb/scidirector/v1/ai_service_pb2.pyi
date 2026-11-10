@@ -12,6 +12,56 @@ class FyStylesRequest(_message.Message):
     style_id: str
     def __init__(self, style_id: _Optional[str] = ...) -> None: ...
 
+class RecommendFyStyleRequest(_message.Message):
+    __slots__ = ("raw_script",)
+    RAW_SCRIPT_FIELD_NUMBER: _ClassVar[int]
+    raw_script: str
+    def __init__(self, raw_script: _Optional[str] = ...) -> None: ...
+
+class RecommendFyStyleResponse(_message.Message):
+    __slots__ = ("recommendation_json",)
+    RECOMMENDATION_JSON_FIELD_NUMBER: _ClassVar[int]
+    recommendation_json: str
+    def __init__(self, recommendation_json: _Optional[str] = ...) -> None: ...
+
+class ImageProvidersRequest(_message.Message):
+    __slots__ = ()
+    def __init__(self) -> None: ...
+
+class ImageProvidersResponse(_message.Message):
+    __slots__ = ("providers_json",)
+    PROVIDERS_JSON_FIELD_NUMBER: _ClassVar[int]
+    providers_json: str
+    def __init__(self, providers_json: _Optional[str] = ...) -> None: ...
+
+class GenerateIllustrationRequest(_message.Message):
+    __slots__ = ("provider_id", "prompt", "size", "fy_style_id", "output_dir")
+    PROVIDER_ID_FIELD_NUMBER: _ClassVar[int]
+    PROMPT_FIELD_NUMBER: _ClassVar[int]
+    SIZE_FIELD_NUMBER: _ClassVar[int]
+    FY_STYLE_ID_FIELD_NUMBER: _ClassVar[int]
+    OUTPUT_DIR_FIELD_NUMBER: _ClassVar[int]
+    provider_id: str
+    prompt: str
+    size: str
+    fy_style_id: str
+    output_dir: str
+    def __init__(self, provider_id: _Optional[str] = ..., prompt: _Optional[str] = ..., size: _Optional[str] = ..., fy_style_id: _Optional[str] = ..., output_dir: _Optional[str] = ...) -> None: ...
+
+class GenerateIllustrationResponse(_message.Message):
+    __slots__ = ("image_path", "provider_id", "model", "fy_style_id", "fy_style_sha256")
+    IMAGE_PATH_FIELD_NUMBER: _ClassVar[int]
+    PROVIDER_ID_FIELD_NUMBER: _ClassVar[int]
+    MODEL_FIELD_NUMBER: _ClassVar[int]
+    FY_STYLE_ID_FIELD_NUMBER: _ClassVar[int]
+    FY_STYLE_SHA256_FIELD_NUMBER: _ClassVar[int]
+    image_path: str
+    provider_id: str
+    model: str
+    fy_style_id: str
+    fy_style_sha256: str
+    def __init__(self, image_path: _Optional[str] = ..., provider_id: _Optional[str] = ..., model: _Optional[str] = ..., fy_style_id: _Optional[str] = ..., fy_style_sha256: _Optional[str] = ...) -> None: ...
+
 class FyStylesResponse(_message.Message):
     __slots__ = ("catalog_json", "source_json")
     CATALOG_JSON_FIELD_NUMBER: _ClassVar[int]
