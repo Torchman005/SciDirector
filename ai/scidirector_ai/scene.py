@@ -817,6 +817,7 @@ def _validate_semantic_shapes(scene: SceneSpec) -> None:
 def scene_runtime() -> str:
     return (Path(__file__).with_name("character_runtime.js").read_text(encoding="utf-8") + "\n"
             + Path(__file__).with_name("science_icons_runtime.js").read_text(encoding="utf-8") + "\n"
+            + Path(__file__).with_name("connector_runtime.js").read_text(encoding="utf-8") + "\n"
             + Path(__file__).with_name("scene_runtime.js").read_text(encoding="utf-8"))
 
 

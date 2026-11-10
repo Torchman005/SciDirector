@@ -37,6 +37,7 @@ from .repair_evidence import attach_repair_evidence, precheck_repairs, skip_full
 from .review_tasks import (active_repairs, carry_repairs, ensure_human_task, repair_stalled,
                            FAILURES_BEFORE_HANDOFF)
 from .scene_revision import parse_exact_revision
+from .fy_objects import FyRevision, parse_fy_revision
 from .renderer import RendererError, RenderRequest, build_renderer, renderer_availability
 from .sandbox.runner import SandboxRunner
 from .tts.factory import build_tts_provider
@@ -416,12 +417,14 @@ class PipelineService:
 
         # Parse and preflight BEFORE the automatic repair loop. Invalid operator
         # edits fail closed rather than silently falling back to model generation.
-        exact_revision = parse_exact_revision(human_comment)
+        exact_revision = parse_fy_revision(human_comment) or parse_exact_revision(human_comment)
+        exact_fy = isinstance(exact_revision, FyRevision)
         exact_result = None
         if exact_revision is not None:
             if range_end_sec > range_start_sec:
                 raise ValueError("精确场景修订需要完整镜头复审，不支持局部时间区间")
-            exact_result = self.coder.apply_exact_revision(
+            apply_exact = self.coder.apply_exact_fy_revision if exact_fy else self.coder.apply_exact_revision
+            exact_result = apply_exact(
                 shot=shot, style_guide=style_guide, revision=exact_revision)
 
         current = shot
@@ -445,7 +448,7 @@ class PipelineService:
         failure_retryable = True
         # Partial patches cannot be reviewed as complete scenes until Go splices
         # them. Full-shot edits get the same bounded repair opportunity as initial generation.
-        rounds = 1 if range_end_sec > range_start_sec else min(3, self.settings.shot_max_attempts)
+        rounds = 1 if exact_fy or range_end_sec > range_start_sec else min(3, self.settings.shot_max_attempts)
         for revision_round in range(rounds):
             round_attempt = attempt + revision_round
             logger.info("单镜修订轮次", extra={"shot_id": shot.shot_id, "round": revision_round+1, "limit": rounds})
@@ -490,7 +493,8 @@ class PipelineService:
                     job_id=job_id, shot=updated, code=result.code, style_guide=style_guide,
                     attempt=round_attempt, output_dir=output_dir, draft_only=False,
                     range_start_sec=range_start_sec, range_end_sec=range_end_sec,
-                    speech_path=last_valid[1].audio_path if last_valid and last_valid[0].narration == updated.narration else "",
+                    speech_path=(previous_artifact.audio_path if exact_fy and previous_artifact else
+                        last_valid[1].audio_path if last_valid and last_valid[0].narration == updated.narration else ""),
                 )
             except NarrationRepairError as exc:
                 failure = "旁白联动修订已停止，需人工核对：" + str(exc)
@@ -545,6 +549,9 @@ class PipelineService:
                 evidence_before.artifact_id if evidence_before else "", artifact.artifact_id)
             last_valid = (updated, artifact, outcome.feedback, honored)
             if outcome.feedback.passed or outcome.degraded or not active_repairs(outcome.feedback):
+                return last_valid
+            if exact_fy:
+                outcome.feedback.handoff_reason = '精确修改已完成渲染与复审，仍有未关闭任务；未扩大修改其他对象，请人工核对。'
                 return last_valid
             if previous_review and active_repairs(previous_review):
                 # 只有原问题被复审再次看到才算停滞；没拿到有效证据（unverified）不推向人工。

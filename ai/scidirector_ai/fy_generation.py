@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .schemas import ShotSpec
 from .chapter.fy_palette import FyPalette
+from .fy_objects import FyDocument
 
 
 class FySceneOutput(BaseModel):
@@ -15,6 +16,7 @@ class FySceneOutput(BaseModel):
     model_config = ConfigDict(extra='forbid')
 
     palette: FyPalette
+    document: FyDocument
     code: str = Field(min_length=1)
     explanation: str = ''
 

@@ -1,5 +1,9 @@
 # Agent.md — SciDirector 智能体协作与工程规约
 
+2026-11-10 fy 单镜对象与精确修订：主 coder 输出新增必填 FyDocument（稳定对象 id、归一化 box、layer、显式 overlap_group、纯时间关键帧及独立 source/target/port 关系）；画笔用顶层 object(id, draw) 注册，只负责对象局部内容，背景与原画风快照保留。固定运行时负责整体变换与裁切、端口、避障、隐藏/blocked 状态；复用抽出的共享路由，不引入 DrawAI 运行依赖。文字越界不能靠裁切隐藏，对象 AABB、字幕/讲解员和重叠检查接入原预检；有对象文档的主预检按实际成片 FPS 扫描运动期。仍非任意 Canvas 形状、关系语义或美感保证，逐时刻重路由可能改变拓扑。
+
+scid-fy-data 保存对象、内容版本、父版本与本次 before/after 差异，scid-fy-code 由编译器唯一保存画笔源码。SCID_FY_REVISION_V1: 要求 expect_revision，只允许现有对象的位置/层级/运动/叠放组与关系变更；版本覆盖画笔、配色、时序、输出规格、画风摘要和运行时哈希。旧 fy 无文档时明确不支持精确编辑。精确修订不调用文本模型、不改旁白，可复用原音轨，仍走原渲染及审片；只有一次受控改动，失败或审片问题不扩大为全镜重写。Go 在最终落库锁内复核镜头、产物、账本、画风和效果快照，拒绝过期结果覆盖新编辑。原 SceneSpec 修订、旧自由 fy 和整章 CLI 保持兼容，不新增 proto 字段、不绕过门禁。需要协调更新 Python AI 与 Go worker；未重启或重做旧任务。前端工作台、稳定通道/曲线/精确碰撞形状、定调与 TTS 改进均待后续。详见 docs/FY_OBJECT_EDITS.md。
+
 2026-11-01 分镜表断线恢复：Go gRPC 客户端与 Python 服务端保活改为有调用时每 5 分钟，避免原 30 秒客户端 ping 与服务端缺省最小间隔冲突。PipelineRunner 在继续未完成或跳过已完成检查点前，先补发任务级 plan（空 shot_id/status）；payload 保留 snake_case/数字枚举分镜表，新增 recovery_events，包含原始规划后的实际 render/critique/revise 及每镜最新 code，按原顺序恢复。嵌套事件按 protobuf JSON 解码（int64 为字符串）；反馈恢复使用原事件时间。Go 在一次更新内只为原来缺失的镜头回放历史，已有镜头保留源码、产物、审核账本和修订旁白；原始 plan 配合类型化 narration_patch 保持文案与媒体一起更新。无产物不能恢复为通过，其他任务/未知镜头/非法历史拒绝并不发布半成品状态；正常流中的未知镜头不再静默丢弃。fy 所有标签继续使用 motion。没有检查点或尚未规划时沿既有首跑/续跑规则处理，不虚构状态。此修复不覆盖已有镜头的所有丢失事件，仍受消息大小上限约束。当前 job-e117c32bdabfc15a 使用旧进程的 memory 检查点，未重启或声称在线恢复；部署前须保护该状态。详见 `docs/PLAN_RECOVERY.md`。
 
 2026-11-01 导演输出截断修复：导演独立配置 `SCID_DIRECTOR_PLAN_MAX_TOKENS`（默认 8192，首轮最多 4096）；只有服务商明确返回 finish_reason=length 时，在原有最多两次解析调用内提高到配置上限，其他 JSON/字段校验失败沿用首轮预算。LLMTruncatedError 保留截断类型与原响应，不触发传输层重复重试，不接受截断 JSON 的完整内层对象。导演提示词约束紧凑输出、完整旁白及分镜顺序、不逐镜复述画风、不输出代码/关键帧；index 可由数组顺序派生。通用/编码/审核预算不变，配置同步进入 .env.example、Compose 与公开摘要；模型自身输出上限仍须兼容。没有改变分镜时长修复、fy 来源或发布门禁。需重启 Python AI 服务，未自动重启。详见 `docs/DIRECTOR_PLANNING.md`。

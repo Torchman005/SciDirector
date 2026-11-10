@@ -690,6 +690,9 @@ func (p *Processor) HandleRenderShot(ctx context.Context, task RenderShotTask) e
 
 	// 把重做结果写回状态。
 	final, err := p.store.UpdateJob(ctx, jobID, func(j *domain.Job) error {
+		if strings.HasPrefix(task.Payload.HumanComment, "SCID_FY_REVISION_V1:") && !fyRevisionBaseUnchanged(j, job, shotID) {
+			return fmt.Errorf("%w: fy 镜头已变化，未发布过期的精确修订，请基于当前版本重试", asynq.SkipRetry)
+		}
 		s := j.FindShot(shotID)
 		if s == nil {
 			return nil

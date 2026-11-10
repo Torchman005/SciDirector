@@ -6,7 +6,7 @@ const {timing, width: W, height: H} = D, DUR = timing.dur, M = FYM;
 const C = {...D.palette}, V = Object.freeze(D.vars || {});
 const by = new Map(timing.lines.map(l => [l.id, l]));
 const errors = window.__errors = [], scenes = [];
-let textBoxes = [], activeId = '', film, themed = D.explicit_palette === true, started = false;
+let textBoxes = [], activeId = '', activeObject = '', film, themed = D.explicit_palette === true, started = false;
 window.__ready = false;
 const fail = message => { throw new Error(message); };
 function theme(palette) {
@@ -44,6 +44,8 @@ const KE = (id, word, n = 0) => {
   return line(id).times[at + length] ?? TE(id);
 };
 const canvas = document.getElementById('film'), ctx = canvas.getContext('2d');
+const objects = SCIDFyObjects.create({D,ctx,C,W,H,fail,setOwner:id=>{activeObject=id;}});
+const object = (id,draw) => {if(started)fail('对象只能在播放前注册');objects.register(id,draw);};
 const originalText = ctx.fillText.bind(ctx);
 // Record measured glyph bounds, including current camera/rotation/scale. This is
 // a text layout check; arbitrary Canvas shapes and relationship semantics need review.
@@ -56,7 +58,7 @@ ctx.fillText = function(text, x, y, maxWidth) {
   const points = [[a[0], a[1]], [a[0], b[1]], [b[0], a[1]], [b[0], b[1]]]
     .map(([px, py]) => new DOMPoint(px, py).matrixTransform(tr));
   const xs = points.map(p => p.x), ys = points.map(p => p.y);
-  if (ctx.globalAlpha > .15 && String(text).trim()) textBoxes.push({scene: activeId, text: String(text),
+  if (ctx.globalAlpha > .15 && String(text).trim()) textBoxes.push({scene: activeId, owner: activeObject, text: String(text),
     x: Math.min(...xs), y: Math.min(...ys), right: Math.max(...xs), bottom: Math.max(...ys),
     size: (parseFloat(ctx.font.match(/([\d.]+)px/)?.[1]) || 0) * Math.min(Math.hypot(tr.a, tr.b), Math.hypot(tr.c, tr.d))});
   originalText(text, x, y);
@@ -74,8 +76,9 @@ function scene(id, draw) {
   if (!D.first_ids.includes(id) || scenes.some(s => s.id === id) || typeof draw !== 'function') fail(`场景注册无效：${id}`);
   scenes.push({id, draw});
 }
-const api = {M, C, V, W, H, DUR, T, TE, K, KE, label, box, scene, theme};
+const api = {M, C, V, W, H, DUR, T, TE, K, KE, label, box, scene, theme, object};
 window.FY = Object.freeze(api);
+window.__fyObjects = () => objects.snapshot();
 window.__fyLayout = () => {
   const issues = [], add = (b, message) => issues.push(`[场景 ${b.scene}] ${message}：“${b.text.slice(0, 40)}”`);
   for (const b of textBoxes) {
@@ -93,7 +96,7 @@ window.__fyLayout = () => {
     if (a.scene === b.scene && Math.min(a.right, b.right) - Math.max(a.x, b.x) > 3 &&
         Math.min(a.bottom, b.bottom) - Math.max(a.y, b.y) > 3) add(a, `独立文字重叠（另一个：${b.text.slice(0, 30)}）`);
   }
-  return issues;
+  return issues.concat(objects.layout(textBoxes));
 };
 function render({t}) {
   textBoxes = []; activeId = '';
@@ -106,6 +109,7 @@ function render({t}) {
     catch (error) { const message = `[场景 ${s.id}] 绘制失败：${error.message}`; if (!errors.includes(message)) errors.push(message); throw error; }
     finally { ctx.restore(); }
   }
+  objects.render(t,api,textBoxes);
   const current = timing.lines.find(l => t >= l.start && t < l.end);
   if (D.chapter_chrome !== false) {
     document.getElementById('sub').textContent = current?.sub || '';
@@ -124,7 +128,7 @@ window.__fyStart = async () => {
   scenes.sort((a, b) => D.first_ids.indexOf(a.id) - D.first_ids.indexOf(b.id));
   film = FYC.createCanvasContract({canvas, width: W, height: H, duration: DUR, fps: D.fps,
     draw: render, resources: document.fonts.ready});
-  try { await film.readyPromise; film.seek(0); window.__ready = true; }
+  try { objects.check(); await film.readyPromise; film.seek(0); window.__ready = true; }
   catch (error) { errors.push(`初始化失败：${error.message}`); window.__ready = true; }
 };
 window.__seek = t => {

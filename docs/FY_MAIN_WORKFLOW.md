@@ -13,12 +13,14 @@
 
 ## 服务契约
 
+2026-11-10 新增对象文档与版本校验修订，详见 [FY_OBJECT_EDITS.md](FY_OBJECT_EDITS.md)。现有画风来源、palette 初始化、渲染与审查入口保持不变；前端对象编辑器仍未提供。
+
 - `GET /api/v1/styles/fy` 返回 `entries`、`prompt_count`、`library_version`、`repository`、`license_note`。条目含 id/name/category/look/fit/keywords（部分可选）；由 Python 固定读取器重建索引并验证原文件。
 - `GET /api/v1/styles/fy/:id` 返回完整来源：id/name/content/path/sha256/library_version/library_commit/repository/attribution 与依赖提示等。依赖提示不是完整审计，也不触发自动安装。
 - 上述 REST 调用 `GetFyStyles(FyStylesRequest{style_id})`。空编号返回 `catalog_json`；明确编号返回 `source_json`，不同时返回两者。不接收客户端路径。
 - 新建请求的 `style_guide` 只需 `{"animation_style":"fy","fy_style_id":"X17"}`。`fy_style_source` 为内部字段，REST 拒绝客户端提供。Go 在模型调用/入队前解析来源，保存到 Job.StyleGuide；不可用返回明确 503，不创建替代任务。缺少编号、类型错误、非 16:9 或分镜图片返回 400。
 - 主流水线与单镜 RPC 通过原 `style_guide_json` 传完整快照。Python 校验编号、全文与 SHA-256、来源和版本；fy 校验错误映射 INVALID_ARGUMENT，不能沿用历史“损坏风格回默认”的行为。非 fy 的历史兼容保留。
-- 导演统一派生 `engine=motion`，meta 保留 generation_mode=fy-canvas、画风编号与哈希。专用 coder 输出 `palette`、`code`、`explanation`，编译时注入固定上游运行时；旧 SceneSpec 和范例不参与。`palette` 必须恰好含 paper/card/ink/mute/line/q/k/v/gold/blue，值为 #RGB/#RGBA/#RRGGBB/#RRGGBBAA 字符串；先经 Pydantic 校验再初始化运行时，去除首尾空白，不补缺省颜色。`code` 只注册 scene，禁止再次调用 theme。源码中的 `scid-fy-palette`、`scid-fy-code` 分别保存模型配色和场景供修复，`scid-fy-source` 保存来源摘要；生成内修复同时回传配色与代码。历史只有内联 theme 的快照仍可作为修复上下文，由模型迁移到新格式，不执行旧代码提取颜色。
+- 导演统一派生 `engine=motion`，meta 保留 generation_mode=fy-canvas、画风编号与哈希。专用 coder 输出 `palette`、`document`、`code`、`explanation`，编译时注入固定上游运行时；旧 SceneSpec 和范例不参与。`palette` 必须恰好含 paper/card/ink/mute/line/q/k/v/gold/blue，值为 #RGB/#RGBA/#RRGGBB/#RRGGBBAA 字符串；先经 Pydantic 校验再初始化运行时，去除首尾空白，不补缺省颜色。`document` 定义对象/运动/关系；`code` 在顶层用 object 注册主体、用 scene 注册背景，禁止再次调用 theme。编译器唯一写入 `scid-fy-code`；`scid-fy-palette`、`scid-fy-data`、`scid-fy-source` 保存配色、文档/版本/本次差异和来源摘要。普通生成内修复回传配色、文档与代码；精确修订直接改数据且不调用文本模型。历史内联 theme/无对象快照仍可作为重生成上下文，由模型迁移到新格式，不执行旧代码提取颜色或猜对象。
 - 主渲染继续走 HtmlRenderer/SandboxRunner，不调用独立章节的浏览器直出路径。主预检增加约 33 个均布时刻及倒序像素比较，和原安全/预检共用最多一次生成内修复。初始化或绘制错误会在 seek 时明确失败，关闭预检也不会以缺主题的默认纸面配色静默出片。
 
 ## 配色错误与单镜修复
@@ -43,6 +45,6 @@ fy 上游组件固定提交 `d9a545afa393b2ffab4f36e87371691daf8e502c`。本机�
 
 支持 16:9 的实际渲染尺寸，主链路不绘制章节字幕/图签/进度条；Go 合成器继续负责字幕、音乐和讲解员。讲解员局部矩形参与文字实测避让。fy 当前仅使用 Canvas 2D，自带分镜图片编排、WebGL、外部脚本、字体、音视频不自动迁入；前端保留原模式用于图片编排。
 
-选定原文会指导构图、材质、排字与运动，不能保证模型完全复现示例或自动消除连线语义/组件相撞。Canvas 预检实测文字，任意图形遮挡与科学表达仍依赖原审片及有界修复。主链路词锚按单镜时长比例估算，没有改成章节 CLI 的逐字 TTS 先行，也没有调整语音服务商、音色或自然度。
+选定原文会指导构图、材质、排字与运动，不能保证模型完全复现示例或自动消除连线语义/组件相撞。Canvas 预检实测文字与登记对象的矩形遮挡，有对象文档的主镜头增加按成片 FPS 的布局扫描；任意图形细节与科学表达仍依赖原审片。主链路词锚按单镜时长比例估算，没有改成章节 CLI 的逐字 TTS 先行，也没有调整语音服务商、音色或自然度。
 
 整库采用上游自定义非商业许可，L/V/X 系列保留 MIT。原文与引用依赖的具体范围以库内 LICENSE/NOTICE/第三方许可为准。

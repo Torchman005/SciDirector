@@ -383,8 +383,16 @@ def inspect(html: Path, width: int, height: int, duration: float, min_font: int,
                 payload = page.evaluate("() => {const e=document.getElementById('scid-scene-v1');return e?JSON.parse(e.textContent):null}")
                 times = sample_times(duration, payload)
                 fy = page.evaluate("() => !!document.getElementById('scid-fy-data')")
+                fy_data = page.evaluate("() => JSON.parse(document.getElementById('scid-fy-data').textContent)") if fy else None
                 if fy:
                     times = sorted(set(times) | {duration * k / 32 for k in range(33)})
+                    boundaries = sorted({frame['time'] * duration
+                        for obj in (fy_data or {}).get('object_document', {}).get('objects', [])
+                        for frame in obj['keyframes']})
+                    if len(boundaries) > MAX_SAMPLE_TIMES:
+                        boundaries = [boundaries[round(i*(len(boundaries)-1)/(MAX_SAMPLE_TIMES-1))]
+                                      for i in range(MAX_SAMPLE_TIMES)]
+                    times = sorted(set(times) | set(boundaries))
                 check_time = times[len(times) // 2]
                 def seek(t: float) -> None:
                     page.evaluate("t => window.__seek(t)", t)
@@ -408,6 +416,19 @@ def inspect(html: Path, width: int, height: int, duration: float, min_font: int,
                         if page.evaluate('() => window.__fyPixels()') != fy_pixels[t]:
                             issues.append(f'{t:.2f}s fy Canvas 倒序 seek 像素不一致；每次从绝对时间重画')
                             break
+                    if fy_data.get('object_document') and not issues:
+                        # The existing sparse raster checks cannot see a brief
+                        # crossing between samples. Scan managed bounds at render cadence.
+                        swept = page.evaluate('''({duration,fps}) => {
+                            const seen=new Map(), start=Math.min(.25,duration*.1);
+                            for(let i=Math.ceil(start*fps);i<Math.ceil(duration*fps);i++){
+                                const t=i/fps;window.__seek(t);
+                                for(const issue of window.__fyLayout())if(!seen.has(issue))seen.set(issue,`${t.toFixed(3)}s：${issue}`);
+                                if(seen.size>=12)break;
+                            }
+                            return [...seen.values()];
+                        }''', {'duration': duration, 'fps': fps})
+                        issues.extend(swept)
                 if payload and not issues:
                     scan_times, dynamic_ids = motion_scan_times(duration, payload, fps)
                     if scan_times:

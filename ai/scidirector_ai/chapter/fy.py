@@ -17,6 +17,7 @@ from .compile import FONT, PAPER_PALETTE, render_chapter
 from .narration import estimate_timing, synthesize_chapter
 from .fy_styles import style_summary
 from .fy_palette import FyPalette
+from ..fy_objects import FyDocument, revision_hash
 from .writer import ChapterScript, SceneCode, _scene_brief, cue_problems, static_problems, write_script
 
 _ROOT = Path(__file__).parent
@@ -47,10 +48,18 @@ def _safe_script(code: str) -> str:
     return re.sub(r'</script', r'<\\/script', code, flags=re.I)
 
 
+def fy_runtime() -> str:
+    paths = [_ROOT.parent / 'connector_runtime.js', _ROOT.parent / 'fy_objects_runtime.js',
+             _ROOT / 'fy_canvas_runtime.js']
+    return '\n'.join(path.read_text(encoding='utf-8') for path in paths)
+
+
 def compile_fy(codes: list[tuple[str, str]], timing: dict, *, title: str = '', series: str = '',
                data: dict | None = None, fps: int = 30, width: int = 1920, height: int = 1080,
                style: dict | None = None, chapter_chrome: bool = True, min_font: int = 25,
-               presenter_area: dict | None = None, palette: dict | None = None) -> str:
+               presenter_area: dict | None = None, palette: dict | None = None,
+               document: FyDocument | None = None, parent_revision: str = '',
+               changes: list[dict] | None = None) -> str:
     """Inline the two pinned upstream modules and project adapter in an offline HTML."""
     engine_info(style)
     if not timing.get('lines') or not math.isfinite(timing['dur']) or timing['dur'] <= 0:
@@ -68,6 +77,16 @@ def compile_fy(codes: list[tuple[str, str]], timing: dict, *, title: str = '', s
                'vars': data or {}, 'palette': colors, 'explicit_palette': palette is not None,
                'font': FONT, 'require_theme': bool(style),
                'chapter_chrome': chapter_chrome, 'min_font': min_font, 'presenter_area': presenter_area}
+    runtime = fy_runtime()
+    if document is not None:
+        if ids != ['shot'] or chapter_chrome or palette is None:
+            raise ValueError('fy 对象文档仅支持显式 palette、无章节 chrome 的单镜 shot')
+        document = FyDocument.model_validate(document)
+        payload.update(object_document=document.model_dump(),
+                       style_source=style_summary(style) if style else None,
+                       object_runtime_sha256=hashlib.sha256(runtime.encode('utf-8')).hexdigest())
+        revision = revision_hash(payload, codes[0][1])
+        payload.update(revision=revision, parent_revision=parent_revision, changes=changes or [])
     encoded = json.dumps(payload, ensure_ascii=False, allow_nan=False).replace('<', '\\u003c').replace('&', '\\u0026')
     license_text = (_ROOT / 'fy_vendor' / 'LICENSE.md').read_text(encoding='utf-8')
     scripts = ['<!-- fy-code-animation, authored by 《俯仰观照》; pinned upstream d9a545afa393b2ffab4f36e87371691daf8e502c.\n'
@@ -80,10 +99,11 @@ def compile_fy(codes: list[tuple[str, str]], timing: dict, *, title: str = '', s
         names = re.findall(r'export\s+(?:const|function)\s+(\w+)', code)
         code = re.sub(r'\bexport\s+', '', code)
         scripts.append(f'<script>window.{global_name}=(()=>{{{_safe_script(code)}\nreturn {{{",".join(names)}}};}})();</script>')
-    scripts.append('<script>' + _safe_script((_ROOT / 'fy_canvas_runtime.js').read_text(encoding='utf-8')) + '</script>')
+    scripts.append('<script>' + _safe_script(runtime) + '</script>')
+    exports = EXPORTS + (', object' if document is not None else '')
     for key, code in codes:
         scripts.append('<script>window.__sceneTag=' + json.dumps(key) + ';</script>')
-        scripts.append('<script>(()=>{const {' + EXPORTS + '}=FY;\n' + _safe_script(code) + '\n})();</script>')
+        scripts.append('<script>(()=>{const {' + exports + '}=FY;\n' + _safe_script(code) + '\n})();</script>')
     scripts.append("<script>window.__sceneTag='';window.__fyStart();</script>")
     css = (f'html,body{{margin:0;width:{width}px;height:{height}px;overflow:hidden;background:var(--fy-paper,#F6EFDD)}}'
            f'body{{font-family:{FONT}}}'
@@ -94,6 +114,9 @@ def compile_fy(codes: list[tuple[str, str]], timing: dict, *, title: str = '', s
     tag = html_module.escape(' · '.join(s for s in [series, title] if s))
     chrome = ('<div id="tag">' + tag + '</div><div id="sub"></div><div id="progress"></div>') if chapter_chrome else ''
     provenance = ''
+    if len(codes) == 1:
+        provenance += '<script id="scid-fy-code" type="application/json">' + json.dumps(
+            codes[0][1], ensure_ascii=False).replace('<', '\\u003c') + '</script>'
     if palette is not None:
         provenance += '<script id="scid-fy-palette" type="application/json">' + json.dumps(colors) + '</script>'
     if style:

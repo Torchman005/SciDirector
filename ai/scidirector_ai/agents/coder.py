@@ -28,6 +28,7 @@ from ..sandbox.policy import PolicyReport, PolicyViolation, check_source
 from ..schemas import RenderEngine, ShotSpec, StyleGuide
 from ..scene import SceneSpec, compile_scene, extract_scene, validate_layout
 from ..scene_revision import SceneRevision, apply_revision, changed_elements
+from ..fy_objects import FyRevision
 from ..science_evidence import manim_review_manifest
 from .base import Agent, load_prompt, render_prompt, style_guide_to_text
 
@@ -286,6 +287,7 @@ class CoderAgent(Agent):
                      feedback: str, previous_code: str) -> CodeGenerationResult:
         from ..chapter.fy import compile_fy
         from ..fy_generation import FySceneOutput, extract_fy_code, extract_fy_palette, shot_timing
+        from ..fy_objects import extract_fy_snapshot
 
         timing = shot_timing(shot)
         system = load_prompt('coder_fy')
@@ -302,6 +304,8 @@ class CoderAgent(Agent):
                 user += '\n上一版配色数据（与源码分开）：\n' + json.dumps(previous_palette, ensure_ascii=False)
             else:
                 user += '\n上一版为旧格式：将 theme(...) 的颜色迁移到输出 JSON 的 palette，code 删除 theme 调用；不要执行旧源码来读取配色。'
+            if snapshot := extract_fy_snapshot(previous_code):
+                user += '\n上一版对象文档（保留未修改对象的 id 和内容）：\n' + snapshot.document.model_dump_json()
         if shot.meta.get('repair_strategy') == 'rebuild':
             user += '\n重新组织空间与动作阶段，保留已核对正确的事实和关系。'
         result = CodeGenerationResult(artifact=CodeArtifact(language='html+js'), policy_ok=False)
@@ -316,11 +320,7 @@ class CoderAgent(Agent):
                     width=self.settings.render_width, height=self.settings.render_height,
                     fps=self.settings.render_fps, chapter_chrome=False, min_font=style.min_font_size,
                     presenter_area=style.presenter_safe_area.model_dump() if style.presenter_safe_area else None,
-                    palette=raw.palette.model_dump())
-                # Store only model-authored scene code separately from the pinned
-                # runtime so later repairs never regenerate the runtime itself.
-                compiled = compiled.replace('</body>', '<script id="scid-fy-code" type="application/json">'
-                    + json.dumps(raw.code, ensure_ascii=False).replace('<', '\\u003c') + '</script></body>')
+                    palette=raw.palette.model_dump(), document=raw.document)
                 result.artifact = CodeArtifact(code=compiled, language='html+js', explanation=raw.explanation)
                 report = check_html_contract(compiled)
                 result.quality = (self.quality_checker.check(compiled, shot, style) if report.ok
@@ -335,6 +335,43 @@ class CoderAgent(Agent):
                 invalid = getattr(exc, 'raw_response', '')
             user += '\n当前版本：\n' + invalid + '\n逐项修复：\n' + result.policy_summary
         return result
+
+    def apply_exact_fy_revision(self, *, shot: ShotSpec, style_guide: StyleGuide,
+                               revision: FyRevision) -> CodeGenerationResult:
+        import hashlib
+
+        from ..chapter.fy import compile_fy, fy_runtime
+        from ..chapter.fy_styles import style_summary
+        from ..fy_generation import shot_timing
+        from ..fy_objects import apply_fy_revision, document_changes, extract_fy_snapshot
+
+        previous = extract_fy_snapshot(shot.code)
+        if previous is None:
+            raise ValueError('该 fy 镜头没有对象文档；需先重新生成，不能假装支持精确修改')
+        context = previous.context
+        expected = {'timing': shot_timing(shot), 'width': self.settings.render_width,
+                    'height': self.settings.render_height, 'fps': self.settings.render_fps,
+                    'min_font': style_guide.min_font_size,
+                    'object_runtime_sha256': hashlib.sha256(fy_runtime().encode('utf-8')).hexdigest(),
+                    'presenter_area': style_guide.presenter_safe_area.model_dump() if style_guide.presenter_safe_area else None,
+                    'style_source': style_summary(style_guide.fy_style_source) if style_guide.fy_style_source else None}
+        if any(context.get(key) != value for key, value in expected.items()):
+            raise ValueError('fy 镜头时序、输出规格、画风或运行时已变化，请重新生成后再精确修改')
+        document = apply_fy_revision(previous, revision)
+        code = compile_fy([('shot', previous.code)], context['timing'], data=context['vars'],
+            width=context['width'], height=context['height'], fps=context['fps'],
+            style=style_guide.fy_style_source, chapter_chrome=False, min_font=context['min_font'],
+            presenter_area=context['presenter_area'], palette=context['palette'],
+            document=document, parent_revision=previous.revision,
+            changes=document_changes(previous.document, document))
+        report = check_html_contract(code)
+        if not report.ok:
+            raise ValueError('精确 fy 修订未通过源码检查：' + report.summary())
+        quality = self.quality_checker.check(code, shot, style_guide)
+        if quality.issues:
+            raise ValueError('精确 fy 修订未通过质量预检：' + '；'.join(quality.issues))
+        return CodeGenerationResult(artifact=CodeArtifact(code=code, language='html+js',
+            explanation=revision.explanation), quality=quality, llm_attempts=0, skipped_llm=True)
 
     def _generate_scene(self, shot: ShotSpec, style: StyleGuide, attempt: int,
                         feedback: str, previous: SceneSpec | None) -> CodeGenerationResult:

@@ -41,7 +41,13 @@ def palette():
 
 
 def reply(text='输入'):
-    return {'palette': palette(), 'code': scene_code(text)}
+    return {'palette': palette(), 'document': {'objects': [{'id': 'subject',
+        'box': {'x': .2, 'y': .2, 'width': .3, 'height': .3}}]}, 'code': object_code(text)}
+
+
+def object_code(text='输入'):
+    return ("object('subject', ({w,h,label,C})=>{label('" + text + "',w/2,h/2,{size:40,color:C.ink});});"
+            "scene('shot',()=>{});")
 
 
 def shot():
@@ -123,7 +129,7 @@ def test_main_coder_and_repair_use_full_source_and_only_regenerate_scene(style, 
     checker = Quality(failures=1)
     result = coder(llm, checker, tmp_path).generate(shot=shot(), style_guide=style)
     assert result.policy_ok and result.llm_attempts == 2
-    assert extract_fy_code(result.code) == scene_code('输出')
+    assert extract_fy_code(result.code) == object_code('输出')
     assert extract_fy_palette(result.code) == palette()
     assert 'function createCanvasContract' in result.code
     assert 'id="sub"' not in result.code and 'id="tag"' not in result.code
